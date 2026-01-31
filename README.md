@@ -1,8 +1,6 @@
 <div align="center">
 
-# effGen
-
-### Efficient Agents for Small Language Models
+# effGen: Enabling Small Language Models as Capable Autonomous Agents
 
 [![PyPI version](https://img.shields.io/pypi/v/effgen.svg)](https://pypi.org/project/effgen/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -147,10 +145,10 @@ For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md
 ## Citation
 
 ```bibtex
-@software{effgen2025,
-  title = {effGen: Efficient Agents for Small Language Models},
-  author = {Srivastava, Gaurav},
-  year = {2025},
+@software{effgen2026,
+  title = {effGen: Enabling Small Language Models as Capable Autonomous Agents},
+  author = {Srivastava, Gaurav and Hussain, Aafiya and Wang, Chi and Lin, Yingyan and Wang, Xuan},
+  year = {2026},
   url = {https://github.com/ctrl-gaurav/effGen},
   version = {0.0.1}
 }
