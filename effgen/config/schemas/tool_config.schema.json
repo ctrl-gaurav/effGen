@@ -1,0 +1,336 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://effgen.dev/schemas/tool_config.json",
+  "title": "Tool Configuration",
+  "description": "Configuration schema for tools in effGen",
+  "type": "object",
+  "properties": {
+    "tools": {
+      "type": "object",
+      "description": "Built-in tools configuration",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable this tool"
+          },
+          "description": {
+            "type": "string",
+            "description": "Tool description"
+          }
+        }
+      }
+    },
+    "mcp_servers": {
+      "type": "object",
+      "description": "MCP server configurations",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "$ref": "#/definitions/MCPServer"
+        }
+      }
+    },
+    "custom_tools": {
+      "type": "object",
+      "description": "Custom tools configuration",
+      "properties": {
+        "directory": {
+          "type": "string",
+          "description": "Directory containing custom tools"
+        },
+        "auto_load": {
+          "type": "boolean",
+          "description": "Automatically load custom tools on startup"
+        },
+        "loader": {
+          "type": "string",
+          "enum": ["python", "yaml", "json"],
+          "description": "Custom tool loader format"
+        },
+        "validate_on_load": {
+          "type": "boolean"
+        },
+        "require_description": {
+          "type": "boolean"
+        },
+        "require_examples": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool_selection": {
+      "type": "object",
+      "description": "Tool selection strategy",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "manual", "hybrid"],
+          "description": "Tool selection mode"
+        },
+        "context_aware_filtering": {
+          "type": "boolean",
+          "description": "Filter tools based on context"
+        },
+        "max_tools_per_call": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum tools to present at once"
+        },
+        "recommendations": {
+          "type": "object",
+          "description": "Recommended tools for task types",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "priority": {
+          "type": "object",
+          "description": "Tool priority scores",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          }
+        },
+        "always_available": {
+          "type": "array",
+          "description": "Tools that are always available",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "description": "Tool execution settings",
+      "properties": {
+        "allow_parallel": {
+          "type": "boolean",
+          "description": "Allow parallel tool execution"
+        },
+        "max_parallel_tools": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "auto_retry_on_failure": {
+          "type": "boolean"
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retry_delay": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Delay between retries in seconds"
+        },
+        "default_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default timeout in seconds"
+        },
+        "max_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum timeout in seconds"
+        },
+        "cache_results": {
+          "type": "boolean"
+        },
+        "cache_ttl": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cache TTL in seconds"
+        },
+        "log_all_executions": {
+          "type": "boolean"
+        },
+        "log_level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
+        "require_confirmation_for": {
+          "type": "array",
+          "description": "Tools requiring user confirmation",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "Tool monitoring configuration",
+      "properties": {
+        "track_performance": {
+          "type": "boolean"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["execution_time", "success_rate", "error_rate", "usage_count"]
+          }
+        },
+        "alert_on_failure": {
+          "type": "boolean"
+        },
+        "alert_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of consecutive failures before alert"
+        },
+        "track_usage": {
+          "type": "boolean"
+        },
+        "usage_report_interval": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "Usage reporting interval in seconds"
+        },
+        "track_costs": {
+          "type": "boolean"
+        },
+        "cost_alert_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost alert threshold in USD"
+        }
+      }
+    },
+    "chaining": {
+      "type": "object",
+      "description": "Tool chaining configuration",
+      "properties": {
+        "auto_chain": {
+          "type": "boolean",
+          "description": "Enable automatic tool chaining"
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum chain depth"
+        },
+        "predefined_chains": {
+          "type": "object",
+          "description": "Predefined tool chains",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "description": "Security settings",
+      "properties": {
+        "enforce_sandboxing": {
+          "type": "boolean"
+        },
+        "use_allowlist": {
+          "type": "boolean"
+        },
+        "default_deny": {
+          "type": "boolean"
+        },
+        "validate_inputs": {
+          "type": "boolean"
+        },
+        "sanitize_outputs": {
+          "type": "boolean"
+        },
+        "rate_limits": {
+          "type": "object",
+          "properties": {
+            "per_minute": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "per_hour": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "per_day": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "dangerous_operations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require_approval": {
+          "type": "boolean"
+        },
+        "audit_log": {
+          "type": "boolean"
+        },
+        "audit_log_path": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "MCPServer": {
+      "type": "object",
+      "description": "MCP server configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "mcp"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable or disable this MCP server"
+        },
+        "description": {
+          "type": "string",
+          "description": "MCP server description"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to start the MCP server"
+        },
+        "args": {
+          "type": "array",
+          "description": "Command arguments",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment variables for the MCP server",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "startup_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Server startup timeout in seconds"
+        },
+        "features": {
+          "type": "array",
+          "description": "Enabled features for this server",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["type", "command"]
+    }
+  }
+}

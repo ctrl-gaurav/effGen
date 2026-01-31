@@ -1,0 +1,356 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://effgen.dev/schemas/agent_config.json",
+  "title": "Agent Configuration",
+  "description": "Configuration schema for agents in effGen",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Agent name/identifier",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "description": "Agent description"
+    },
+    "model": {
+      "type": "string",
+      "description": "Model to use for this agent",
+      "minLength": 1
+    },
+    "system_prompt": {
+      "type": "string",
+      "description": "System prompt for the agent"
+    },
+    "system_prompt_template": {
+      "type": "string",
+      "description": "System prompt template name"
+    },
+    "tools": {
+      "type": "array",
+      "description": "List of tools available to the agent",
+      "items": {
+        "type": "string"
+      }
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of tool-use iterations"
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Generation temperature override"
+    },
+    "memory": {
+      "type": "object",
+      "description": "Memory configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["none", "short_term", "long_term", "hybrid"],
+          "description": "Memory type"
+        },
+        "max_history": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum conversation history length"
+        },
+        "summarization": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Summarize when history exceeds this length"
+            },
+            "max_summary_length": {
+              "type": "integer",
+              "minimum": 100
+            }
+          }
+        },
+        "vector_store": {
+          "type": "object",
+          "description": "Vector store for long-term memory",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["chroma", "pinecone", "weaviate", "qdrant", "faiss"]
+            },
+            "collection": {
+              "type": "string"
+            },
+            "embedding_model": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "planning": {
+      "type": "object",
+      "description": "Planning configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable planning before execution"
+        },
+        "strategy": {
+          "type": "string",
+          "enum": ["react", "plan_and_solve", "tree_of_thoughts", "chain_of_thought"],
+          "description": "Planning strategy"
+        },
+        "max_plan_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replanning": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "trigger": {
+              "type": "string",
+              "enum": ["on_failure", "on_stalled", "periodic"]
+            }
+          }
+        }
+      }
+    },
+    "collaboration": {
+      "type": "object",
+      "description": "Multi-agent collaboration settings",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["leader", "worker", "peer"],
+          "description": "Agent role in collaboration"
+        },
+        "can_delegate": {
+          "type": "boolean",
+          "description": "Can this agent delegate tasks to others"
+        },
+        "can_receive_delegation": {
+          "type": "boolean",
+          "description": "Can this agent receive delegated tasks"
+        },
+        "communication_protocol": {
+          "type": "string",
+          "enum": ["mcp", "acp", "direct"],
+          "description": "Protocol for inter-agent communication"
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "description": "Observability and monitoring",
+      "properties": {
+        "logging": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "level": {
+              "type": "string",
+              "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+            },
+            "log_file": {
+              "type": "string"
+            }
+          }
+        },
+        "tracing": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "backend": {
+              "type": "string",
+              "enum": ["opentelemetry", "langsmith", "wandb"]
+            },
+            "trace_all_calls": {
+              "type": "boolean"
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "track": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "latency",
+                  "token_usage",
+                  "tool_usage",
+                  "success_rate",
+                  "error_rate",
+                  "cost"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "description": "Safety and guardrails",
+      "properties": {
+        "input_validation": {
+          "type": "boolean"
+        },
+        "output_validation": {
+          "type": "boolean"
+        },
+        "content_filter": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "hate",
+                  "violence",
+                  "sexual",
+                  "self_harm",
+                  "dangerous"
+                ]
+              }
+            }
+          }
+        },
+        "rate_limiting": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "max_requests_per_minute": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_tokens_per_minute": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "require_approval_for": {
+          "type": "array",
+          "description": "Actions requiring human approval",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "optimization": {
+      "type": "object",
+      "description": "Performance optimization",
+      "properties": {
+        "caching": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "cache_prompts": {
+              "type": "boolean"
+            },
+            "cache_tool_results": {
+              "type": "boolean"
+            },
+            "ttl": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Cache TTL in seconds"
+            }
+          }
+        },
+        "prompt_optimization": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "compression": {
+              "type": "boolean"
+            },
+            "max_context_tokens": {
+              "type": "integer",
+              "minimum": 100
+            }
+          }
+        },
+        "batching": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "max_batch_size": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Agent capabilities (for ACP integration)",
+      "properties": {
+        "skills": {
+          "type": "array",
+          "description": "Skills this agent can perform",
+          "items": {
+            "type": "string"
+          }
+        },
+        "domains": {
+          "type": "array",
+          "description": "Knowledge domains",
+          "items": {
+            "type": "string"
+          }
+        },
+        "languages": {
+          "type": "array",
+          "description": "Supported languages",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata",
+      "additionalProperties": true
+    }
+  },
+  "required": ["name", "model"],
+  "additionalProperties": false
+}

@@ -1,0 +1,238 @@
+templates:
+  - name: step_by_step_reasoning
+    description: "Template for step-by-step reasoning tasks optimized for SLMs"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - step-by-step
+      - slm-optimized
+    template: |
+      Task: {{ task }}
+
+      Instructions:
+      - Break down the problem into steps
+      - Show your reasoning for each step
+      - State your final answer clearly
+
+      Format:
+      Step 1: [First step]
+      Step 2: [Second step]
+      ...
+      Answer: [Final answer]
+    variables:
+      - task
+    examples:
+      - input: "What is 15% of 80?"
+        output: |
+          Step 1: Convert 15% to decimal: 15/100 = 0.15
+          Step 2: Multiply 0.15 by 80: 0.15 × 80 = 12
+          Answer: 12
+        difficulty: easy
+        tags:
+          - math
+          - percentage
+
+      - input: "If a train travels 120 km in 2 hours, how far will it travel in 5 hours at the same speed?"
+        output: |
+          Step 1: Find speed: 120 km / 2 hours = 60 km/h
+          Step 2: Calculate distance: 60 km/h × 5 hours = 300 km
+          Answer: 300 km
+        difficulty: medium
+        tags:
+          - math
+          - speed
+
+  - name: chain_of_thought
+    description: "Chain-of-thought prompting for complex reasoning"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - chain-of-thought
+      - complex
+    template: |
+      Question: {{ question }}
+
+      Think through this step by step:
+      1. What information do we have?
+      2. What do we need to find?
+      3. What's our approach?
+      4. Execute the solution
+      5. Verify the answer
+
+      Let's solve:
+    variables:
+      - question
+    examples:
+      - input: "A store has 50 apples. They sell 30% in the morning and 20% in the afternoon. How many apples are left?"
+        output: |
+          Let's solve:
+          1. Information: 50 apples total, sell 30% then 20%
+          2. Need to find: Apples remaining
+          3. Approach: Calculate each sale, subtract from total
+          4. Solution:
+             - Morning sale: 50 × 0.30 = 15 apples
+             - After morning: 50 - 15 = 35 apples
+             - Afternoon sale: 35 × 0.20 = 7 apples
+             - After afternoon: 35 - 7 = 28 apples
+          5. Verify: 15 + 7 + 28 = 50 ✓
+          Answer: 28 apples remain
+        difficulty: medium
+        tags:
+          - math
+          - multi-step
+
+  - name: problem_decomposition
+    description: "Break complex problems into manageable parts"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - decomposition
+      - planning
+    template: |
+      Problem: {{ problem }}
+
+      Let's break this into parts:
+
+      Main Goal: {{ goal }}
+
+      Sub-problems:
+      {% for subproblem in subproblems %}
+      {{ loop.index }}. {{ subproblem }}
+      {% endfor %}
+
+      Now solve each part:
+    variables:
+      - problem
+      - goal
+      - subproblems
+    metadata:
+      requires_preprocessing: true
+
+  - name: logical_reasoning
+    description: "Template for logical deduction and inference"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - logic
+      - deduction
+    template: |
+      Given: {{ premises }}
+
+      Question: {{ question }}
+
+      Reasoning:
+      - List the facts
+      - Apply logical rules
+      - Draw conclusions
+      - State the answer
+    variables:
+      - premises
+      - question
+    examples:
+      - input: "All cats are mammals. All mammals are animals. Therefore, what are cats?"
+        output: |
+          Facts:
+          - All cats are mammals
+          - All mammals are animals
+
+          Logical chain:
+          1. Cats → Mammals (given)
+          2. Mammals → Animals (given)
+          3. Therefore: Cats → Animals (transitive property)
+
+          Answer: All cats are animals
+        difficulty: easy
+        tags:
+          - logic
+          - deduction
+
+  - name: compare_and_contrast
+    description: "Compare and contrast two or more items"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - comparison
+      - analysis
+    template: |
+      Compare: {{ item1 }} vs {{ item2 }}
+
+      Similarities:
+      - [List common features]
+
+      Differences:
+      - {{ item1 }}: [unique features]
+      - {{ item2 }}: [unique features]
+
+      Conclusion:
+      - [Summary of key differences]
+    variables:
+      - item1
+      - item2
+
+  - name: cause_and_effect
+    description: "Analyze cause and effect relationships"
+    version: "1.0.0"
+    tags:
+      - reasoning
+      - causality
+      - analysis
+    template: |
+      Situation: {{ situation }}
+
+      Analysis:
+
+      Cause(s):
+      - [Identify root causes]
+
+      Effect(s):
+      - [List direct effects]
+      - [List indirect effects]
+
+      Conclusion:
+      - [Summary of relationship]
+    variables:
+      - situation
+
+examples:
+  step_by_step_reasoning:
+    - input: "Calculate 25% of 200"
+      output: |
+        Step 1: Convert percent to decimal: 25% = 0.25
+        Step 2: Multiply: 0.25 × 200 = 50
+        Answer: 50
+      difficulty: easy
+      tags:
+        - math
+        - percentage
+
+    - input: "If x + 5 = 12, what is x?"
+      output: |
+        Step 1: Write equation: x + 5 = 12
+        Step 2: Subtract 5 from both sides: x = 12 - 5
+        Step 3: Calculate: x = 7
+        Answer: x = 7
+      difficulty: easy
+      tags:
+        - math
+        - algebra
+
+  chain_of_thought:
+    - input: "John has twice as many apples as Mary. Together they have 24 apples. How many does each have?"
+      output: |
+        1. Information: John = 2 × Mary, Total = 24
+        2. Need: Number for each person
+        3. Approach: Use algebra
+        4. Solution:
+           - Let Mary = m
+           - Then John = 2m
+           - Together: m + 2m = 24
+           - So: 3m = 24
+           - Therefore: m = 8
+           - Mary has 8, John has 16
+        5. Verify: 8 + 16 = 24 ✓
+        Answer: Mary has 8 apples, John has 16 apples
+      difficulty: medium
+      tags:
+        - math
+        - algebra
+        - word-problem

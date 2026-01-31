@@ -1,0 +1,699 @@
+# Tools Configuration
+#
+# This file defines all available tools for agents, including:
+# - Built-in tools (code execution, search, file operations)
+# - MCP (Model Context Protocol) servers
+# - Custom tool configurations
+# - Tool selection strategies
+
+# =============================================================================
+# BUILT-IN TOOLS
+# =============================================================================
+
+tools:
+  # Code Executor - Execute code in sandboxed environments
+  code_executor:
+    enabled: true
+    description: Execute code in various programming languages
+
+    # Sandbox configuration
+    sandbox_type: docker  # Options: docker, local, kubernetes, wasm
+    docker_image: python:3.11-slim  # Custom image if needed
+
+    # Resource limits
+    timeout: 30  # seconds
+    memory_limit: 512M
+    cpu_limit: 1.0  # CPU cores
+
+    # Supported languages
+    allowed_languages:
+      - python
+      - javascript
+      - typescript
+      - bash
+      - sql
+
+    # Security settings
+    network_access: false
+    filesystem_access: false
+    allowed_directories: [/workspace]
+
+    # Python-specific settings
+    python:
+      version: "3.11"
+      allowed_packages:
+        - numpy
+        - pandas
+        - matplotlib
+        - requests
+        - beautifulsoup4
+      pip_install_timeout: 300
+
+  # Python REPL - Interactive Python environment
+  python_repl:
+    enabled: true
+    description: Execute Python code interactively with state preservation
+
+    timeout: 10  # seconds per execution
+    max_output_length: 10000  # characters
+
+    # Allowed imports
+    allowed_imports:
+      - numpy
+      - pandas
+      - matplotlib
+      - seaborn
+      - scipy
+      - sklearn
+      - math
+      - datetime
+      - json
+      - re
+      - os
+      - sys
+
+    # Pre-import common packages
+    auto_imports:
+      - import numpy as np
+      - import pandas as pd
+      - import matplotlib.pyplot as plt
+
+    # Display settings
+    max_rows_display: 50
+    plot_backend: inline
+
+  # Web Search - Search the internet
+  web_search:
+    enabled: true
+    description: Search the web for information
+
+    # Backend selection
+    backend: duckduckgo  # Options: duckduckgo, google, bing, serpapi, brave
+
+    # Search parameters
+    max_results: 10
+    safe_search: moderate  # Options: strict, moderate, off
+    region: us  # Country code
+
+    # Caching
+    cache_enabled: true
+    cache_ttl: 3600  # 1 hour in seconds
+
+    # Rate limiting
+    rate_limit: 10  # requests per minute
+    retry_on_failure: true
+    max_retries: 3
+
+    # Content extraction
+    extract_page_content: true
+    max_content_length: 5000  # characters per result
+
+  # File Operations - Read, write, and manage files
+  file_operations:
+    enabled: true
+    description: Read, write, and manage files
+
+    # Security - allowed directories
+    allowed_directories:
+      - /workspace
+      - /data
+      - /tmp/effgen
+
+    # Restrictions
+    max_file_size: 10M
+    allowed_extensions:
+      - .txt
+      - .json
+      - .yaml
+      - .yml
+      - .csv
+      - .md
+      - .py
+      - .js
+      - .ts
+      - .html
+      - .css
+
+    # Operations
+    allowed_operations:
+      - read
+      - write
+      - append
+      - list
+      - delete
+      - move
+      - copy
+
+    # Backup
+    create_backup: true
+    backup_dir: /workspace/.backups
+
+  # Calculator - Mathematical calculations
+  calculator:
+    enabled: true
+    description: Perform mathematical calculations
+
+    max_expression_length: 1000
+    allowed_functions:
+      - sin
+      - cos
+      - tan
+      - sqrt
+      - log
+      - exp
+      - abs
+      - pow
+
+    # Precision
+    decimal_places: 10
+
+  # Web Browser - Browse and interact with web pages
+  web_browser:
+    enabled: true
+    description: Browse web pages and extract content
+
+    # Browser settings
+    headless: true
+    browser_type: chromium  # Options: chromium, firefox, webkit
+
+    # Timeouts
+    page_load_timeout: 30  # seconds
+    navigation_timeout: 30
+
+    # Features
+    javascript_enabled: true
+    images_enabled: false  # Disable for faster loading
+    cookies_enabled: true
+
+    # Screenshot
+    screenshot_enabled: true
+    screenshot_format: png
+
+  # Database Query - Query databases
+  database_query:
+    enabled: true
+    description: Query SQL databases
+
+    # Supported databases
+    supported_types:
+      - postgresql
+      - mysql
+      - sqlite
+      - mongodb
+
+    # Security
+    read_only: true  # Only allow SELECT queries
+    max_rows: 1000
+    timeout: 30  # seconds
+
+    # Query validation
+    validate_sql: true
+    prevent_dangerous_queries: true
+
+  # API Client - Make HTTP API requests
+  api_client:
+    enabled: true
+    description: Make HTTP API requests
+
+    # Allowed methods
+    allowed_methods:
+      - GET
+      - POST
+      - PUT
+      - PATCH
+      - DELETE
+
+    # Limits
+    timeout: 30  # seconds
+    max_response_size: 10M
+    follow_redirects: true
+    max_redirects: 5
+
+    # Headers
+    default_headers:
+      User-Agent: effGen/1.0
+
+    # Rate limiting
+    rate_limit: 60  # requests per minute
+
+  # Email - Send emails
+  email:
+    enabled: false
+    description: Send emails
+
+    # Requires configuration in api_keys.yaml
+    # SMTP or API-based sending
+    provider: smtp  # Options: smtp, sendgrid, ses
+
+    # Restrictions
+    require_approval: true
+    max_recipients: 10
+    max_attachments: 5
+    max_attachment_size: 5M
+
+  # Text-to-Speech
+  tts:
+    enabled: false
+    description: Convert text to speech
+
+    provider: openai  # Options: openai, elevenlabs, google
+    voice: alloy
+    model: tts-1
+
+    # Audio settings
+    format: mp3
+    speed: 1.0
+
+  # Image Generation
+  image_generation:
+    enabled: false
+    description: Generate images from text descriptions
+
+    provider: openai  # Options: openai, stability, midjourney
+    model: dall-e-3
+
+    # Generation settings
+    size: 1024x1024
+    quality: standard  # Options: standard, hd
+    style: natural  # Options: natural, vivid
+
+# =============================================================================
+# MCP SERVERS
+# =============================================================================
+
+mcp_servers:
+  # Filesystem MCP Server
+  filesystem:
+    type: mcp
+    enabled: true
+    description: Access filesystem through MCP
+
+    # Server configuration
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "/workspace"
+      - "/data"
+
+    # Environment variables (from api_keys.yaml)
+    env: {}
+
+    # Timeout for server startup
+    startup_timeout: 30
+
+  # GitHub MCP Server
+  github:
+    type: mcp
+    enabled: true
+    description: Interact with GitHub repositories
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-github"
+
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+
+    # Features
+    features:
+      - read_repos
+      - create_issues
+      - manage_prs
+      - read_code
+
+  # GitLab MCP Server
+  gitlab:
+    type: mcp
+    enabled: false
+    description: Interact with GitLab repositories
+
+    command: mcp-server-gitlab
+    args: []
+
+    env:
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+      GITLAB_URL: ${GITLAB_URL}
+
+  # Postgres MCP Server
+  postgres:
+    type: mcp
+    enabled: false
+    description: Query PostgreSQL databases through MCP
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-postgres"
+
+    env:
+      POSTGRES_CONNECTION_STRING: ${POSTGRES_CONNECTION_STRING}
+
+  # Slack MCP Server
+  slack:
+    type: mcp
+    enabled: false
+    description: Interact with Slack workspaces
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-slack"
+
+    env:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_TEAM_ID: ${SLACK_TEAM_ID}
+
+  # Puppeteer MCP Server (Web Automation)
+  puppeteer:
+    type: mcp
+    enabled: false
+    description: Automate web browser interactions
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-puppeteer"
+
+  # Google Drive MCP Server
+  google_drive:
+    type: mcp
+    enabled: false
+    description: Access Google Drive files
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-gdrive"
+
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+
+  # Memory MCP Server (for agent memory)
+  memory:
+    type: mcp
+    enabled: true
+    description: Persistent memory for agents
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-memory"
+
+  # Sequential Thinking MCP Server
+  sequential_thinking:
+    type: mcp
+    enabled: true
+    description: Enable step-by-step reasoning
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-sequential-thinking"
+
+  # Brave Search MCP Server
+  brave_search:
+    type: mcp
+    enabled: false
+    description: Search using Brave Search API
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-brave-search"
+
+    env:
+      BRAVE_API_KEY: ${BRAVE_API_KEY}
+
+  # AWS MCP Server
+  aws:
+    type: mcp
+    enabled: false
+    description: Interact with AWS services
+
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-aws"
+
+    env:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+
+# =============================================================================
+# CUSTOM TOOLS
+# =============================================================================
+
+custom_tools:
+  # Directory containing custom tool definitions
+  directory: ./custom_tools
+
+  # Auto-load custom tools on startup
+  auto_load: true
+
+  # Custom tool format
+  # Each tool should be a Python file with a Tool class
+  loader: python  # Options: python, yaml, json
+
+  # Validation
+  validate_on_load: true
+  require_description: true
+  require_examples: true
+
+# =============================================================================
+# TOOL SELECTION STRATEGY
+# =============================================================================
+
+tool_selection:
+  # Selection mode
+  mode: auto  # Options: auto, manual, hybrid
+
+  # Automatic tool filtering
+  context_aware_filtering: true
+
+  # For SLMs: limit number of tools presented at once
+  max_tools_per_call: 5
+
+  # Tool recommendation based on task type
+  recommendations:
+    coding:
+      - code_executor
+      - python_repl
+      - file_operations
+      - github
+
+    research:
+      - web_search
+      - web_browser
+      - file_operations
+
+    math:
+      - calculator
+      - python_repl
+
+    data_analysis:
+      - python_repl
+      - database_query
+      - file_operations
+
+    writing:
+      - file_operations
+      - web_search
+
+    automation:
+      - api_client
+      - web_browser
+      - file_operations
+
+  # Tool priority (higher = more likely to be selected)
+  priority:
+    web_search: 10
+    code_executor: 9
+    file_operations: 9
+    python_repl: 8
+    calculator: 7
+    web_browser: 6
+    api_client: 5
+
+  # Fallback tools (always available)
+  always_available:
+    - calculator
+    - file_operations
+
+# =============================================================================
+# TOOL EXECUTION SETTINGS
+# =============================================================================
+
+execution:
+  # Parallel execution
+  allow_parallel: true
+  max_parallel_tools: 3
+
+  # Retry settings
+  auto_retry_on_failure: true
+  max_retries: 3
+  retry_delay: 1  # seconds
+
+  # Timeout
+  default_timeout: 30  # seconds
+  max_timeout: 300  # 5 minutes
+
+  # Result caching
+  cache_results: true
+  cache_ttl: 300  # 5 minutes
+
+  # Logging
+  log_all_executions: true
+  log_level: INFO
+
+  # Safety
+  require_confirmation_for:
+    - email
+    - file_operations.delete
+    - database_query.write
+
+# =============================================================================
+# TOOL MONITORING
+# =============================================================================
+
+monitoring:
+  # Performance tracking
+  track_performance: true
+  metrics:
+    - execution_time
+    - success_rate
+    - error_rate
+    - usage_count
+
+  # Alerts
+  alert_on_failure: true
+  alert_threshold: 5  # failures in a row
+
+  # Usage analytics
+  track_usage: true
+  usage_report_interval: 3600  # 1 hour
+
+  # Cost tracking (for API-based tools)
+  track_costs: true
+  cost_alert_threshold: 100  # USD
+
+# =============================================================================
+# TOOL CHAINING
+# =============================================================================
+
+chaining:
+  # Automatic chaining
+  auto_chain: true
+
+  # Maximum chain depth
+  max_depth: 5
+
+  # Chain templates
+  predefined_chains:
+    research_write:
+      - web_search
+      - web_browser
+      - file_operations
+
+    data_pipeline:
+      - file_operations
+      - python_repl
+      - database_query
+
+    web_scrape_analyze:
+      - web_browser
+      - python_repl
+      - file_operations
+
+# =============================================================================
+# SECURITY SETTINGS
+# =============================================================================
+
+security:
+  # Sandboxing
+  enforce_sandboxing: true
+
+  # Allowlisting
+  use_allowlist: true
+  default_deny: false
+
+  # Input validation
+  validate_inputs: true
+  sanitize_outputs: true
+
+  # Rate limiting (per agent)
+  rate_limits:
+    per_minute: 60
+    per_hour: 1000
+    per_day: 10000
+
+  # Dangerous operations
+  dangerous_operations:
+    - file_operations.delete
+    - code_executor
+    - database_query.write
+
+  # Require approval for dangerous operations
+  require_approval: false
+
+  # Audit logging
+  audit_log: true
+  audit_log_path: /var/log/effgen/tools_audit.log
+
+# =============================================================================
+# ADVANCED FEATURES
+# =============================================================================
+
+advanced:
+  # Tool versioning
+  versioning:
+    enabled: true
+    strategy: semantic  # Options: semantic, timestamp
+
+  # A/B testing tools
+  ab_testing:
+    enabled: false
+    experiments: []
+
+  # Tool composition
+  composition:
+    enabled: true
+    allow_nested: true
+    max_nesting_depth: 3
+
+  # Dynamic tool loading
+  dynamic_loading:
+    enabled: true
+    load_on_demand: true
+    unload_unused: true
+    idle_timeout: 1800  # 30 minutes
+
+  # Tool marketplace
+  marketplace:
+    enabled: false
+    registry_url: https://tools.effgen.dev
+    auto_update: false
+
+# =============================================================================
+# DEBUGGING
+# =============================================================================
+
+debugging:
+  # Verbose logging
+  verbose: false
+
+  # Trace tool calls
+  trace_calls: true
+
+  # Save intermediate results
+  save_intermediates: true
+  intermediates_dir: /tmp/effgen/tool_debug
+
+  # Performance profiling
+  profile_tools: false
+
+  # Test mode
+  test_mode: false
+  mock_external_calls: false

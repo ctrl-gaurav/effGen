@@ -1,0 +1,519 @@
+templates:
+  - name: basic_task
+    description: "General-purpose task template"
+    version: "1.0.0"
+    tags:
+      - general
+      - basic
+      - slm-optimized
+    template: |
+      Task: {{ task }}
+
+      {% if context %}
+      Context: {{ context }}
+      {% endif %}
+
+      Requirements:
+      {% for req in requirements %}
+      - {{ req }}
+      {% endfor %}
+
+      Response:
+    variables:
+      - task
+      - requirements
+      - context
+
+  - name: question_answer
+    description: "Simple Q&A template"
+    version: "1.0.0"
+    tags:
+      - general
+      - qa
+      - simple
+    template: |
+      Question: {{ question }}
+
+      {% if context %}
+      Context: {{ context }}
+      {% endif %}
+
+      Answer clearly and concisely.
+
+      Answer:
+    variables:
+      - question
+      - context
+    examples:
+      - input: "What is the capital of France?"
+        output: "Paris"
+        difficulty: easy
+        tags:
+          - geography
+          - factual
+
+      - input: "How does photosynthesis work?"
+        output: |
+          Photosynthesis is the process where plants convert light energy into chemical energy:
+          1. Plants absorb sunlight using chlorophyll
+          2. They take in CO2 from air and water from soil
+          3. Light energy converts these into glucose and oxygen
+          4. Plants use glucose for energy, release oxygen
+        difficulty: medium
+        tags:
+          - science
+          - biology
+
+  - name: summarization
+    description: "Summarize text concisely"
+    version: "1.0.0"
+    tags:
+      - general
+      - summarization
+      - text
+    template: |
+      Text: {{ text }}
+
+      Summarize in {{ length }} or less.
+
+      Focus on:
+      - Main points
+      - Key facts
+      - Important conclusions
+
+      Summary:
+    variables:
+      - text
+      - length
+    examples:
+      - input: "Article about climate change effects"
+        output: |
+          Main points:
+          - Global temperatures rising
+          - Ice caps melting
+          - Sea levels increasing
+          - Extreme weather more frequent
+
+          Key impacts: Ecosystem disruption, food security threats, economic costs
+
+          Action needed: Reduce emissions, renewable energy, adaptation strategies
+        difficulty: medium
+        tags:
+          - summarization
+          - concise
+
+  - name: explanation
+    description: "Explain concepts clearly"
+    version: "1.0.0"
+    tags:
+      - general
+      - explanation
+      - teaching
+    template: |
+      Explain: {{ concept }}
+
+      Audience: {{ audience }}
+
+      Structure:
+      1. Simple definition
+      2. Why it matters
+      3. How it works
+      4. Example
+
+      Explanation:
+    variables:
+      - concept
+      - audience
+    examples:
+      - input: "Explain blockchain to a beginner"
+        output: |
+          1. Definition: A blockchain is a digital ledger that records transactions across many computers
+
+          2. Why it matters: Creates trust without central authority, prevents tampering
+
+          3. How it works:
+             - Transactions grouped in "blocks"
+             - Each block linked to previous one
+             - Copies stored on many computers
+             - Changes require network agreement
+
+          4. Example: Like a shared notebook where everyone has a copy and all copies must match
+        difficulty: medium
+        tags:
+          - technology
+          - explanation
+
+  - name: instruction_following
+    description: "Follow multi-step instructions"
+    version: "1.0.0"
+    tags:
+      - general
+      - instructions
+      - task-execution
+    template: |
+      Instructions:
+      {% for step in steps %}
+      {{ loop.index }}. {{ step }}
+      {% endfor %}
+
+      Execute each step and report results.
+
+      Results:
+    variables:
+      - steps
+
+  - name: creative_writing
+    description: "Generate creative text"
+    version: "1.0.0"
+    tags:
+      - general
+      - creative
+      - writing
+    template: |
+      Task: {{ task }}
+
+      Style: {{ style }}
+
+      {% if constraints %}
+      Constraints:
+      {% for constraint in constraints %}
+      - {{ constraint }}
+      {% endfor %}
+      {% endif %}
+
+      Output:
+    variables:
+      - task
+      - style
+      - constraints
+
+  - name: translation
+    description: "Translate between languages"
+    version: "1.0.0"
+    tags:
+      - general
+      - translation
+      - language
+    template: |
+      Translate from {{ source_lang }} to {{ target_lang }}:
+
+      {{ text }}
+
+      Translation:
+    variables:
+      - source_lang
+      - target_lang
+      - text
+    examples:
+      - input: "Hello, how are you? (English to Spanish)"
+        output: "Hola, ¿cómo estás?"
+        difficulty: easy
+        tags:
+          - language
+          - spanish
+
+  - name: brainstorming
+    description: "Generate ideas and suggestions"
+    version: "1.0.0"
+    tags:
+      - general
+      - brainstorming
+      - creative
+    template: |
+      Topic: {{ topic }}
+
+      Generate {{ count }} ideas for: {{ goal }}
+
+      {% if constraints %}
+      Consider:
+      {% for constraint in constraints %}
+      - {{ constraint }}
+      {% endfor %}
+      {% endif %}
+
+      Ideas:
+    variables:
+      - topic
+      - goal
+      - count
+      - constraints
+
+  - name: classification
+    description: "Classify or categorize items"
+    version: "1.0.0"
+    tags:
+      - general
+      - classification
+      - categorization
+    template: |
+      Item: {{ item }}
+
+      Categories: {{ categories }}
+
+      Classify this item:
+      - Choose best category
+      - Explain reasoning
+      - Confidence level
+
+      Classification:
+    variables:
+      - item
+      - categories
+    examples:
+      - input: "Classify: 'Python tutorial for beginners'"
+        output: |
+          Category: Educational/Programming
+
+          Reasoning:
+          - Contains 'tutorial' → Educational content
+          - Mentions 'Python' → Programming language
+          - Says 'beginners' → Introductory level
+
+          Confidence: High
+        difficulty: easy
+        tags:
+          - classification
+
+  - name: extraction
+    description: "Extract specific information"
+    version: "1.0.0"
+    tags:
+      - general
+      - extraction
+      - information
+    template: |
+      Text: {{ text }}
+
+      Extract:
+      {% for field in fields %}
+      - {{ field }}
+      {% endfor %}
+
+      Format as structured data.
+
+      Extracted information:
+    variables:
+      - text
+      - fields
+    metadata:
+      output_format: structured
+
+  - name: recommendation
+    description: "Provide recommendations"
+    version: "1.0.0"
+    tags:
+      - general
+      - recommendation
+      - advice
+    template: |
+      Situation: {{ situation }}
+
+      User preferences:
+      {% for pref in preferences %}
+      - {{ pref }}
+      {% endfor %}
+
+      Provide top {{ count }} recommendations:
+      - What to recommend
+      - Why it fits
+      - Potential drawbacks
+
+      Recommendations:
+    variables:
+      - situation
+      - preferences
+      - count
+
+  - name: formatting
+    description: "Format text in specific style"
+    version: "1.0.0"
+    tags:
+      - general
+      - formatting
+      - conversion
+    template: |
+      Input: {{ input_text }}
+
+      Convert to: {{ output_format }}
+
+      Requirements:
+      {% for req in requirements %}
+      - {{ req }}
+      {% endfor %}
+
+      Formatted output:
+    variables:
+      - input_text
+      - output_format
+      - requirements
+
+  - name: verification
+    description: "Verify or fact-check information"
+    version: "1.0.0"
+    tags:
+      - general
+      - verification
+      - fact-checking
+    template: |
+      Statement: {{ statement }}
+
+      Verify:
+      1. Is this accurate?
+      2. What evidence supports or refutes it?
+      3. Confidence level
+      4. Caveats or context
+
+      Verification:
+    variables:
+      - statement
+
+  - name: planning
+    description: "Create plans or roadmaps"
+    version: "1.0.0"
+    tags:
+      - general
+      - planning
+      - organization
+    template: |
+      Goal: {{ goal }}
+
+      Timeframe: {{ timeframe }}
+
+      Create plan:
+      1. Break into phases
+      2. List key milestones
+      3. Identify dependencies
+      4. Estimate timeline
+
+      Plan:
+    variables:
+      - goal
+      - timeframe
+
+  - name: error_correction
+    description: "Find and correct errors"
+    version: "1.0.0"
+    tags:
+      - general
+      - correction
+      - editing
+    template: |
+      Text: {{ text }}
+
+      Check for:
+      {% for error_type in error_types %}
+      - {{ error_type }}
+      {% endfor %}
+
+      Provide:
+      1. List of errors found
+      2. Corrected version
+      3. Explanation of changes
+
+      Corrections:
+    variables:
+      - text
+      - error_types
+
+examples:
+  question_answer:
+    - input: "What is 2 + 2?"
+      output: "4"
+      difficulty: easy
+      tags:
+        - math
+        - basic
+
+    - input: "What causes seasons?"
+      output: |
+        Seasons are caused by Earth's tilt (23.5°) as it orbits the sun.
+        When a hemisphere tilts toward the sun, it gets more direct sunlight → summer.
+        When tilted away, it gets less direct sunlight → winter.
+      difficulty: medium
+      tags:
+        - science
+        - astronomy
+
+  summarization:
+    - input: "Long article about benefits of exercise"
+      output: |
+        Key benefits of exercise:
+        - Physical: Stronger heart, muscles, bones
+        - Mental: Reduced stress, better mood
+        - Health: Lower disease risk, better sleep
+        - Longevity: Increased lifespan
+
+        Recommendation: 150 minutes moderate activity per week
+      difficulty: medium
+      tags:
+        - health
+        - summary
+
+  classification:
+    - input: "Classify: 'Best restaurants in Paris'"
+      output: |
+        Category: Travel/Food
+
+        Reasoning:
+        - 'Restaurants' → Food category
+        - 'Paris' → Location/Travel
+        - 'Best' → Recommendation/Guide
+
+        Confidence: High
+      difficulty: easy
+      tags:
+        - classification
+        - travel
+
+chains:
+  research_and_summarize:
+    name: research_and_summarize
+    description: "Research a topic and create summary"
+    chain_type: sequential
+    steps:
+      - name: search
+        type: tool
+        tool: web_search
+        prompt: "Search for: {query}"
+        output_var: search_results
+
+      - name: extract_key_points
+        type: prompt
+        prompt: |
+          From these search results: {search_results}
+          Extract 5 key points about {query}.
+          Format as bullet list.
+        output_var: key_points
+
+      - name: create_summary
+        type: prompt
+        prompt: |
+          Based on these key points: {key_points}
+          Write a comprehensive summary about {query}.
+          Keep it under 200 words.
+        output_var: final_summary
+
+  iterative_refinement:
+    name: iterative_refinement
+    description: "Iteratively improve output"
+    chain_type: iterative
+    max_iterations: 3
+    steps:
+      - name: generate
+        type: prompt
+        prompt: |
+          Task: {task}
+          {% if previous_output %}
+          Previous attempt: {previous_output}
+          Feedback: {feedback}
+          Improve based on feedback.
+          {% endif %}
+        output_var: output
+
+      - name: evaluate
+        type: prompt
+        prompt: |
+          Evaluate this output: {output}
+          Rate quality (1-10):
+          Provide specific feedback:
+        output_var: evaluation

@@ -1,0 +1,231 @@
+# API Keys and Secrets Configuration
+#
+# This file contains templates for all API keys and sensitive credentials.
+# Environment variable substitution is supported using ${VAR_NAME} syntax.
+#
+# To use this file:
+# 1. Copy this file to api_keys.yaml (not tracked in git)
+# 2. Replace ${VAR_NAME} with actual values or set environment variables
+# 3. Never commit api_keys.yaml to version control
+
+# OpenAI Configuration
+openai:
+  # OpenAI API key - get from https://platform.openai.com/api-keys
+  api_key: ${OPENAI_API_KEY}
+  # Optional: Organization ID for multi-org accounts
+  organization: ${OPENAI_ORG}
+  # Optional: Base URL for OpenAI-compatible APIs
+  base_url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+
+# Anthropic Configuration
+anthropic:
+  # Anthropic API key - get from https://console.anthropic.com/
+  api_key: ${ANTHROPIC_API_KEY}
+  # Optional: Base URL for proxy or custom endpoint
+  base_url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+
+# Google AI Configuration
+google:
+  # Google AI Studio API key - get from https://makersuite.google.com/app/apikey
+  api_key: ${GOOGLE_API_KEY}
+  # Optional: Project ID for Vertex AI
+  project_id: ${GOOGLE_PROJECT_ID}
+  # Optional: Location for Vertex AI
+  location: ${GOOGLE_LOCATION:us-central1}
+
+# HuggingFace Configuration
+huggingface:
+  # HuggingFace token - get from https://huggingface.co/settings/tokens
+  token: ${HF_TOKEN}
+  # Optional: Use HuggingFace Hub cache directory
+  cache_dir: ${HF_CACHE_DIR:~/.cache/huggingface}
+
+# Cohere Configuration
+cohere:
+  # Cohere API key - get from https://dashboard.cohere.com/api-keys
+  api_key: ${COHERE_API_KEY}
+
+# Together AI Configuration
+together:
+  # Together AI API key - get from https://api.together.xyz/settings/api-keys
+  api_key: ${TOGETHER_API_KEY}
+
+# Groq Configuration
+groq:
+  # Groq API key - get from https://console.groq.com/keys
+  api_key: ${GROQ_API_KEY}
+
+# Tool-specific API Keys
+search:
+  # Google Custom Search API
+  google_api_key: ${GOOGLE_SEARCH_KEY}
+  google_cse_id: ${GOOGLE_CSE_ID}
+
+  # SerpAPI for search results
+  serpapi_key: ${SERPAPI_KEY}
+
+  # Bing Search API
+  bing_api_key: ${BING_SEARCH_KEY}
+
+  # Brave Search API
+  brave_api_key: ${BRAVE_SEARCH_KEY}
+
+# Database Connections
+databases:
+  postgres:
+    host: ${POSTGRES_HOST:localhost}
+    port: ${POSTGRES_PORT:5432}
+    database: ${POSTGRES_DB:effgen}
+    user: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    # Optional: SSL mode
+    sslmode: ${POSTGRES_SSLMODE:prefer}
+
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017}
+    database: ${MONGODB_DB:effgen}
+    # Optional: Authentication
+    username: ${MONGODB_USER}
+    password: ${MONGODB_PASSWORD}
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD}
+    db: ${REDIS_DB:0}
+
+# Vector Store Configuration
+vector_stores:
+  pinecone:
+    api_key: ${PINECONE_API_KEY}
+    environment: ${PINECONE_ENVIRONMENT:us-west1-gcp}
+    index_name: ${PINECONE_INDEX:effgen}
+
+  weaviate:
+    url: ${WEAVIATE_URL:http://localhost:8080}
+    api_key: ${WEAVIATE_API_KEY}
+
+  qdrant:
+    url: ${QDRANT_URL:http://localhost:6333}
+    api_key: ${QDRANT_API_KEY}
+
+# MCP Server Configurations
+# These environment variables are passed to MCP servers
+mcp_servers:
+  github:
+    env:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_API_URL: ${GITHUB_API_URL:https://api.github.com}
+
+  gitlab:
+    env:
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+      GITLAB_URL: ${GITLAB_URL:https://gitlab.com}
+
+  slack:
+    env:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+
+  postgres_mcp:
+    env:
+      POSTGRES_CONNECTION_STRING: ${POSTGRES_CONNECTION_STRING}
+
+  aws:
+    env:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:us-east-1}
+
+# Secret Management Integration
+secret_managers:
+  # AWS Secrets Manager
+  aws_secrets:
+    enabled: ${USE_AWS_SECRETS:false}
+    region: ${AWS_SECRETS_REGION:us-east-1}
+    secret_prefix: ${AWS_SECRETS_PREFIX:effgen/}
+
+  # HashiCorp Vault
+  vault:
+    enabled: ${USE_VAULT:false}
+    url: ${VAULT_ADDR:http://localhost:8200}
+    token: ${VAULT_TOKEN}
+    mount_point: ${VAULT_MOUNT_POINT:secret}
+    secret_path: ${VAULT_SECRET_PATH:effgen/}
+
+  # Azure Key Vault
+  azure_keyvault:
+    enabled: ${USE_AZURE_KEYVAULT:false}
+    vault_url: ${AZURE_KEYVAULT_URL}
+    tenant_id: ${AZURE_TENANT_ID}
+    client_id: ${AZURE_CLIENT_ID}
+    client_secret: ${AZURE_CLIENT_SECRET}
+
+# Observability and Monitoring
+observability:
+  # OpenTelemetry Configuration
+  opentelemetry:
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+    api_key: ${OTEL_API_KEY}
+    service_name: ${OTEL_SERVICE_NAME:effgen}
+
+  # Sentry Error Tracking
+  sentry:
+    dsn: ${SENTRY_DSN}
+    environment: ${SENTRY_ENVIRONMENT:development}
+    traces_sample_rate: ${SENTRY_TRACES_SAMPLE_RATE:0.1}
+
+  # Datadog
+  datadog:
+    api_key: ${DATADOG_API_KEY}
+    app_key: ${DATADOG_APP_KEY}
+    site: ${DATADOG_SITE:datadoghq.com}
+
+# Email Service Configuration
+email:
+  smtp:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME}
+    password: ${SMTP_PASSWORD}
+    use_tls: ${SMTP_USE_TLS:true}
+
+  sendgrid:
+    api_key: ${SENDGRID_API_KEY}
+
+# Cloud Storage
+storage:
+  s3:
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION:us-east-1}
+    bucket: ${S3_BUCKET}
+
+  gcs:
+    credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+    bucket: ${GCS_BUCKET}
+
+# Authentication
+auth:
+  # JWT Secret for token signing
+  jwt_secret: ${JWT_SECRET}
+  jwt_algorithm: ${JWT_ALGORITHM:HS256}
+  jwt_expiration: ${JWT_EXPIRATION:3600}
+
+  # OAuth2 Providers
+  oauth2:
+    google:
+      client_id: ${GOOGLE_OAUTH_CLIENT_ID}
+      client_secret: ${GOOGLE_OAUTH_CLIENT_SECRET}
+
+    github:
+      client_id: ${GITHUB_OAUTH_CLIENT_ID}
+      client_secret: ${GITHUB_OAUTH_CLIENT_SECRET}
+
+# Security Notes:
+# - Never commit actual API keys to version control
+# - Use .env files or environment variables for sensitive data
+# - Consider using secret management services for production
+# - Rotate keys regularly
+# - Use separate keys for development, staging, and production
+# - Enable key usage monitoring and alerts

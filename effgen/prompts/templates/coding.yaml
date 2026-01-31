@@ -1,0 +1,406 @@
+templates:
+  - name: code_generation
+    description: "Generate code with clear structure"
+    version: "1.0.0"
+    tags:
+      - coding
+      - generation
+      - slm-optimized
+    template: |
+      Task: {{ task }}
+
+      Language: {{ language }}
+
+      Requirements:
+      {% for req in requirements %}
+      - {{ req }}
+      {% endfor %}
+
+      Generate clean, working code with:
+      - Clear function/variable names
+      - Comments for complex logic
+      - Error handling
+      - Example usage
+    variables:
+      - task
+      - language
+      - requirements
+    examples:
+      - input: "Write a function to check if a number is prime"
+        output: |
+          def is_prime(n):
+              """Check if n is a prime number"""
+              if n < 2:
+                  return False
+              for i in range(2, int(n**0.5) + 1):
+                  if n % i == 0:
+                      return False
+              return True
+
+          # Example usage
+          print(is_prime(17))  # True
+          print(is_prime(4))   # False
+        difficulty: medium
+        tags:
+          - python
+          - algorithm
+
+  - name: code_explanation
+    description: "Explain code step by step"
+    version: "1.0.0"
+    tags:
+      - coding
+      - explanation
+      - documentation
+    template: |
+      Code:
+      {{ code }}
+
+      Explain:
+      1. What does this code do?
+      2. How does it work?
+      3. Key points to note
+
+      Explanation:
+    variables:
+      - code
+
+  - name: code_debugging
+    description: "Debug code and fix issues"
+    version: "1.0.0"
+    tags:
+      - coding
+      - debugging
+      - fixing
+    template: |
+      Code with error:
+      {{ code }}
+
+      Error message:
+      {{ error }}
+
+      Debug steps:
+      1. Identify the problem
+      2. Explain why it's wrong
+      3. Provide fixed code
+      4. Explain the fix
+
+      Solution:
+    variables:
+      - code
+      - error
+    examples:
+      - input: |
+          def average(numbers):
+              return sum(numbers) / len(numbers)
+
+          # Error: ZeroDivisionError
+          result = average([])
+        output: |
+          1. Problem: Empty list causes division by zero
+          2. Why: len([]) = 0, can't divide by zero
+          3. Fixed code:
+          ```python
+          def average(numbers):
+              if not numbers:
+                  return 0
+              return sum(numbers) / len(numbers)
+          ```
+          4. Fix: Added check for empty list before calculating
+        difficulty: easy
+        tags:
+          - python
+          - error-handling
+
+  - name: code_refactoring
+    description: "Refactor code for better quality"
+    version: "1.0.0"
+    tags:
+      - coding
+      - refactoring
+      - optimization
+    template: |
+      Original code:
+      {{ original_code }}
+
+      Refactor for:
+      {% for goal in goals %}
+      - {{ goal }}
+      {% endfor %}
+
+      Provide:
+      1. Refactored code
+      2. Changes made
+      3. Why it's better
+    variables:
+      - original_code
+      - goals
+
+  - name: algorithm_design
+    description: "Design algorithm with pseudocode"
+    version: "1.0.0"
+    tags:
+      - coding
+      - algorithm
+      - design
+    template: |
+      Problem: {{ problem }}
+
+      Approach:
+      1. Understand the problem
+      2. Design solution (pseudocode)
+      3. Analyze complexity
+      4. Implement in {{ language }}
+
+      Solution:
+    variables:
+      - problem
+      - language
+    examples:
+      - input: "Find the maximum element in an array"
+        output: |
+          1. Problem: Find largest value in array
+
+          2. Pseudocode:
+          ```
+          function findMax(array):
+              if array is empty:
+                  return null
+              max = array[0]
+              for each element in array:
+                  if element > max:
+                      max = element
+              return max
+          ```
+
+          3. Complexity: O(n) time, O(1) space
+
+          4. Implementation:
+          ```python
+          def find_max(arr):
+              if not arr:
+                  return None
+              max_val = arr[0]
+              for num in arr:
+                  if num > max_val:
+                      max_val = num
+              return max_val
+          ```
+        difficulty: easy
+        tags:
+          - python
+          - algorithm
+          - array
+
+  - name: test_generation
+    description: "Generate test cases for code"
+    version: "1.0.0"
+    tags:
+      - coding
+      - testing
+      - quality
+    template: |
+      Function to test:
+      {{ function_code }}
+
+      Generate test cases:
+      1. Normal cases
+      2. Edge cases
+      3. Error cases
+
+      Tests:
+    variables:
+      - function_code
+    examples:
+      - input: |
+          def add(a, b):
+              return a + b
+        output: |
+          # Normal cases
+          assert add(2, 3) == 5
+          assert add(0, 0) == 0
+          assert add(-1, 1) == 0
+
+          # Edge cases
+          assert add(1000000, 1) == 1000001
+          assert add(-5, -3) == -8
+
+          # Type tests (if applicable)
+          assert add(1.5, 2.5) == 4.0
+        difficulty: easy
+        tags:
+          - python
+          - testing
+
+  - name: code_review
+    description: "Review code and suggest improvements"
+    version: "1.0.0"
+    tags:
+      - coding
+      - review
+      - quality
+    template: |
+      Code to review:
+      {{ code }}
+
+      Review checklist:
+      - Correctness
+      - Readability
+      - Efficiency
+      - Best practices
+      - Potential bugs
+
+      Review:
+    variables:
+      - code
+
+  - name: api_usage
+    description: "Show how to use an API or library"
+    version: "1.0.0"
+    tags:
+      - coding
+      - api
+      - documentation
+    template: |
+      API/Library: {{ library_name }}
+
+      Task: {{ task }}
+
+      Example:
+      1. Import/setup
+      2. Basic usage
+      3. Complete example
+      4. Notes
+
+      Code:
+    variables:
+      - library_name
+      - task
+
+  - name: code_translation
+    description: "Translate code between languages"
+    version: "1.0.0"
+    tags:
+      - coding
+      - translation
+      - conversion
+    template: |
+      Original ({{ source_lang }}):
+      {{ source_code }}
+
+      Translate to {{ target_lang }}:
+
+      Translation notes:
+      - Equivalent syntax
+      - Language-specific features
+      - Best practices for target language
+
+      Translated code:
+    variables:
+      - source_lang
+      - target_lang
+      - source_code
+
+  - name: function_chaining
+    description: "Create pipeline of function calls"
+    version: "1.0.0"
+    tags:
+      - coding
+      - functional
+      - composition
+    template: |
+      Goal: {{ goal }}
+
+      Functions available:
+      {% for func in functions %}
+      - {{ func }}
+      {% endfor %}
+
+      Create pipeline:
+      1. Plan the chain
+      2. Write the code
+      3. Show example
+
+      Solution:
+    variables:
+      - goal
+      - functions
+
+examples:
+  code_generation:
+    - input: "Function to reverse a string"
+      output: |
+        def reverse_string(s):
+            """Reverse the input string"""
+            return s[::-1]
+
+        # Example usage
+        print(reverse_string("hello"))  # "olleh"
+      difficulty: easy
+      tags:
+        - python
+        - string
+
+    - input: "Function to calculate factorial"
+      output: |
+        def factorial(n):
+            """Calculate factorial of n"""
+            if n < 0:
+                raise ValueError("n must be non-negative")
+            if n == 0 or n == 1:
+                return 1
+            result = 1
+            for i in range(2, n + 1):
+                result *= i
+            return result
+
+        # Example usage
+        print(factorial(5))  # 120
+        print(factorial(0))  # 1
+      difficulty: easy
+      tags:
+        - python
+        - recursion
+
+  algorithm_design:
+    - input: "Binary search algorithm"
+      output: |
+        1. Problem: Find element in sorted array
+
+        2. Pseudocode:
+        ```
+        function binarySearch(array, target):
+            left = 0
+            right = length(array) - 1
+            while left <= right:
+                mid = (left + right) / 2
+                if array[mid] == target:
+                    return mid
+                if array[mid] < target:
+                    left = mid + 1
+                else:
+                    right = mid - 1
+            return -1
+        ```
+
+        3. Complexity: O(log n) time, O(1) space
+
+        4. Implementation:
+        ```python
+        def binary_search(arr, target):
+            left, right = 0, len(arr) - 1
+            while left <= right:
+                mid = (left + right) // 2
+                if arr[mid] == target:
+                    return mid
+                elif arr[mid] < target:
+                    left = mid + 1
+                else:
+                    right = mid - 1
+            return -1
+        ```
+      difficulty: medium
+      tags:
+        - python
+        - algorithm
+        - search

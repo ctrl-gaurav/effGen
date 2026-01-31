@@ -1,0 +1,401 @@
+# Model Configuration
+#
+# This file defines all available models (both local and API-based)
+# and their configurations for the effGen framework.
+#
+# Supported model types:
+# - huggingface: Local models via HuggingFace Transformers/vLLM
+# - openai: OpenAI API models
+# - anthropic: Anthropic Claude models
+# - google: Google Gemini/PaLM models
+# - cohere: Cohere models
+# - together: Together AI hosted models
+# - groq: Groq API models
+
+models:
+  # =============================================================================
+  # SMALL LANGUAGE MODELS (SLMs) - Local Inference
+  # =============================================================================
+
+  # Phi-3 Mini - Microsoft's efficient 3.8B parameter model
+  phi3_mini:
+    type: huggingface
+    model_id: microsoft/Phi-3-mini-4k-instruct
+    inference_engine: vllm  # Options: vllm, transformers, tgi
+
+    # Hardware Configuration
+    gpu_devices: [0]  # GPU device IDs (cuda:0)
+    quantization: 4bit  # Options: none, 4bit, 8bit, awq, gptq
+    dtype: float16  # Options: float16, bfloat16, float32
+
+    # Generation Parameters
+    max_length: 4096
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    repetition_penalty: 1.1
+
+    # Performance Tuning
+    batch_size: 4
+    max_model_len: 4096
+    gpu_memory_utilization: 0.9
+
+    # Optimization flags
+    trust_remote_code: false
+    use_flash_attention: true
+
+  # Phi-3 Medium - Larger variant with 14B parameters
+  phi3_medium:
+    type: huggingface
+    model_id: microsoft/Phi-3-medium-4k-instruct
+    inference_engine: vllm
+
+    gpu_devices: [0, 1]  # Tensor parallel across 2 GPUs
+    tensor_parallel_size: 2
+    quantization: 4bit
+
+    max_length: 4096
+    temperature: 0.7
+    top_p: 0.9
+
+  # Mistral 7B - Excellent performance for 7B parameters
+  mistral_7b:
+    type: huggingface
+    model_id: mistralai/Mistral-7B-Instruct-v0.2
+    inference_engine: vllm
+
+    gpu_devices: [0, 1]
+    tensor_parallel_size: 2
+    quantization: none  # Run in full precision if GPU memory allows
+    dtype: float16
+
+    max_length: 8192  # Mistral supports 8K context
+    temperature: 0.7
+    top_p: 0.9
+
+    # vLLM specific settings
+    max_model_len: 8192
+    gpu_memory_utilization: 0.95
+    enable_prefix_caching: true
+
+  # Gemma 2B - Google's compact model
+  gemma_2b:
+    type: huggingface
+    model_id: google/gemma-2b-it
+    inference_engine: transformers  # Use transformers for smaller models
+
+    gpu_devices: [1]
+    quantization: 4bit
+    load_in_4bit: true
+    bnb_4bit_compute_dtype: float16
+
+    max_length: 8192
+    temperature: 0.7
+    top_p: 0.95
+
+  # Gemma 7B - Larger Gemma variant
+  gemma_7b:
+    type: huggingface
+    model_id: google/gemma-7b-it
+    inference_engine: vllm
+
+    gpu_devices: [0]
+    quantization: 4bit
+    max_length: 8192
+    temperature: 0.7
+
+  # Llama 3.1 8B - Meta's latest instruction-tuned model
+  llama3_8b:
+    type: huggingface
+    model_id: meta-llama/Meta-Llama-3.1-8B-Instruct
+    inference_engine: vllm
+
+    gpu_devices: [0]
+    quantization: 4bit
+    max_length: 8192
+    temperature: 0.7
+    top_p: 0.9
+
+    # Llama 3.1 specific
+    use_flash_attention: true
+    max_model_len: 8192
+
+  # Qwen 7B - Strong multilingual capabilities
+  qwen_7b:
+    type: huggingface
+    model_id: Qwen/Qwen2-7B-Instruct
+    inference_engine: vllm
+
+    gpu_devices: [0]
+    quantization: 4bit
+    max_length: 32768  # Qwen supports very long context
+    temperature: 0.7
+
+    # Trust remote code for Qwen
+    trust_remote_code: true
+
+  # =============================================================================
+  # CLOSED-SOURCE MODELS - API-based
+  # =============================================================================
+
+  # OpenAI GPT-4 Turbo
+  gpt4_turbo:
+    type: openai
+    model_name: gpt-4-turbo-preview
+
+    # Generation parameters
+    max_tokens: 4096
+    temperature: 0.7
+    top_p: 0.9
+    frequency_penalty: 0.0
+    presence_penalty: 0.0
+
+    # API settings
+    timeout: 60
+    max_retries: 3
+
+  # OpenAI GPT-4
+  gpt4:
+    type: openai
+    model_name: gpt-4
+    max_tokens: 8192
+    temperature: 0.7
+
+  # OpenAI GPT-3.5 Turbo
+  gpt35_turbo:
+    type: openai
+    model_name: gpt-3.5-turbo
+    max_tokens: 4096
+    temperature: 0.7
+
+  # Anthropic Claude Sonnet 4.5
+  claude_sonnet:
+    type: anthropic
+    model_name: claude-sonnet-4.5
+
+    max_tokens: 8192
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+
+    # Anthropic specific
+    timeout: 60
+    max_retries: 3
+
+  # Anthropic Claude Opus
+  claude_opus:
+    type: anthropic
+    model_name: claude-opus-4
+    max_tokens: 8192
+    temperature: 0.7
+
+  # Anthropic Claude Haiku (fastest)
+  claude_haiku:
+    type: anthropic
+    model_name: claude-haiku-4
+    max_tokens: 4096
+    temperature: 0.7
+
+  # Google Gemini Pro
+  gemini_pro:
+    type: google
+    model_name: gemini-pro
+
+    max_tokens: 8192
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 40
+
+  # Google Gemini Ultra
+  gemini_ultra:
+    type: google
+    model_name: gemini-ultra
+    max_tokens: 8192
+    temperature: 0.7
+
+  # Cohere Command R+
+  command_r_plus:
+    type: cohere
+    model_name: command-r-plus
+
+    max_tokens: 4096
+    temperature: 0.7
+    p: 0.9
+    k: 50
+
+  # Groq - Ultra-fast inference
+  groq_llama3_70b:
+    type: groq
+    model_name: llama3-70b-8192
+
+    max_tokens: 8192
+    temperature: 0.7
+    top_p: 0.9
+
+  # Together AI - Mixtral 8x7B
+  together_mixtral:
+    type: together
+    model_name: mistralai/Mixtral-8x7B-Instruct-v0.1
+
+    max_tokens: 8192
+    temperature: 0.7
+    top_p: 0.9
+
+# =============================================================================
+# MODEL SELECTION CONFIGURATION
+# =============================================================================
+
+# Default model for agents (if not specified)
+default_model: phi3_mini
+
+# Fallback chain - try models in order if one fails
+fallback_chain:
+  - phi3_mini      # Try local SLM first
+  - mistral_7b     # Fallback to larger local model
+  - gpt35_turbo    # Fallback to API model
+  - claude_haiku   # Final fallback
+
+# Model aliases for convenience
+aliases:
+  fast: phi3_mini
+  balanced: mistral_7b
+  powerful: gpt4_turbo
+  cheap: gpt35_turbo
+  local: phi3_mini
+  api: gpt35_turbo
+
+# =============================================================================
+# MODEL SELECTION STRATEGIES
+# =============================================================================
+
+# Task-based model routing
+task_routing:
+  # Route different task types to optimal models
+  enabled: true
+
+  routes:
+    # Simple tasks - use fastest/cheapest model
+    simple:
+      keywords: [summary, translate, extract, format]
+      model: phi3_mini
+
+    # Coding tasks - use models good at code
+    coding:
+      keywords: [code, program, function, debug, implement]
+      model: mistral_7b
+      fallback: claude_sonnet
+
+    # Complex reasoning - use most capable model
+    reasoning:
+      keywords: [analyze, reason, logic, solve, complex]
+      model: gpt4_turbo
+      fallback: claude_opus
+
+    # Creative tasks - use models with higher temperature
+    creative:
+      keywords: [write, story, creative, generate, brainstorm]
+      model: claude_sonnet
+      temperature_override: 0.9
+
+    # Research tasks - use models with good knowledge
+    research:
+      keywords: [research, find, search, investigate]
+      model: gpt4_turbo
+      fallback: claude_sonnet
+
+# =============================================================================
+# PERFORMANCE OPTIMIZATION
+# =============================================================================
+
+optimization:
+  # Enable model caching
+  enable_caching: true
+  cache_dir: ~/.cache/effgen/models
+
+  # Automatic batching for multiple requests
+  enable_batching: true
+  max_batch_size: 8
+  batch_timeout_ms: 100
+
+  # Model warm-up on startup
+  warmup_on_start: true
+  warmup_models: [phi3_mini, mistral_7b]
+
+  # Automatic model unloading
+  auto_unload: true
+  idle_timeout_minutes: 30
+
+# =============================================================================
+# COST MANAGEMENT
+# =============================================================================
+
+cost_management:
+  # Track and limit API costs
+  enabled: true
+
+  # Cost per 1M tokens (approximate)
+  pricing:
+    gpt4_turbo:
+      input: 10.0
+      output: 30.0
+    gpt4:
+      input: 30.0
+      output: 60.0
+    gpt35_turbo:
+      input: 0.5
+      output: 1.5
+    claude_opus:
+      input: 15.0
+      output: 75.0
+    claude_sonnet:
+      input: 3.0
+      output: 15.0
+    claude_haiku:
+      input: 0.25
+      output: 1.25
+    gemini_pro:
+      input: 0.5
+      output: 1.5
+
+  # Budget limits
+  daily_budget_usd: 100.0
+  monthly_budget_usd: 1000.0
+
+  # Alert thresholds
+  alert_at_percent: 80
+
+  # Automatic fallback to cheaper models when budget exceeded
+  auto_fallback_on_budget: true
+
+# =============================================================================
+# ADVANCED CONFIGURATION
+# =============================================================================
+
+advanced:
+  # Model load balancing across multiple instances
+  load_balancing:
+    enabled: false
+    strategy: round_robin  # Options: round_robin, least_connections, weighted
+
+  # A/B testing different models
+  ab_testing:
+    enabled: false
+    experiments:
+      - name: phi3_vs_mistral
+        models: [phi3_mini, mistral_7b]
+        traffic_split: [0.5, 0.5]
+
+  # Model performance monitoring
+  monitoring:
+    enabled: true
+    track_latency: true
+    track_tokens: true
+    track_errors: true
+    track_quality: false  # Requires manual feedback
+
+  # Automatic model selection based on performance
+  auto_model_selection:
+    enabled: false
+    optimization_goal: balanced  # Options: speed, cost, quality, balanced
+    learning_rate: 0.1
+    exploration_rate: 0.1

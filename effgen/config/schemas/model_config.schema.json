@@ -1,0 +1,478 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://effgen.dev/schemas/model_config.json",
+  "title": "Model Configuration",
+  "description": "Configuration schema for language models in effGen",
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": "object",
+      "description": "Dictionary of available models",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/HuggingFaceModel"
+            },
+            {
+              "$ref": "#/definitions/OpenAIModel"
+            },
+            {
+              "$ref": "#/definitions/AnthropicModel"
+            },
+            {
+              "$ref": "#/definitions/GoogleModel"
+            },
+            {
+              "$ref": "#/definitions/CohereModel"
+            },
+            {
+              "$ref": "#/definitions/TogetherModel"
+            },
+            {
+              "$ref": "#/definitions/GroqModel"
+            }
+          ]
+        }
+      }
+    },
+    "default_model": {
+      "type": "string",
+      "description": "Default model to use if not specified"
+    },
+    "fallback_chain": {
+      "type": "array",
+      "description": "Chain of models to try if one fails",
+      "items": {
+        "type": "string"
+      }
+    },
+    "aliases": {
+      "type": "object",
+      "description": "Model aliases for convenience",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "task_routing": {
+      "type": "object",
+      "description": "Route tasks to specific models",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "routes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "model": {
+                "type": "string"
+              },
+              "fallback": {
+                "type": "string"
+              },
+              "temperature_override": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              }
+            },
+            "required": ["keywords", "model"]
+          }
+        }
+      }
+    },
+    "optimization": {
+      "type": "object",
+      "description": "Performance optimization settings",
+      "properties": {
+        "enable_caching": {
+          "type": "boolean"
+        },
+        "cache_dir": {
+          "type": "string"
+        },
+        "enable_batching": {
+          "type": "boolean"
+        },
+        "max_batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "batch_timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warmup_on_start": {
+          "type": "boolean"
+        },
+        "warmup_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "auto_unload": {
+          "type": "boolean"
+        },
+        "idle_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "cost_management": {
+      "type": "object",
+      "description": "API cost tracking and limits",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": ["input", "output"]
+          }
+        },
+        "daily_budget_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "monthly_budget_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "alert_at_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "auto_fallback_on_budget": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "HuggingFaceModel": {
+      "type": "object",
+      "description": "HuggingFace model configuration",
+      "properties": {
+        "type": {
+          "const": "huggingface"
+        },
+        "model_id": {
+          "type": "string",
+          "description": "HuggingFace model identifier"
+        },
+        "inference_engine": {
+          "type": "string",
+          "enum": ["transformers", "vllm", "tgi", "ctransformers"],
+          "default": "transformers"
+        },
+        "gpu_devices": {
+          "type": "array",
+          "description": "GPU device IDs to use",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "quantization": {
+          "type": "string",
+          "enum": ["none", "4bit", "8bit", "awq", "gptq"]
+        },
+        "dtype": {
+          "type": "string",
+          "enum": ["float16", "bfloat16", "float32"]
+        },
+        "tensor_parallel_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repetition_penalty": {
+          "type": "number",
+          "minimum": 0
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_model_len": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gpu_memory_utilization": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "trust_remote_code": {
+          "type": "boolean"
+        },
+        "use_flash_attention": {
+          "type": "boolean"
+        },
+        "load_in_4bit": {
+          "type": "boolean"
+        },
+        "load_in_8bit": {
+          "type": "boolean"
+        },
+        "bnb_4bit_compute_dtype": {
+          "type": "string"
+        },
+        "enable_prefix_caching": {
+          "type": "boolean"
+        }
+      },
+      "required": ["type", "model_id"]
+    },
+    "OpenAIModel": {
+      "type": "object",
+      "description": "OpenAI model configuration",
+      "properties": {
+        "type": {
+          "const": "openai"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "OpenAI model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "frequency_penalty": {
+          "type": "number",
+          "minimum": -2,
+          "maximum": 2
+        },
+        "presence_penalty": {
+          "type": "number",
+          "minimum": -2,
+          "maximum": 2
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "model_name"]
+    },
+    "AnthropicModel": {
+      "type": "object",
+      "description": "Anthropic model configuration",
+      "properties": {
+        "type": {
+          "const": "anthropic"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Anthropic model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "model_name"]
+    },
+    "GoogleModel": {
+      "type": "object",
+      "description": "Google model configuration",
+      "properties": {
+        "type": {
+          "const": "google"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Google model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "model_name"]
+    },
+    "CohereModel": {
+      "type": "object",
+      "description": "Cohere model configuration",
+      "properties": {
+        "type": {
+          "const": "cohere"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Cohere model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "k": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "model_name"]
+    },
+    "TogetherModel": {
+      "type": "object",
+      "description": "Together AI model configuration",
+      "properties": {
+        "type": {
+          "const": "together"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Together AI model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["type", "model_name"]
+    },
+    "GroqModel": {
+      "type": "object",
+      "description": "Groq model configuration",
+      "properties": {
+        "type": {
+          "const": "groq"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Groq model name"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": ["type", "model_name"]
+    }
+  }
+}

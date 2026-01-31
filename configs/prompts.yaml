@@ -1,0 +1,679 @@
+# Prompt Templates Configuration
+#
+# This file contains comprehensive prompt templates optimized for Small Language Models (SLMs)
+# and supports prompt chaining for complex multi-step tasks.
+#
+# Features:
+# - Environment-specific prompts (system, user, assistant)
+# - Prompt chaining definitions
+# - Few-shot examples for improved performance
+# - SLM-specific optimizations
+# - Template variables using {variable_name} syntax
+
+# =============================================================================
+# SYSTEM PROMPTS
+# =============================================================================
+
+system_prompts:
+  # General purpose assistant
+  general:
+    template: |
+      You are a helpful AI assistant. You have access to various tools.
+      Be concise and precise in your responses.
+      Think step by step before using tools.
+
+      When using tools:
+      1. Think about which tool is most appropriate
+      2. Prepare the correct arguments
+      3. Execute the tool
+      4. Interpret the results
+
+      Always maintain a helpful and professional tone.
+
+  # Reasoning-focused assistant
+  reasoning:
+    template: |
+      You are a reasoning assistant. Follow these steps for every task:
+
+      1. UNDERSTAND: Carefully read and understand the problem
+      2. BREAK DOWN: Break complex problems into smaller steps
+      3. SOLVE: Solve each step methodically
+      4. VERIFY: Check your work for errors
+      5. COMBINE: Combine results into a final answer
+
+      Always show your reasoning process. Think out loud.
+
+  # Coding assistant
+  coding:
+    template: |
+      You are an expert coding assistant. When writing code:
+
+      - Write clean, readable, well-documented code
+      - Follow language-specific best practices
+      - Add comments for complex logic
+      - Include error handling
+      - Test your code before responding
+      - Use the code_executor tool when needed
+
+      Supported languages: Python, JavaScript, TypeScript, Bash, SQL
+
+  # Research assistant
+  research:
+    template: |
+      You are a research assistant. Your goal is to find accurate information.
+
+      Process:
+      1. Understand the research question
+      2. Identify key topics and terms
+      3. Search for relevant information
+      4. Evaluate source credibility
+      5. Synthesize findings
+      6. Cite sources
+
+      Be thorough and objective. Distinguish facts from opinions.
+
+  # Data analysis assistant
+  data_analysis:
+    template: |
+      You are a data analysis expert. When analyzing data:
+
+      1. Understand the data structure
+      2. Clean and preprocess as needed
+      3. Apply appropriate statistical methods
+      4. Visualize key findings
+      5. Draw evidence-based conclusions
+      6. Explain results clearly
+
+      Use Python with pandas, numpy, matplotlib when needed.
+
+  # Creative writing assistant
+  creative:
+    template: |
+      You are a creative writing assistant. Help users:
+
+      - Generate creative ideas
+      - Write stories, articles, and content
+      - Improve existing text
+      - Adapt tone and style as needed
+
+      Be imaginative, engaging, and respectful of the user's vision.
+
+  # Teaching assistant
+  teaching:
+    template: |
+      You are a patient teaching assistant. When explaining concepts:
+
+      1. Start with fundamentals
+      2. Use analogies and examples
+      3. Break down complex topics
+      4. Check understanding
+      5. Provide practice opportunities
+
+      Adapt your explanations to the learner's level.
+
+# =============================================================================
+# PROMPT CHAINING TEMPLATES
+# =============================================================================
+
+chains:
+  # Research and summarize chain
+  research_and_summarize:
+    description: Search for information and create a comprehensive summary
+    steps:
+      - name: understand_query
+        type: prompt
+        prompt: |
+          Analyze this research query: {query}
+
+          Identify:
+          1. Main topic
+          2. Key subtopics
+          3. Information needed
+          4. Best search strategy
+
+          Output a search plan.
+        output_var: search_plan
+
+      - name: search
+        type: tool
+        tool: web_search
+        arguments:
+          query: "{query}"
+          max_results: 10
+        output_var: search_results
+
+      - name: extract_key_points
+        type: prompt
+        prompt: |
+          From these search results:
+          {search_results}
+
+          Extract 7-10 key points about: {query}
+
+          Format as:
+          - Point 1
+          - Point 2
+          ...
+
+          Focus on the most important and relevant information.
+        output_var: key_points
+
+      - name: synthesize
+        type: prompt
+        prompt: |
+          Based on these key points:
+          {key_points}
+
+          Write a comprehensive summary about: {query}
+
+          Requirements:
+          - 300-500 words
+          - Well-organized with clear sections
+          - Objective and factual
+          - Include important details
+          - End with key takeaways
+        output_var: final_summary
+
+  # Code generation with testing
+  code_generation:
+    description: Generate, test, and refine code
+    steps:
+      - name: understand_requirements
+        type: prompt
+        prompt: |
+          Task: {task_description}
+
+          Analyze and output:
+          1. Core functionality needed
+          2. Input/output specifications
+          3. Edge cases to handle
+          4. Required libraries
+        output_var: requirements
+
+      - name: plan
+        type: prompt
+        prompt: |
+          Requirements: {requirements}
+
+          Create a detailed implementation plan:
+          1. Data structures needed
+          2. Main functions/classes
+          3. Algorithm approach
+          4. Error handling strategy
+
+          Output a step-by-step plan.
+        output_var: code_plan
+
+      - name: implement
+        type: prompt
+        prompt: |
+          Following this plan:
+          {code_plan}
+
+          Write complete Python code for: {task_description}
+
+          Requirements:
+          - Include docstrings
+          - Add type hints
+          - Handle errors
+          - Add comments for complex logic
+        output_var: code
+
+      - name: generate_tests
+        type: prompt
+        prompt: |
+          For this code:
+          {code}
+
+          Write comprehensive test cases covering:
+          - Normal cases
+          - Edge cases
+          - Error cases
+
+          Use pytest format.
+        output_var: test_code
+
+      - name: execute_tests
+        type: tool
+        tool: code_executor
+        arguments:
+          code: "{code}\n\n{test_code}"
+          language: python
+        output_var: test_results
+
+      - name: refine
+        type: conditional
+        condition: "test_results.status == 'success'"
+        true_step: finalize
+        false_step: fix_issues
+
+      - name: fix_issues
+        type: prompt
+        prompt: |
+          Test results: {test_results}
+          Current code: {code}
+
+          The tests failed. Fix the issues and return corrected code.
+        output_var: final_code
+
+      - name: finalize
+        type: prompt
+        prompt: |
+          Code: {code}
+          Test results: {test_results}
+
+          All tests passed! Return the final code with documentation.
+        output_var: final_code
+
+  # Multi-step problem solving
+  problem_solving:
+    description: Solve complex problems step by step
+    steps:
+      - name: understand
+        type: prompt
+        prompt: |
+          Problem: {problem}
+
+          Restate the problem in your own words.
+          What is being asked?
+          What information is given?
+        output_var: understanding
+
+      - name: break_down
+        type: prompt
+        prompt: |
+          Problem: {problem}
+          Understanding: {understanding}
+
+          Break this into smaller sub-problems.
+          Number them 1, 2, 3, etc.
+        output_var: sub_problems
+
+      - name: solve_iteratively
+        type: iterative
+        max_iterations: 5
+        prompt: |
+          Sub-problems: {sub_problems}
+          Previous solutions: {previous_solutions}
+
+          Solve the next unsolved sub-problem.
+          Show your work.
+        output_var: sub_solutions
+
+      - name: combine
+        type: prompt
+        prompt: |
+          Original problem: {problem}
+          Sub-solutions: {sub_solutions}
+
+          Combine the sub-solutions into a final answer.
+          Verify it solves the original problem.
+        output_var: final_answer
+
+  # Document analysis and Q&A
+  document_qa:
+    description: Answer questions about documents
+    steps:
+      - name: extract_content
+        type: tool
+        tool: file_reader
+        arguments:
+          file_path: "{document_path}"
+        output_var: document_content
+
+      - name: understand_question
+        type: prompt
+        prompt: |
+          Question: {question}
+          Document length: {len(document_content)} chars
+
+          What type of answer is needed?
+          What sections of the document are relevant?
+        output_var: search_strategy
+
+      - name: find_relevant_sections
+        type: prompt
+        prompt: |
+          Document: {document_content}
+          Question: {question}
+          Strategy: {search_strategy}
+
+          Extract relevant sections that help answer the question.
+          Quote directly from the document.
+        output_var: relevant_sections
+
+      - name: answer
+        type: prompt
+        prompt: |
+          Question: {question}
+          Relevant sections: {relevant_sections}
+
+          Answer the question based on the document content.
+          Quote specific passages to support your answer.
+          If the document doesn't contain the answer, say so.
+        output_var: final_answer
+
+  # Creative content generation
+  creative_content:
+    description: Generate creative content with multiple iterations
+    steps:
+      - name: brainstorm
+        type: prompt
+        prompt: |
+          Topic: {topic}
+          Style: {style}
+          Length: {length}
+
+          Generate 5 different creative angles or approaches.
+        output_var: ideas
+
+      - name: select_approach
+        type: prompt
+        prompt: |
+          Ideas: {ideas}
+          Requirements: {requirements}
+
+          Select the most promising approach and explain why.
+        output_var: selected_approach
+
+      - name: create_outline
+        type: prompt
+        prompt: |
+          Approach: {selected_approach}
+          Topic: {topic}
+
+          Create a detailed outline with:
+          - Introduction
+          - Main sections
+          - Conclusion
+        output_var: outline
+
+      - name: write_draft
+        type: prompt
+        prompt: |
+          Outline: {outline}
+          Topic: {topic}
+          Style: {style}
+
+          Write a complete first draft.
+        output_var: draft
+
+      - name: refine
+        type: iterative
+        max_iterations: 2
+        prompt: |
+          Draft: {draft}
+          Iteration: {iteration}
+
+          Improve:
+          - Clarity and flow
+          - Engagement
+          - Word choice
+          - Structure
+
+          Return the improved version.
+        output_var: final_content
+
+# =============================================================================
+# FEW-SHOT EXAMPLES
+# =============================================================================
+
+few_shot_examples:
+  # Tool usage examples
+  tool_usage:
+    description: Examples of proper tool usage
+    examples:
+      - user: "What's the weather in Tokyo?"
+        thought: "I need current weather information. I'll use the web search tool."
+        tool_call:
+          name: web_search
+          arguments:
+            query: "Tokyo weather today"
+        tool_result: "Tokyo is currently 22°C, sunny with light winds."
+        response: "The weather in Tokyo is currently 22°C and sunny with light winds."
+
+      - user: "Calculate 15% of 2400"
+        thought: "This is a mathematical calculation. I'll use the calculator tool for precision."
+        tool_call:
+          name: calculator
+          arguments:
+            expression: "2400 * 0.15"
+        tool_result: "360.0"
+        response: "15% of 2400 is 360."
+
+      - user: "Read the file data.txt and summarize it"
+        thought: "I need to read a file first, then summarize its contents."
+        tool_call:
+          name: file_reader
+          arguments:
+            file_path: "data.txt"
+        tool_result: "The file contains sales data from Q1..."
+        response: "I've read data.txt. It contains Q1 sales data showing..."
+
+  # Reasoning examples
+  reasoning:
+    description: Examples of step-by-step reasoning
+    examples:
+      - user: "If a train travels 120 miles in 2 hours, how far will it travel in 5 hours at the same speed?"
+        thought: |
+          Step 1: Find the speed
+          Speed = Distance / Time = 120 miles / 2 hours = 60 mph
+
+          Step 2: Calculate distance for 5 hours
+          Distance = Speed × Time = 60 mph × 5 hours = 300 miles
+        response: "The train will travel 300 miles in 5 hours. (Speed: 60 mph × 5 hours = 300 miles)"
+
+      - user: "Which is larger: 3/4 or 5/7?"
+        thought: |
+          Step 1: Convert to decimals
+          3/4 = 0.75
+          5/7 ≈ 0.714
+
+          Step 2: Compare
+          0.75 > 0.714
+        response: "3/4 is larger than 5/7 (0.75 > 0.714)"
+
+  # Coding examples
+  coding:
+    description: Examples of code generation
+    examples:
+      - user: "Write a function to check if a string is a palindrome"
+        thought: |
+          I need to:
+          1. Compare string with its reverse
+          2. Handle case sensitivity
+          3. Add docstring
+        response: |
+          ```python
+          def is_palindrome(s: str) -> bool:
+              """
+              Check if a string is a palindrome.
+
+              Args:
+                  s: String to check
+
+              Returns:
+                  True if palindrome, False otherwise
+              """
+              # Remove spaces and convert to lowercase
+              s = s.replace(" ", "").lower()
+              return s == s[::-1]
+          ```
+
+# =============================================================================
+# SLM OPTIMIZATION SETTINGS
+# =============================================================================
+
+slm_optimization:
+  # General settings
+  use_concise_instructions: true
+  max_prompt_length: 2048  # tokens
+
+  # Few-shot learning
+  include_few_shot: true
+  max_few_shot_examples: 3
+  example_selection_strategy: relevant  # Options: relevant, diverse, recent
+
+  # Prompt formatting
+  preferred_format: markdown
+  use_structured_output: true
+  use_xml_tags: false  # Some models perform better with XML tags
+
+  # Chain optimization
+  auto_chain_complex_tasks: true
+  complexity_threshold: 3  # Number of steps to trigger chaining
+  max_chain_depth: 5
+
+  # Context management
+  context_compression: true
+  prioritize_recent_context: true
+  context_window_percentage: 0.8  # Use 80% of available context
+
+  # Model-specific optimizations
+  model_optimizations:
+    phi3:
+      max_prompt_tokens: 1024
+      few_shot_examples: 2
+      use_concise: true
+      preferred_format: markdown
+
+    mistral:
+      max_prompt_tokens: 2048
+      few_shot_examples: 3
+      use_concise: false
+      preferred_format: markdown
+
+    gemma:
+      max_prompt_tokens: 1536
+      few_shot_examples: 2
+      use_concise: true
+      preferred_format: bullet_points
+
+# =============================================================================
+# PROMPT TEMPLATES FOR SPECIFIC TASKS
+# =============================================================================
+
+task_templates:
+  # Summarization
+  summarize:
+    template: |
+      Summarize the following text in {length} words:
+
+      {text}
+
+      Focus on the main points and key takeaways.
+    variables:
+      length: 100
+      text: ""
+
+  # Translation
+  translate:
+    template: |
+      Translate the following text from {source_lang} to {target_lang}:
+
+      {text}
+
+      Maintain the original tone and meaning.
+    variables:
+      source_lang: auto
+      target_lang: English
+      text: ""
+
+  # Question answering
+  qa:
+    template: |
+      Answer the following question based on the given context:
+
+      Context: {context}
+
+      Question: {question}
+
+      If the context doesn't contain the answer, say "I don't have enough information to answer this question."
+    variables:
+      context: ""
+      question: ""
+
+  # Text classification
+  classify:
+    template: |
+      Classify the following text into one of these categories: {categories}
+
+      Text: {text}
+
+      Output only the category name.
+    variables:
+      categories: []
+      text: ""
+
+  # Information extraction
+  extract:
+    template: |
+      Extract the following information from the text:
+      {fields}
+
+      Text: {text}
+
+      Output in JSON format.
+    variables:
+      fields: []
+      text: ""
+
+# =============================================================================
+# RESPONSE FORMATTING
+# =============================================================================
+
+response_formats:
+  # Default format
+  default:
+    structure: |
+      {response}
+
+  # With reasoning
+  with_reasoning:
+    structure: |
+      Reasoning: {reasoning}
+
+      Answer: {response}
+
+  # Structured JSON
+  json:
+    structure: |
+      ```json
+      {response}
+      ```
+
+  # Step by step
+  step_by_step:
+    structure: |
+      Step 1: {step1}
+      Step 2: {step2}
+      ...
+
+      Final Answer: {response}
+
+# =============================================================================
+# EVALUATION PROMPTS
+# =============================================================================
+
+evaluation:
+  # Quality assessment
+  assess_quality:
+    template: |
+      Evaluate the quality of this response:
+      {response}
+
+      Original question: {question}
+
+      Rate on a scale of 1-10 for:
+      - Accuracy
+      - Completeness
+      - Clarity
+      - Relevance
+
+  # Fact checking
+  fact_check:
+    template: |
+      Verify the factual accuracy of this statement:
+      {statement}
+
+      Provide sources if possible.

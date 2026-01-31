@@ -1,0 +1,45 @@
+# effGen Configuration File
+
+# Model settings
+model:
+  default_provider: "transformers"
+  default_model: "Qwen/Qwen2.5-3B-Instruct"
+  cache_dir: "./models"
+  device: "auto"
+  quantization: "4bit"
+
+# Agent settings
+agent:
+  max_iterations: 10
+  temperature: 0.7
+  enable_sub_agents: true
+  enable_memory: true
+
+# Logging settings
+logging:
+  level: "INFO"
+  log_dir: "./logs"
+  console_output: true
+  file_output: true
+  structured: false
+
+# Tool settings
+tools:
+  enable_code_execution: true
+  enable_web_search: true
+  sandbox_timeout: 30
+  allowed_imports: ["math", "random", "json", "datetime"]
+
+# Memory settings
+memory:
+  backend: "sqlite"
+  db_path: "./memory.db"
+  max_history: 100
+  enable_long_term: true
+
+# Performance settings
+performance:
+  batch_size: 1
+  max_workers: 4
+  enable_caching: true
+  cache_dir: "./.cache"

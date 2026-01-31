@@ -1,0 +1,404 @@
+templates:
+  - name: data_analysis
+    description: "Analyze data and extract insights"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - data
+      - insights
+    template: |
+      Data: {{ data }}
+
+      Analysis tasks:
+      {% for task in tasks %}
+      - {{ task }}
+      {% endfor %}
+
+      Provide:
+      1. Summary statistics
+      2. Key patterns
+      3. Notable findings
+      4. Insights
+
+      Analysis:
+    variables:
+      - data
+      - tasks
+    examples:
+      - input: "Sales data: [100, 150, 120, 200, 180]"
+        output: |
+          1. Summary statistics:
+             - Count: 5
+             - Total: 750
+             - Average: 150
+             - Min: 100
+             - Max: 200
+
+          2. Key patterns:
+             - Upward trend overall
+             - Peak at position 4 (200)
+             - Lowest at position 1 (100)
+
+          3. Notable findings:
+             - 100% growth from min to max
+             - Average is at median point
+
+          4. Insights:
+             - Strong performance trend
+             - Consider factors behind peak
+        difficulty: medium
+        tags:
+          - statistics
+          - business
+
+  - name: text_analysis
+    description: "Analyze text for themes, sentiment, etc."
+    version: "1.0.0"
+    tags:
+      - analysis
+      - text
+      - nlp
+    template: |
+      Text: {{ text }}
+
+      Analyze for:
+      {% for aspect in aspects %}
+      - {{ aspect }}
+      {% endfor %}
+
+      Analysis:
+    variables:
+      - text
+      - aspects
+
+  - name: comparative_analysis
+    description: "Compare multiple items or options"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - comparison
+      - decision
+    template: |
+      Options to compare:
+      {% for option in options %}
+      {{ loop.index }}. {{ option.name }}: {{ option.description }}
+      {% endfor %}
+
+      Comparison criteria:
+      {% for criterion in criteria %}
+      - {{ criterion }}
+      {% endfor %}
+
+      Analysis:
+      [Compare each option on each criterion]
+
+      Recommendation:
+      [Best option and why]
+    variables:
+      - options
+      - criteria
+    metadata:
+      output_format: structured
+
+  - name: trend_analysis
+    description: "Identify and analyze trends"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - trends
+      - forecasting
+    template: |
+      Data points: {{ data_points }}
+
+      Time period: {{ time_period }}
+
+      Analysis:
+      1. Identify trend direction
+      2. Calculate rate of change
+      3. Find anomalies
+      4. Make prediction
+
+      Results:
+    variables:
+      - data_points
+      - time_period
+
+  - name: root_cause_analysis
+    description: "Find root causes of problems"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - problem-solving
+      - diagnosis
+    template: |
+      Problem: {{ problem }}
+
+      Symptoms: {{ symptoms }}
+
+      Analysis approach:
+      1. List immediate causes
+      2. Dig deeper - why did each cause occur?
+      3. Identify root cause(s)
+      4. Suggest solutions
+
+      Analysis:
+    variables:
+      - problem
+      - symptoms
+    examples:
+      - input: "Website is slow"
+        output: |
+          1. Immediate causes:
+             - High server load
+             - Large image files
+             - Too many database queries
+
+          2. Deeper analysis:
+             - Why high load? → Traffic spike + inefficient code
+             - Why large images? → No compression
+             - Why many queries? → N+1 query problem
+
+          3. Root causes:
+             - Lack of caching
+             - Unoptimized assets
+             - Poor database design
+
+          4. Solutions:
+             - Implement Redis caching
+             - Add image compression
+             - Optimize database queries
+             - Use CDN for static assets
+        difficulty: medium
+        tags:
+          - problem-solving
+          - technical
+
+  - name: risk_analysis
+    description: "Analyze and assess risks"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - risk
+      - assessment
+    template: |
+      Scenario: {{ scenario }}
+
+      Risk analysis:
+
+      1. Identify risks:
+      [List potential risks]
+
+      2. Assess each risk:
+      - Probability: High/Medium/Low
+      - Impact: High/Medium/Low
+      - Risk level: Probability × Impact
+
+      3. Mitigation strategies:
+      [How to reduce/manage each risk]
+
+      4. Priority actions:
+      [Most critical items to address]
+    variables:
+      - scenario
+
+  - name: gap_analysis
+    description: "Identify gaps between current and desired state"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - planning
+      - strategy
+    template: |
+      Current state: {{ current_state }}
+
+      Desired state: {{ desired_state }}
+
+      Gap analysis:
+
+      1. Key differences:
+      [What's missing or needs improvement]
+
+      2. Impact of gaps:
+      [Why these gaps matter]
+
+      3. Bridge the gap:
+      [Steps needed to reach desired state]
+
+      4. Timeline and priorities:
+      [Sequence of actions]
+    variables:
+      - current_state
+      - desired_state
+
+  - name: swot_analysis
+    description: "SWOT analysis framework"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - strategy
+      - business
+    template: |
+      Subject: {{ subject }}
+
+      SWOT Analysis:
+
+      Strengths:
+      - [Internal positive factors]
+
+      Weaknesses:
+      - [Internal negative factors]
+
+      Opportunities:
+      - [External positive factors]
+
+      Threats:
+      - [External negative factors]
+
+      Strategic insights:
+      [How to leverage strengths, address weaknesses, exploit opportunities, mitigate threats]
+    variables:
+      - subject
+
+  - name: cost_benefit_analysis
+    description: "Analyze costs vs benefits"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - decision
+      - financial
+    template: |
+      Decision: {{ decision }}
+
+      Costs:
+      {% for cost in costs %}
+      - {{ cost.item }}: {{ cost.amount }}
+      {% endfor %}
+      Total: {{ total_cost }}
+
+      Benefits:
+      {% for benefit in benefits %}
+      - {{ benefit.item }}: {{ benefit.value }}
+      {% endfor %}
+      Total: {{ total_benefit }}
+
+      Analysis:
+      - Net benefit: {{ net_benefit }}
+      - ROI: {{ roi }}
+      - Recommendation: {{ recommendation }}
+    variables:
+      - decision
+      - costs
+      - benefits
+      - total_cost
+      - total_benefit
+
+  - name: performance_analysis
+    description: "Analyze performance metrics"
+    version: "1.0.0"
+    tags:
+      - analysis
+      - performance
+      - metrics
+    template: |
+      System/Process: {{ system }}
+
+      Metrics: {{ metrics }}
+
+      Performance analysis:
+
+      1. Current performance:
+      [Key metric values]
+
+      2. Bottlenecks:
+      [What's slowing things down]
+
+      3. Optimization opportunities:
+      [Areas for improvement]
+
+      4. Expected gains:
+      [Improvements from optimization]
+    variables:
+      - system
+      - metrics
+
+examples:
+  data_analysis:
+    - input: "Monthly revenue: [5000, 5200, 4800, 6000, 6500]"
+      output: |
+        1. Summary statistics:
+           - Count: 5 months
+           - Total: $27,500
+           - Average: $5,500
+           - Min: $4,800 (Month 3)
+           - Max: $6,500 (Month 5)
+           - Growth: 30% (Month 1 to Month 5)
+
+        2. Key patterns:
+           - Overall upward trend
+           - Dip in Month 3
+           - Strong recovery in Months 4-5
+
+        3. Notable findings:
+           - 35% increase from lowest to highest
+           - Last two months show acceleration
+
+        4. Insights:
+           - Positive trajectory
+           - Investigate Month 3 dip
+           - Momentum building
+      difficulty: medium
+      tags:
+        - business
+        - financial
+
+  root_cause_analysis:
+    - input: "High customer churn rate"
+      output: |
+        1. Immediate causes:
+           - Customer complaints up 40%
+           - Support response time: 48 hours
+           - Competitor launched new feature
+
+        2. Deeper analysis:
+           - Why complaints? → Product bugs + unclear docs
+           - Why slow response? → Understaffed support
+           - Why competitor threat? → We lack key features
+
+        3. Root causes:
+           - Inadequate QA process
+           - Underinvestment in support
+           - Slow product development cycle
+           - Poor competitive analysis
+
+        4. Solutions:
+           - Implement automated testing
+           - Hire 2 support agents
+           - Accelerate feature roadmap
+           - Monthly competitive reviews
+           - Improve documentation
+      difficulty: hard
+      tags:
+        - business
+        - problem-solving
+
+  trend_analysis:
+    - input: "Website traffic: [1000, 1100, 1250, 1400, 1600, 1850]"
+      output: |
+        1. Trend direction: Strong upward
+
+        2. Rate of change:
+           - Average growth: ~13% per period
+           - Acceleration visible
+           - Growth rate increasing
+
+        3. Anomalies:
+           - None detected
+           - Consistent growth pattern
+
+        4. Prediction:
+           - Next period: ~2150 (based on trend)
+           - Confidence: High (consistent pattern)
+      difficulty: medium
+      tags:
+        - statistics
+        - forecasting
