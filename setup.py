@@ -40,7 +40,7 @@ dev_requires = read_requirements("requirements-dev.txt")
 
 setup(
     name="effgen",
-    version=version.get("__version__", "0.0.1"),
+    version=version.get("__version__", "0.0.2"),
     author="Gaurav Srivastava",
     author_email="gks@vt.edu",
     description="A comprehensive framework for building agents with Small Language Models",

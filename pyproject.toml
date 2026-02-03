@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "A comprehensive framework for building agents with Small Language Models"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Gaurav Srivastava", email = "gks@vt.edu"}
 ]
@@ -25,7 +25,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",

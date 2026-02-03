@@ -11,21 +11,15 @@
 <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.8+-blue.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python"/></a>
 <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License"/></a>
 
-<br/>
-
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
-
-<br/><br/>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
 <a href="https://effgen.org/"><img src="https://img.shields.io/badge/🌐_Website-4ECDC4?style=for-the-badge" alt="Website"/></a>
 <a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/📚_Documentation-45B7D1?style=for-the-badge" alt="Docs"/></a>
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-96CEB4?style=for-the-badge" alt="PyPI"/></a>
-
-<br/><br/>
 
 <!-- Typing Animation -->
 <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=600&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Powerful" alt="Typing SVG" />
@@ -38,8 +32,9 @@
 
 | | Date | Update |
 |:---:|:---|:---|
-| 📄 | **3 Feb 2026** | Preprint available: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
-| 🚀 | **31 Jan 2026** | Initial release of effGen framework (v0.0.1) |
+| 🔧 | **3 Feb 2026** | **v0.0.2 Released**: vLLM backend fixes with automatic chat template support, GPU memory control, improved OOM error handling, and multi-model family compatibility |
+| 📄 | **2 Feb 2026** | Preprint available: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
+| 🚀 | **31 Jan 2026** | Initial release of effGen framework **(v0.0.1)** |
 
 ---
 
@@ -273,11 +268,13 @@ AgenticSearch<br/>
 ## 📚 Examples
 
 ```bash
-python examples/basic_agent.py # Basic calculator agent
+python examples/basic_agent.py      # Basic agent (Transformers backend)
 
-python examples/web_agent.py # Web search agent
+python examples/basic_agent_vllm.py # Basic agent (vLLM backend - 5-10x faster)
 
-python examples/retrieval_agent.py # RAG-based retrieval
+python examples/web_agent.py        # Web search agent
+
+python examples/retrieval_agent.py  # RAG-based retrieval
 
 python examples/agentic_search_agent.py # Grep-based agentic search
 ```
@@ -410,18 +407,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Paper-45B7D1?style=for-the-badge" alt="Paper"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/badge/⭐_Star_on_GitHub-yellow?style=for-the-badge" alt="GitHub"/></a>
 
-<br/><br/>
-
 **Made with ❤️ for the AI community**
-
-<br/>
-
-<!-- Contributors -->
-<a href="https://github.com/ctrl-gaurav/effGen/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ctrl-gaurav/effGen" />
-</a>
-
-<br/><br/>
 
 <!-- Footer Wave -->
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer"/>

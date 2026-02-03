@@ -424,11 +424,17 @@ class ModelLoader:
         model_lower = model_name.lower()
 
         # Check for small model indicators
-        if any(size in model_lower for size in ["0.5b", "1b", "1.5b", "2b", "3b"]):
-            # Small models: use at most 1-2 GPUs (attention heads typically 12-16)
+        # Note: We check for specific sizes like "1.7b", "3b-" etc. to handle various naming conventions
+        small_model_indicators = [
+            "0.5b", "1b", "1.5b", "1.7b", "2b", "3b", "4b",
+            "-0.5b", "-1b", "-1.5b", "-1.7b", "-2b", "-3b", "-4b",
+            "_0.5b", "_1b", "_1.5b", "_1.7b", "_2b", "_3b", "_4b",
+        ]
+        if any(size in model_lower for size in small_model_indicators):
+            # Small models: use at most 1 GPU (attention heads typically 12-16)
             # 12 heads divisible by: 1, 2, 3, 4, 6, 12
             # 16 heads divisible by: 1, 2, 4, 8, 16
-            tp_size = min(num_gpus, 1)  # Conservative: use 1 GPU for small models
+            tp_size = 1  # Conservative: use 1 GPU for small models
             logger.info(f"Small model detected, using tensor_parallel_size={tp_size}")
             return tp_size
         elif any(size in model_lower for size in ["7b", "8b"]):

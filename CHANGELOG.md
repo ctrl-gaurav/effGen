@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.0.2] - 2026-02-03
+
+### Added
+- **Retrieval Tool**: RAG-based semantic search tool for knowledge base Q&A
+- **Agentic Search Tool**: Grep-based exact match search with async support
+
+### Fixed
+- **vLLM Backend**: Fixed automatic chat template support for instruction-tuned models
+- **GPU Memory Control**: Improved `gpu_memory_utilization` parameter handling
+- **OOM Error Handling**: Better error messages and suggestions for CUDA out-of-memory errors
+- **Tensor Parallel Auto-Selection**: Fixed auto-detection of tensor parallel size for small models (1.7B, 4B, etc.)
+- **vLLM Cache Directory**: Resolved issues with vLLM cache directory handling
+
+### Changed
+- **Model Loader**: Improved small model detection for tensor parallel size selection
+- **Version Management**: Consolidated `__version__` to single source in main `effgen/__init__.py`
+
+### Compatibility
+- Tested with multiple model families:
+  - Qwen (Qwen3-1.7B, Qwen2.5-3B-Instruct)
+  - Meta Llama (Llama-3.2-3B-Instruct, Llama-3.1-8B-Instruct)
+  - Microsoft Phi (Phi-4-mini-instruct)
+  - HuggingFace SmolLM (SmolLM2-1.7B-Instruct, SmolLM3-3B)
+  - Google Gemma (Gemma-3-4b-it)
+
+---
+
 ## [0.0.1] - 2026-01-31
 
 ### Added
@@ -163,5 +190,6 @@ Thank you to all contributors who helped make effGen possible!
 
 ---
 
-[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/ctrl-gaurav/effGen/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/ctrl-gaurav/effGen/releases/tag/v0.0.1

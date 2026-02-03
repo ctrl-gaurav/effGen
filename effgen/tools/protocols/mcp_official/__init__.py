@@ -79,8 +79,6 @@ async with EffGenMCPClient(config) as client:
 
 import warnings
 
-__version__ = "0.0.1"
-
 # Check if MCP SDK is installed
 try:
     import mcp

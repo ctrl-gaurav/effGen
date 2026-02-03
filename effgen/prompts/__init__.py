@@ -53,5 +53,3 @@ __all__ = [
     'PromptOptimizer',
     'create_optimizer_for_model',
 ]
-
-__version__ = '0.0.1'
