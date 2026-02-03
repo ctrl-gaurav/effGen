@@ -74,7 +74,9 @@ class ModelLoader:
             default_device: Default device allocation ('auto', 'cuda', 'cpu')
             force_engine: Force specific engine ('vllm', 'transformers', or None for auto)
         """
-        self.cache_dir = cache_dir or os.getenv("HF_HOME", "~/.cache/huggingface")
+        # Expand ~ to full path and use environment variable if set
+        default_cache = os.path.expanduser(os.getenv("HF_HOME", "~/.cache/huggingface"))
+        self.cache_dir = os.path.expanduser(cache_dir) if cache_dir else default_cache
         self.default_device = default_device
         self.force_engine = force_engine
 
@@ -304,10 +306,11 @@ class ModelLoader:
 
         # Determine tensor parallel size if not specified
         if "tensor_parallel_size" not in params:
-            params["tensor_parallel_size"] = self._auto_select_tensor_parallel()
+            params["tensor_parallel_size"] = self._auto_select_tensor_parallel(model_name)
 
-        # Set download directory
-        if "download_dir" not in params:
+        # Only set download directory if explicitly specified (let vLLM use its default otherwise)
+        # This avoids potential issues with path handling
+        if "download_dir" not in params and self.cache_dir != os.path.expanduser("~/.cache/huggingface"):
             params["download_dir"] = self.cache_dir
 
         return VLLMEngine(model_name=model_name, **params)
@@ -396,9 +399,16 @@ class ModelLoader:
         logger.info("Sufficient VRAM available, no quantization")
         return None
 
-    def _auto_select_tensor_parallel(self) -> int:
+    def _auto_select_tensor_parallel(self, model_name: str) -> int:
         """
-        Automatically select tensor parallel size based on available GPUs.
+        Automatically select tensor parallel size based on available GPUs and model size.
+
+        For tensor parallelism to work, the number of attention heads must be divisible
+        by the tensor parallel size. Small models often have fewer attention heads,
+        so we need to be conservative.
+
+        Args:
+            model_name: Model identifier to help determine appropriate parallelism
 
         Returns:
             Number of GPUs to use for tensor parallelism
@@ -409,8 +419,40 @@ class ModelLoader:
         num_gpus = torch.cuda.device_count()
         logger.info(f"Detected {num_gpus} GPU(s)")
 
-        # Use all available GPUs by default
-        return num_gpus
+        # For small models (indicated by size in name), use fewer GPUs
+        # Small models have fewer attention heads which limits parallelism options
+        model_lower = model_name.lower()
+
+        # Check for small model indicators
+        if any(size in model_lower for size in ["0.5b", "1b", "1.5b", "2b", "3b"]):
+            # Small models: use at most 1-2 GPUs (attention heads typically 12-16)
+            # 12 heads divisible by: 1, 2, 3, 4, 6, 12
+            # 16 heads divisible by: 1, 2, 4, 8, 16
+            tp_size = min(num_gpus, 1)  # Conservative: use 1 GPU for small models
+            logger.info(f"Small model detected, using tensor_parallel_size={tp_size}")
+            return tp_size
+        elif any(size in model_lower for size in ["7b", "8b"]):
+            # Medium models: typically 32 heads, can use up to 4 GPUs
+            # 32 heads divisible by: 1, 2, 4, 8, 16, 32
+            tp_size = min(num_gpus, 4)
+            logger.info(f"Medium model detected, using tensor_parallel_size={tp_size}")
+            return tp_size
+        elif any(size in model_lower for size in ["13b", "14b"]):
+            # Larger models: typically 40 heads
+            # 40 heads divisible by: 1, 2, 4, 5, 8, 10, 20, 40
+            tp_size = min(num_gpus, 4)
+            logger.info(f"13B+ model detected, using tensor_parallel_size={tp_size}")
+            return tp_size
+        elif any(size in model_lower for size in ["30b", "33b", "34b", "65b", "70b"]):
+            # Large models: can benefit from more parallelism
+            # 64/80 heads divisible by: 1, 2, 4, 8, 16, etc.
+            tp_size = min(num_gpus, 8)
+            logger.info(f"Large model detected, using tensor_parallel_size={tp_size}")
+            return tp_size
+
+        # Default: conservative approach, use 1 GPU unless we know the model
+        logger.info(f"Unknown model size, using tensor_parallel_size=1 for safety")
+        return 1
 
     def _validate_model(self, model: BaseModel) -> None:
         """
@@ -499,6 +541,9 @@ def load_model(
     model_name: str,
     engine: Optional[str] = None,
     engine_config: Optional[Dict[str, Any]] = None,
+    tensor_parallel_size: Optional[int] = None,
+    gpu_memory_utilization: Optional[float] = None,
+    apply_chat_template: bool = True,
     **kwargs
 ) -> BaseModel:
     """
@@ -508,7 +553,14 @@ def load_model(
         model_name: Model identifier
         engine: Engine to use ('vllm', 'transformers', or None for auto)
         engine_config: Optional engine configuration
-        **kwargs: Additional parameters
+        tensor_parallel_size: Number of GPUs for tensor parallelism (vLLM only).
+                             If not specified, auto-detected based on model size.
+        gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0, vLLM only).
+                               Default is 0.90. Lower this if you get CUDA OOM errors.
+        apply_chat_template: Whether to automatically apply chat templates for
+                            instruction-tuned models (default: True, vLLM only).
+                            This ensures proper formatting for models like Qwen-Instruct.
+        **kwargs: Additional parameters (e.g., quantization="4bit", trust_remote_code=True)
 
     Returns:
         Loaded model instance
@@ -521,6 +573,26 @@ def load_model(
 
         >>> # Explicitly use vLLM for production (5-10x faster)
         >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm")
+
+        >>> # With tensor parallelism for large models
+        >>> model = load_model("meta-llama/Llama-2-70b-hf", engine="vllm", tensor_parallel_size=4)
+
+        >>> # Lower GPU memory usage if getting OOM errors
+        >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm", gpu_memory_utilization=0.7)
+
+        >>> # Disable chat template for raw text generation
+        >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm", apply_chat_template=False)
     """
+    # Pass tensor_parallel_size to kwargs if specified
+    if tensor_parallel_size is not None:
+        kwargs["tensor_parallel_size"] = tensor_parallel_size
+
+    # Pass gpu_memory_utilization to kwargs if specified
+    if gpu_memory_utilization is not None:
+        kwargs["gpu_memory_utilization"] = gpu_memory_utilization
+
+    # Pass apply_chat_template for vLLM
+    kwargs["apply_chat_template"] = apply_chat_template
+
     loader = ModelLoader(force_engine=engine)
     return loader.load_model(model_name, engine_config, **kwargs)

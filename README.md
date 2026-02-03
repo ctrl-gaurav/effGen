@@ -1,40 +1,58 @@
 <div align="center">
 
-# effGen: Enabling Small Language Models as Capable Autonomous Agents
+<!-- Animated Header -->
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=effGen&fontSize=80&fontColor=fff&animation=twinkling&fontAlignY=35&desc=Enabling%20Small%20Language%20Models%20as%20Capable%20Autonomous%20Agents&descSize=18&descAlignY=55"/>
 
-[![arXiv](https://img.shields.io/badge/arXiv-2602.00887-b31b1b.svg)](https://arxiv.org/abs/2602.00887)
-[![PyPI version](https://img.shields.io/pypi/v/effgen.svg)](https://pypi.org/project/effgen/)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Downloads](https://img.shields.io/pypi/dm/effgen.svg)](https://pypi.org/project/effgen/)
-[![GitHub stars](https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=social)](https://github.com/ctrl-gaurav/effGen)
+<br/>
 
-[**Paper**](https://arxiv.org/abs/2602.00887) | [**Website**](https://effgen.org/) | [**Documentation**](https://effgen.org/docs/) | [**PyPI**](https://pypi.org/project/effgen/)
+<!-- Badges -->
+<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/arXiv-2602.00887-b31b1b.svg?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"/></a>
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/v/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=3775A9" alt="PyPI"/></a>
+<a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.8+-blue.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python"/></a>
+<a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License"/></a>
+
+<br/>
+
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Downloads"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
+
+<br/><br/>
+
+<!-- Quick Links -->
+<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
+<a href="https://effgen.org/"><img src="https://img.shields.io/badge/🌐_Website-4ECDC4?style=for-the-badge" alt="Website"/></a>
+<a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/📚_Documentation-45B7D1?style=for-the-badge" alt="Docs"/></a>
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-96CEB4?style=for-the-badge" alt="PyPI"/></a>
+
+<br/><br/>
+
+<!-- Typing Animation -->
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=600&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Powerful" alt="Typing SVG" />
 
 </div>
 
 ---
 
-## News & Releases
+## 📰 News & Updates
 
-| Date | Update |
-|------|--------|
-| **Feb 2026** | v0.0.1 released with Retrieval and AgenticSearch tools |
-| **Feb 2026** | Paper published on arXiv: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
-| **Feb 2026** | Initial release of effGen framework |
+| | Date | Update |
+|:---:|:---|:---|
+| 📄 | **3 Feb 2026** | Preprint available: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
+| 🚀 | **31 Jan 2026** | Initial release of effGen framework (v0.0.1) |
 
 ---
 
-## What is effGen?
+## 🤔 What is effGen?
 
-**effGen** is a framework that makes Small Language Models (1B-7B parameters) work as powerful AI agents. While most agent frameworks require massive LLMs, effGen is optimized from the ground up for efficient, smaller models.
+**effGen** transforms Small Language Models into powerful AI agents. While most frameworks require massive LLMs, effGen is **optimized from the ground up** for efficient, smaller models — delivering fast, capable agents without the compute overhead.
 
 ```python
 from effgen import Agent, load_model
 from effgen.core.agent import AgentConfig
 from effgen.tools.builtin import Calculator, PythonREPL
 
-# Load model
+# Load a small but mighty model
 model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
 
 # Create agent with tools
@@ -52,44 +70,41 @@ print(f"Answer: {result.output}")
 
 ---
 
-## Installation
+## ⚡ Installation
 
-### From PyPI (Recommended)
+### 📦 From PyPI (Recommended)
 
 ```bash
 pip install effgen
 ```
 
-### With vLLM for faster inference
+### 🚀 With vLLM for Faster Inference
 
 ```bash
 pip install effgen[vllm]
 ```
 
-### From Source
+### 🔧 From Source
 
 ```bash
 git clone https://github.com/ctrl-gaurav/effGen.git
 cd effGen
 
-# Option 1: Quick install (recommended)
+# Quick install
 ./install.sh
 
-# Option 2: Quick install for CI (no animations)
-./install.sh --quick
-
-# Option 3: Full install (includes vLLM, dev tools)
+# Full install (includes vLLM + dev tools)
 ./install.sh --full
 
-# Option 4: Manual install
+# Manual install
 pip install -e .
 ```
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### CLI Usage
+### 💻 CLI Usage
 
 ```bash
 # Run a task
@@ -100,9 +115,12 @@ effgen chat
 
 # Start API server
 effgen serve --port 8000
+
+# Interactive wizard
+effgen
 ```
 
-### Python API
+### 🐍 Python API
 
 ```python
 from effgen import Agent, load_model
@@ -112,7 +130,7 @@ from effgen.tools.builtin import Calculator
 # Load model
 model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
 
-# Configure your agent
+# Configure agent
 config = AgentConfig(
     name="calculator_agent",
     model=model,
@@ -128,65 +146,228 @@ print(result.output)
 
 ---
 
-## Features
+## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| **SLM Optimized** | Prompt engineering and techniques designed for 1B-7B models |
-| **Multi-Model** | Supports HuggingFace, OpenAI, Anthropic, Gemini, vLLM |
-| **Tool Integration** | Built-in tools + MCP, A2A, ACP protocol support |
-| **Task Decomposition** | Automatic breakdown of complex tasks |
-| **Multi-Agent** | Coordinate multiple specialized agents |
-| **Memory Systems** | Short-term and long-term memory |
-| **Sandboxed Execution** | Safe code execution with Docker |
+<div align="center">
+
+<table>
+<tr>
+<td align="center" width="14%">
+
+**🧠**<br/>
+SLM Optimized<br/>
+<sub>For smaller models</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔄**<br/>
+Multi-Model<br/>
+<sub>HF, OpenAI, etc.</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔧**<br/>
+Tool Integration<br/>
+<sub>MCP, A2A, ACP</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🧩**<br/>
+Task Decomp<br/>
+<sub>Auto breakdown</sub>
+
+</td>
+<td align="center" width="14%">
+
+**👥**<br/>
+Multi-Agent<br/>
+<sub>Coordination</sub>
+
+</td>
+<td align="center" width="14%">
+
+**💾**<br/>
+Memory<br/>
+<sub>Short & Long</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔒**<br/>
+Sandboxed<br/>
+<sub>Docker exec</sub>
+
+</td>
+</tr>
+</table>
+
+</div>
 
 ---
 
-## Built-in Tools
+## 🛠️ Built-in Tools
 
-| Tool | Description |
-|------|-------------|
-| `Calculator` | Mathematical calculations and unit conversions |
-| `WebSearch` | Web search using DuckDuckGo (no API key required) |
-| `CodeExecutor` | Safe code execution in sandboxed environment |
-| `PythonREPL` | Interactive Python execution |
-| `FileOperations` | File read/write/list operations |
-| `Retrieval` | RAG-based semantic search over knowledge bases |
-| `AgenticSearch` | Grep-based exact matching for precise retrieval |
+<div align="center">
+
+<table>
+<tr>
+<td align="center" width="14%">
+
+**🔢**<br/>
+Calculator<br/>
+<sub>Math & Units</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🌐**<br/>
+WebSearch<br/>
+<sub>DuckDuckGo</sub>
+
+</td>
+<td align="center" width="14%">
+
+**💻**<br/>
+CodeExecutor<br/>
+<sub>Sandboxed</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🐍**<br/>
+PythonREPL<br/>
+<sub>Interactive</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📁**<br/>
+FileOps<br/>
+<sub>Read/Write</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔍**<br/>
+Retrieval<br/>
+<sub>RAG Search</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🎯**<br/>
+AgenticSearch<br/>
+<sub>Exact Match</sub>
+
+</td>
+</tr>
+</table>
+
+</div>
 
 ---
 
-## Examples
-
-See the [`examples/`](examples/) directory:
+## 📚 Examples
 
 ```bash
-python examples/basic_agent.py # Calculator agent with tools
+python examples/basic_agent.py # Basic calculator agent
 
 python examples/web_agent.py # Web search agent
 
-python examples/retrieval_agent.py # RAG-based retrieval agent
+python examples/retrieval_agent.py # RAG-based retrieval
 
 python examples/agentic_search_agent.py # Grep-based agentic search
 ```
 
+<details>
+<summary><b>📖 More Examples</b></summary>
+
+### Multi-Tool Agent
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator, WebSearch, PythonREPL
+
+model = load_model("Qwen/Qwen2.5-3B-Instruct")
+
+config = AgentConfig(
+    name="research_agent",
+    model=model,
+    tools=[Calculator(), WebSearch(), PythonREPL()],
+    system_prompt="You are a research assistant."
+)
+
+agent = Agent(config=config)
+result = agent.run("Search for the population of Tokyo and calculate what percentage it is of Japan's total population")
+```
+
+### Retrieval Agent
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Retrieval
+
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct")
+retrieval_tool = Retrieval(knowledge_base_path="./docs")
+
+config = AgentConfig(
+    name="qa_agent",
+    model=model,
+    tools=[retrieval_tool]
+)
+
+agent = Agent(config=config)
+result = agent.run("What does the documentation say about configuration?")
+```
+
+</details>
+
 ---
 
-## Security
+## 🔒 Security
 
-effGen provides secure execution options:
+<div align="center">
 
-- **Docker Sandbox**: Isolated code execution
-- **Input Validation**: Automatic sanitization
-- **Rate Limiting**: Configurable limits on tool usage
+<table>
+<tr>
+<td align="center" width="33%">
 
-For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md).
+**🐳**<br/>
+Docker Sandbox<br/>
+<sub>Isolated execution</sub>
+
+</td>
+<td align="center" width="33%">
+
+**🛡️**<br/>
+Input Validation<br/>
+<sub>Auto sanitization</sub>
+
+</td>
+<td align="center" width="33%">
+
+**⚡**<br/>
+Rate Limiting<br/>
+<sub>Configurable limits</sub>
+
+</td>
+</tr>
+</table>
+
+</div>
+
+> 📋 For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md)
 
 ---
 
-## Citation
+## 📖 Citation
 
-If you use effGen in your research, please cite our paper:
+If you use **effGen** in your research, please cite our paper:
 
 ```bibtex
 @software{srivastava2026effgen,
@@ -202,26 +383,47 @@ If you use effGen in your research, please cite our paper:
 
 ---
 
-## Links
+## 🔗 Links
 
-- **Paper**: [arXiv:2602.00887](https://arxiv.org/abs/2602.00887)
-- **Website**: [effgen.org](https://effgen.org/)
-- **Documentation**: [effgen.org/docs](https://effgen.org/docs/)
-- **PyPI**: [pypi.org/project/effgen](https://pypi.org/project/effgen/)
-- **Issues**: [GitHub Issues](https://github.com/ctrl-gaurav/effGen/issues)
+<div align="center">
+
+<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Paper-arXiv:2602.00887-b31b1b?style=for-the-badge" alt="Paper"/></a>
+<a href="https://effgen.org/"><img src="https://img.shields.io/badge/🌐_Website-effgen.org-4ECDC4?style=for-the-badge" alt="Website"/></a>
+<a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/📚_Docs-effgen.org/docs-45B7D1?style=for-the-badge" alt="Docs"/></a>
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-pypi.org/project/effgen-3775A9?style=for-the-badge" alt="PyPI"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/issues"><img src="https://img.shields.io/badge/🐛_Issues-GitHub-red?style=for-the-badge" alt="Issues"/></a>
+
+</div>
 
 ---
 
-## License
+## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-**[Get Started](https://effgen.org/docs/)** | **[Examples](examples/)** | **[Paper](https://arxiv.org/abs/2602.00887)** | **[GitHub](https://github.com/ctrl-gaurav/effGen)**
+<a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/🚀_Get_Started-FF6B6B?style=for-the-badge" alt="Get Started"/></a>
+<a href="examples/"><img src="https://img.shields.io/badge/📚_Examples-4ECDC4?style=for-the-badge" alt="Examples"/></a>
+<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Paper-45B7D1?style=for-the-badge" alt="Paper"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/badge/⭐_Star_on_GitHub-yellow?style=for-the-badge" alt="GitHub"/></a>
 
-Made with care for the AI community
+<br/><br/>
+
+**Made with ❤️ for the AI community**
+
+<br/>
+
+<!-- Contributors -->
+<a href="https://github.com/ctrl-gaurav/effGen/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ctrl-gaurav/effGen" />
+</a>
+
+<br/><br/>
+
+<!-- Footer Wave -->
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer"/>
 
 </div>

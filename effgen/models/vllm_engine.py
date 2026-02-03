@@ -7,14 +7,14 @@ This module provides high-performance inference using vLLM with features includi
 - Dynamic batching for throughput optimization
 - Streaming token generation
 - Graceful fallback handling
+- Automatic chat template application for instruction-tuned models
 """
 
 import logging
-from typing import Iterator, Optional, List, Dict, Any
+from typing import Iterator, Optional, List
 import torch
 
 from effgen.models.base import (
-    BaseModel,
     BatchModel,
     ModelType,
     GenerationConfig,
@@ -23,6 +23,22 @@ from effgen.models.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_cuda_oom_error(error: Exception) -> bool:
+    """Check if an exception is a CUDA out-of-memory error."""
+    error_str = str(error).lower()
+    oom_indicators = [
+        "cuda out of memory",
+        "out of memory",
+        "oom",
+        "cudamalloc failed",
+        "failed to allocate",
+        "memory allocation",
+        "insufficient memory",
+        "cuda error: out of memory",
+    ]
+    return any(indicator in error_str for indicator in oom_indicators)
 
 
 class VLLMEngine(BatchModel):
@@ -54,13 +70,15 @@ class VLLMEngine(BatchModel):
         quantization: Optional[str] = None,
         max_model_len: Optional[int] = None,
         gpu_memory_utilization: float = 0.90,
-        trust_remote_code: bool = False,
+        trust_remote_code: bool = True,
         download_dir: Optional[str] = None,
         dtype: str = "auto",
         seed: int = 0,
         max_num_seqs: int = 256,
         max_num_batched_tokens: Optional[int] = None,
         use_tqdm: bool = True,
+        apply_chat_template: bool = True,
+        system_prompt: Optional[str] = None,
         **kwargs
     ):
         """
@@ -71,14 +89,20 @@ class VLLMEngine(BatchModel):
             tensor_parallel_size: Number of GPUs for tensor parallelism
             quantization: Quantization method ('awq', 'gptq', 'squeezellm', or None)
             max_model_len: Maximum sequence length (auto-detected if None)
-            gpu_memory_utilization: GPU memory fraction to use (0.0-1.0)
-            trust_remote_code: Whether to trust remote code from HuggingFace
+            gpu_memory_utilization: GPU memory fraction to use (0.0-1.0). Default is 0.90.
+                                   Lower this value if you encounter CUDA out-of-memory errors.
+            trust_remote_code: Whether to trust remote code from HuggingFace (default: True)
             download_dir: Directory to download model to
             dtype: Data type for model weights ('auto', 'float16', 'bfloat16')
             seed: Random seed for reproducibility
             max_num_seqs: Maximum number of sequences in a batch
             max_num_batched_tokens: Maximum number of tokens per batch
             use_tqdm: Whether to show tqdm progress bar during generation (default: True)
+            apply_chat_template: Whether to automatically apply the model's chat template
+                                to prompts (default: True). This is essential for instruction-tuned
+                                models like Qwen-Instruct, Llama-Instruct, etc.
+            system_prompt: Optional system prompt to use when applying chat template.
+                          If None and apply_chat_template is True, no system message is added.
             **kwargs: Additional vLLM engine arguments
         """
         super().__init__(
@@ -98,10 +122,13 @@ class VLLMEngine(BatchModel):
         self.max_num_seqs = max_num_seqs
         self.max_num_batched_tokens = max_num_batched_tokens
         self.use_tqdm = use_tqdm
+        self.apply_chat_template = apply_chat_template
+        self.system_prompt = system_prompt
         self.additional_kwargs = kwargs
 
         self.llm = None
         self.tokenizer = None
+        self._hf_tokenizer = None  # Separate HuggingFace tokenizer for chat template
 
     def load(self) -> None:
         """
@@ -136,7 +163,8 @@ class VLLMEngine(BatchModel):
             logger.info(f"Loading model '{self.model_name}' with vLLM...")
             logger.info(
                 f"Configuration: tensor_parallel={self.tensor_parallel_size}, "
-                f"quantization={self.quantization}, dtype={self.dtype}"
+                f"quantization={self.quantization}, dtype={self.dtype}, "
+                f"gpu_memory_utilization={self.gpu_memory_utilization}"
             )
 
             # Build vLLM engine arguments
@@ -168,8 +196,29 @@ class VLLMEngine(BatchModel):
             # Initialize vLLM engine
             self.llm = LLM(**engine_args)
 
-            # Get tokenizer for token counting
+            # Get tokenizer for token counting (vLLM's internal tokenizer)
             self.tokenizer = self.llm.get_tokenizer()
+
+            # Load a separate HuggingFace tokenizer for chat template support
+            # This is needed because vLLM's tokenizer may not have full chat template support
+            if self.apply_chat_template:
+                try:
+                    from transformers import AutoTokenizer
+                    self._hf_tokenizer = AutoTokenizer.from_pretrained(
+                        self.model_name,
+                        trust_remote_code=self.trust_remote_code
+                    )
+                    if hasattr(self._hf_tokenizer, 'chat_template') and self._hf_tokenizer.chat_template:
+                        logger.info("Chat template support enabled for this model")
+                    else:
+                        logger.warning(
+                            f"Model '{self.model_name}' does not have a chat template. "
+                            "Prompts will be passed directly without formatting."
+                        )
+                        self._hf_tokenizer = None
+                except Exception as e:
+                    logger.warning(f"Failed to load HuggingFace tokenizer for chat template: {e}")
+                    self._hf_tokenizer = None
 
             # Store metadata
             self._context_length = self.llm.llm_engine.model_config.max_model_len
@@ -180,14 +229,101 @@ class VLLMEngine(BatchModel):
                 "dtype": self.dtype,
                 "max_model_len": self._context_length,
                 "gpu_memory_utilization": self.gpu_memory_utilization,
+                "apply_chat_template": self.apply_chat_template,
             }
 
             self._is_loaded = True
             logger.info(f"Model '{self.model_name}' loaded successfully with vLLM")
 
         except Exception as e:
-            logger.error(f"Failed to load model with vLLM: {e}")
-            raise RuntimeError(f"vLLM model loading failed: {e}") from e
+            error_msg = str(e)
+            logger.error(f"Failed to load model with vLLM: {error_msg}")
+
+            # Provide helpful error message for CUDA OOM
+            if _is_cuda_oom_error(e):
+                gpu_mem = self.gpu_memory_utilization
+                logger.error(
+                    f"\n{'='*60}\n"
+                    f"CUDA OUT OF MEMORY ERROR\n"
+                    f"{'='*60}\n"
+                    f"The model '{self.model_name}' could not fit in GPU memory.\n\n"
+                    f"Current gpu_memory_utilization: {gpu_mem}\n\n"
+                    f"Suggestions to resolve this:\n"
+                    f"1. Lower gpu_memory_utilization (e.g., 0.7 or 0.8)\n"
+                    f"2. Use quantization: quantization='awq' or 'gptq'\n"
+                    f"3. Reduce max_model_len if you don't need full context\n"
+                    f"4. Use a smaller model\n"
+                    f"5. Free up GPU memory by stopping other processes\n"
+                    f"{'='*60}"
+                )
+                raise RuntimeError(
+                    f"CUDA out of memory while loading '{self.model_name}'. "
+                    f"Try lowering gpu_memory_utilization (current: {gpu_mem}) or use quantization."
+                ) from e
+
+            raise RuntimeError(f"vLLM model loading failed: {error_msg}") from e
+
+    def _format_prompt_with_chat_template(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None
+    ) -> str:
+        """
+        Format a prompt using the model's chat template.
+
+        This is essential for instruction-tuned models (e.g., Qwen-Instruct, Llama-Instruct)
+        which expect prompts in a specific format with special tokens.
+
+        Args:
+            prompt: The raw user prompt/message
+            system_prompt: Optional system prompt to include
+
+        Returns:
+            Formatted prompt string ready for generation
+        """
+        # If chat template is disabled or not available, return raw prompt
+        if not self.apply_chat_template or self._hf_tokenizer is None:
+            return prompt
+
+        # Check if the prompt already looks like it has chat template applied
+        # (contains special tokens like <|im_start|>, [INST], <s>, etc.)
+        chat_template_indicators = [
+            '<|im_start|>', '<|im_end|>',  # Qwen format
+            '[INST]', '[/INST]',            # Llama/Mistral format
+            '<|begin_of_text|>', '<|start_header_id|>',  # Llama 3 format
+            '<|user|>', '<|assistant|>',    # Generic format
+            '### Human:', '### Assistant:',  # Vicuna format
+        ]
+
+        if any(indicator in prompt for indicator in chat_template_indicators):
+            logger.debug("Prompt already has chat template markers, skipping template application")
+            return prompt
+
+        try:
+            # Build messages list
+            messages = []
+
+            # Add system prompt if provided
+            effective_system_prompt = system_prompt or self.system_prompt
+            if effective_system_prompt:
+                messages.append({"role": "system", "content": effective_system_prompt})
+
+            # Add user message
+            messages.append({"role": "user", "content": prompt})
+
+            # Apply chat template
+            formatted_prompt = self._hf_tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            logger.debug(f"Applied chat template to prompt (length: {len(prompt)} -> {len(formatted_prompt)})")
+            return formatted_prompt
+
+        except Exception as e:
+            logger.warning(f"Failed to apply chat template, using raw prompt: {e}")
+            return prompt
 
     def _create_sampling_params(
         self,
@@ -223,6 +359,8 @@ class VLLMEngine(BatchModel):
         self,
         prompt: str,
         config: Optional[GenerationConfig] = None,
+        system_prompt: Optional[str] = None,
+        skip_chat_template: bool = False,
         **kwargs
     ) -> GenerationResult:
         """
@@ -231,6 +369,9 @@ class VLLMEngine(BatchModel):
         Args:
             prompt: Input text prompt
             config: Generation configuration
+            system_prompt: Optional system prompt to use (overrides instance-level system_prompt)
+            skip_chat_template: If True, skip chat template even if apply_chat_template is enabled.
+                               Useful when passing pre-formatted prompts.
             **kwargs: Additional generation parameters
 
         Returns:
@@ -243,12 +384,18 @@ class VLLMEngine(BatchModel):
         if not self._is_loaded:
             raise RuntimeError("Model is not loaded. Call load() first.")
 
-        self.validate_prompt(prompt)
+        # Apply chat template if enabled and not skipped
+        if not skip_chat_template:
+            formatted_prompt = self._format_prompt_with_chat_template(prompt, system_prompt)
+        else:
+            formatted_prompt = prompt
+
+        self.validate_prompt(formatted_prompt)
 
         sampling_params = self._create_sampling_params(config)
 
         try:
-            outputs = self.llm.generate([prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs)
+            outputs = self.llm.generate([formatted_prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs)
             output = outputs[0]
 
             generated_text = output.outputs[0].text
@@ -264,17 +411,29 @@ class VLLMEngine(BatchModel):
                     "prompt_tokens": len(output.prompt_token_ids),
                     "completion_tokens": tokens_used,
                     "total_tokens": len(output.prompt_token_ids) + tokens_used,
+                    "chat_template_applied": not skip_chat_template and self.apply_chat_template,
                 }
             )
 
         except Exception as e:
-            logger.error(f"Generation failed: {e}")
-            raise RuntimeError(f"Generation failed: {e}") from e
+            error_msg = str(e)
+            logger.error(f"Generation failed: {error_msg}")
+
+            # Provide helpful error for CUDA OOM during generation
+            if _is_cuda_oom_error(e):
+                logger.error(
+                    f"CUDA out of memory during generation. "
+                    f"Try reducing max_tokens in GenerationConfig or use a smaller prompt."
+                )
+
+            raise RuntimeError(f"Generation failed: {error_msg}") from e
 
     def generate_stream(
         self,
         prompt: str,
         config: Optional[GenerationConfig] = None,
+        system_prompt: Optional[str] = None,
+        skip_chat_template: bool = False,
         **kwargs
     ) -> Iterator[str]:
         """
@@ -283,6 +442,8 @@ class VLLMEngine(BatchModel):
         Args:
             prompt: Input text prompt
             config: Generation configuration
+            system_prompt: Optional system prompt to use
+            skip_chat_template: If True, skip chat template application
             **kwargs: Additional generation parameters
 
         Yields:
@@ -295,13 +456,19 @@ class VLLMEngine(BatchModel):
         if not self._is_loaded:
             raise RuntimeError("Model is not loaded. Call load() first.")
 
-        self.validate_prompt(prompt)
+        # Apply chat template if enabled and not skipped
+        if not skip_chat_template:
+            formatted_prompt = self._format_prompt_with_chat_template(prompt, system_prompt)
+        else:
+            formatted_prompt = prompt
+
+        self.validate_prompt(formatted_prompt)
 
         sampling_params = self._create_sampling_params(config)
 
         try:
             # vLLM's streaming interface
-            for output in self.llm.generate([prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs):
+            for output in self.llm.generate([formatted_prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs):
                 # Stream each token as it's generated
                 for token_output in output.outputs:
                     yield token_output.text
@@ -314,6 +481,8 @@ class VLLMEngine(BatchModel):
         self,
         prompts: List[str],
         config: Optional[GenerationConfig] = None,
+        system_prompt: Optional[str] = None,
+        skip_chat_template: bool = False,
         **kwargs
     ) -> List[GenerationResult]:
         """
@@ -322,6 +491,8 @@ class VLLMEngine(BatchModel):
         Args:
             prompts: List of input prompts
             config: Generation configuration
+            system_prompt: Optional system prompt to use for all prompts
+            skip_chat_template: If True, skip chat template application
             **kwargs: Additional generation parameters
 
         Returns:
@@ -334,14 +505,23 @@ class VLLMEngine(BatchModel):
         if not self._is_loaded:
             raise RuntimeError("Model is not loaded. Call load() first.")
 
-        # Validate all prompts
-        for prompt in prompts:
+        # Apply chat template to all prompts if enabled
+        if not skip_chat_template:
+            formatted_prompts = [
+                self._format_prompt_with_chat_template(p, system_prompt)
+                for p in prompts
+            ]
+        else:
+            formatted_prompts = prompts
+
+        # Validate all formatted prompts
+        for prompt in formatted_prompts:
             self.validate_prompt(prompt)
 
         sampling_params = self._create_sampling_params(config)
 
         try:
-            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=self.use_tqdm, **kwargs)
+            outputs = self.llm.generate(formatted_prompts, sampling_params, use_tqdm=self.use_tqdm, **kwargs)
 
             results = []
             for output in outputs:
@@ -358,6 +538,7 @@ class VLLMEngine(BatchModel):
                         "prompt_tokens": len(output.prompt_token_ids),
                         "completion_tokens": tokens_used,
                         "total_tokens": len(output.prompt_token_ids) + tokens_used,
+                        "chat_template_applied": not skip_chat_template and self.apply_chat_template,
                     }
                 ))
 
@@ -422,6 +603,10 @@ class VLLMEngine(BatchModel):
         if self.tokenizer is not None:
             del self.tokenizer
             self.tokenizer = None
+
+        if self._hf_tokenizer is not None:
+            del self._hf_tokenizer
+            self._hf_tokenizer = None
 
         # Force garbage collection
         import gc

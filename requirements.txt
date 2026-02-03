@@ -15,7 +15,7 @@ sentencepiece>=0.1.99
 protobuf>=3.20.0
 
 # vLLM for fast inference (5-10x faster, requires CUDA)
-vllm>=0.2.7
+vllm>=0.14.0
 
 # ==============================================================================
 # API Model Adapters
