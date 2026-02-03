@@ -2,15 +2,26 @@
 
 # effGen: Enabling Small Language Models as Capable Autonomous Agents
 
+[![arXiv](https://img.shields.io/badge/arXiv-2602.00887-b31b1b.svg)](https://arxiv.org/abs/2602.00887)
 [![PyPI version](https://img.shields.io/pypi/v/effgen.svg)](https://pypi.org/project/effgen/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Downloads](https://img.shields.io/pypi/dm/effgen.svg)](https://pypi.org/project/effgen/)
 [![GitHub stars](https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=social)](https://github.com/ctrl-gaurav/effGen)
 
-[**Website**](https://effgen.org/) | [**Documentation**](https://effgen.org/docs/) | [**Paper**](https://arxiv.org/) | [**PyPI**](https://pypi.org/project/effgen/)
+[**Paper**](https://arxiv.org/abs/2602.00887) | [**Website**](https://effgen.org/) | [**Documentation**](https://effgen.org/docs/) | [**PyPI**](https://pypi.org/project/effgen/)
 
 </div>
+
+---
+
+## News & Releases
+
+| Date | Update |
+|------|--------|
+| **Feb 2026** | v0.0.1 released with Retrieval and AgenticSearch tools |
+| **Feb 2026** | Paper published on arXiv: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
+| **Feb 2026** | Initial release of effGen framework |
 
 ---
 
@@ -20,16 +31,23 @@
 
 ```python
 from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator, PythonREPL
 
-# Create an agent with any model
-agent = Agent(
-    model=load_model("Qwen/Qwen2.5-3B-Instruct"),
-    tools=["calculator", "web_search", "code_executor"]
+# Load model
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
+
+# Create agent with tools
+config = AgentConfig(
+    name="math_agent",
+    model=model,
+    tools=[Calculator(), PythonREPL()]
 )
+agent = Agent(config=config)
 
-# Run tasks
-result = agent.run("Search for the latest AI news and summarize the top 3 stories")
-print(result.output)
+# Run computation
+result = agent.run("What is 24344 * 334?")
+print(f"Answer: {result.output}")
 ```
 
 ---
@@ -87,20 +105,25 @@ effgen serve --port 8000
 ### Python API
 
 ```python
-from effgen import Agent
+from effgen import Agent, load_model
 from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator
+
+# Load model
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
 
 # Configure your agent
 config = AgentConfig(
-    name="MyAgent",
-    model="Qwen/Qwen2.5-3B-Instruct",
-    tools=["calculator", "web_search"],
-    enable_memory=True
+    name="calculator_agent",
+    model=model,
+    tools=[Calculator()],
+    system_prompt="You are a helpful math assistant."
 )
 
 # Create and run
-agent = Agent(config)
+agent = Agent(config=config)
 result = agent.run("Calculate 15% tip on $85.50")
+print(result.output)
 ```
 
 ---
@@ -119,13 +142,32 @@ result = agent.run("Calculate 15% tip on $85.50")
 
 ---
 
+## Built-in Tools
+
+| Tool | Description |
+|------|-------------|
+| `Calculator` | Mathematical calculations and unit conversions |
+| `WebSearch` | Web search using DuckDuckGo (no API key required) |
+| `CodeExecutor` | Safe code execution in sandboxed environment |
+| `PythonREPL` | Interactive Python execution |
+| `FileOperations` | File read/write/list operations |
+| `Retrieval` | RAG-based semantic search over knowledge bases |
+| `AgenticSearch` | Grep-based exact matching for precise retrieval |
+
+---
+
 ## Examples
 
 See the [`examples/`](examples/) directory:
 
 ```bash
-python examples/basic_agent.py   # Calculator agent with tools
-python examples/web_agent.py     # Web search agent
+python examples/basic_agent.py # Calculator agent with tools
+
+python examples/web_agent.py # Web search agent
+
+python examples/retrieval_agent.py # RAG-based retrieval agent
+
+python examples/agentic_search_agent.py # Grep-based agentic search
 ```
 
 ---
@@ -144,13 +186,17 @@ For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md
 
 ## Citation
 
+If you use effGen in your research, please cite our paper:
+
 ```bibtex
-@software{effgen2026,
-  title = {effGen: Enabling Small Language Models as Capable Autonomous Agents},
-  author = {Srivastava, Gaurav and Hussain, Aafiya and Wang, Chi and Lin, Yingyan and Wang, Xuan},
-  year = {2026},
-  url = {https://github.com/ctrl-gaurav/effGen},
-  version = {0.0.1}
+@software{srivastava2026effgen,
+      title={effGen: Enabling Small Language Models as Capable Autonomous Agents},
+      author={Gaurav Srivastava and Aafiya Hussain and Chi Wang and Yingyan Celine Lin and Xuan Wang},
+      year={2026},
+      eprint={2602.00887},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2602.00887},
 }
 ```
 
@@ -158,6 +204,7 @@ For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md
 
 ## Links
 
+- **Paper**: [arXiv:2602.00887](https://arxiv.org/abs/2602.00887)
 - **Website**: [effgen.org](https://effgen.org/)
 - **Documentation**: [effgen.org/docs](https://effgen.org/docs/)
 - **PyPI**: [pypi.org/project/effgen](https://pypi.org/project/effgen/)
@@ -173,7 +220,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**[Get Started](https://effgen.org/docs/)** | **[Examples](examples/)** | **[GitHub](https://github.com/ctrl-gaurav/effGen)**
+**[Get Started](https://effgen.org/docs/)** | **[Examples](examples/)** | **[Paper](https://arxiv.org/abs/2602.00887)** | **[GitHub](https://github.com/ctrl-gaurav/effGen)**
 
 Made with care for the AI community
 

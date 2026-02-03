@@ -11,6 +11,8 @@ __all__ = [
     "WebSearch",
     "FileOperations",
     "Calculator",
+    "Retrieval",
+    "AgenticSearch",
 ]
 
 
@@ -31,5 +33,11 @@ def __getattr__(name):
     elif name == "Calculator":
         from .calculator import Calculator
         return Calculator
+    elif name == "Retrieval":
+        from .retrieval import Retrieval
+        return Retrieval
+    elif name == "AgenticSearch":
+        from .agentic_search import AgenticSearch
+        return AgenticSearch
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

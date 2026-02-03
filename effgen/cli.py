@@ -23,7 +23,7 @@ Usage:
     effgen-agent  # Interactive mode
 
     # Chat mode
-    effgen chat --model phi3-mini
+    effgen chat --model Qwen/Qwen2.5-3B-Instruct
 
     # Other commands
     effgen serve --port 8000
@@ -520,7 +520,7 @@ class CLIInterface:
             # Create agent configuration
             agent_config = AgentConfig(
                 name=args.name or "cli-agent",
-                model=args.model or "phi3-mini",
+                model=args.model or "Qwen/Qwen2.5-3B-Instruct",
                 tools=tools,
                 system_prompt=args.system_prompt or config.get("system_prompt",
                     "You are a helpful AI assistant."),
@@ -657,7 +657,7 @@ class CLIInterface:
 
             agent_config = AgentConfig(
                 name="chat-agent",
-                model=args.model or "phi3-mini",
+                model=args.model or "Qwen/Qwen2.5-3B-Instruct",
                 tools=tools,
                 temperature=args.temperature or 0.7,
                 enable_sub_agents=not args.no_sub_agents,
@@ -701,16 +701,56 @@ class CLIInterface:
                         "timestamp": datetime.now().isoformat()
                     })
 
-                    # Get agent response
-                    if self.console:
-                        self.console.print("\n[bold green]Agent:[/bold green] ", end="")
-                    else:
-                        print("\nAgent: ", end="", flush=True)
-
+                    # Get agent response with thinking spinner
                     response_text = ""
-                    for token in agent.stream(user_input):
-                        print(token, end='', flush=True)
-                        response_text += token
+                    first_token = True
+
+                    if self.console:
+                        # Show thinking spinner until first token arrives
+                        with Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            console=self.console,
+                            transient=True  # Remove spinner when done
+                        ) as progress:
+                            progress.add_task("Thinking...", total=None)
+
+                            # Get iterator and wait for first token
+                            token_iter = iter(agent.stream(user_input))
+                            try:
+                                first = next(token_iter)
+                                response_text += first
+                            except StopIteration:
+                                first = None
+
+                        # Now print the response
+                        self.console.print("\n[bold green]Agent:[/bold green] ", end="")
+                        if first:
+                            print(first, end='', flush=True)
+
+                        # Continue with remaining tokens
+                        for token in token_iter:
+                            print(token, end='', flush=True)
+                            response_text += token
+                    else:
+                        print("\nThinking...", end="", flush=True)
+                        token_iter = iter(agent.stream(user_input))
+                        try:
+                            first = next(token_iter)
+                            response_text += first
+                        except StopIteration:
+                            first = None
+
+                        # Clear "Thinking..." and print response
+                        print("\r" + " " * 20 + "\r", end="")  # Clear line
+                        print("Agent: ", end="", flush=True)
+                        if first:
+                            print(first, end='', flush=True)
+
+                        for token in token_iter:
+                            print(token, end='', flush=True)
+                            response_text += token
+
                     print()  # New line
 
                     # Add to history
@@ -775,15 +815,54 @@ class CLIInterface:
         self.print_header(f"effGen v{__version__} - API Server")
 
         try:
+            from contextlib import asynccontextmanager
             from fastapi import FastAPI, HTTPException
             from fastapi.middleware.cors import CORSMiddleware
-            from pydantic import BaseModel
+            from fastapi.responses import JSONResponse
+            from pydantic import BaseModel as PydanticBaseModel, ConfigDict
             import uvicorn
+        except ImportError:
+            self.print_error("FastAPI and uvicorn are required for server mode.")
+            self.print("Install with: pip install fastapi uvicorn")
+            return 1
 
+        try:
+            # Define request/response models with Pydantic v2 style
+            class TaskRequest(PydanticBaseModel):
+                model_config = ConfigDict(extra="ignore")
+
+                task: str
+                model: Optional[str] = "Qwen/Qwen2.5-3B-Instruct"
+                tools: Optional[List[str]] = None
+                temperature: Optional[float] = 0.7
+                max_iterations: Optional[int] = 10
+                stream: bool = False
+
+            class TaskResponse(PydanticBaseModel):
+                model_config = ConfigDict(extra="ignore")
+
+                output: str
+                success: bool
+                metadata: Dict[str, Any]
+
+            # Store reference to self for use in lifespan
+            cli_instance = self
+
+            @asynccontextmanager
+            async def lifespan(app: FastAPI):
+                """Lifespan context manager for startup/shutdown."""
+                cli_instance.print_success("Server starting up...")
+                cli_instance.tool_registry.discover_builtin_tools()
+                cli_instance.print_success(f"Discovered {len(cli_instance.tool_registry.list_tools())} tools")
+                yield
+                cli_instance.print("Server shutting down...")
+
+            # Create FastAPI app with lifespan
             app = FastAPI(
                 title="effGen API",
                 description="API server for effGen framework",
-                version=__version__
+                version=__version__,
+                lifespan=lifespan
             )
 
             # Add CORS middleware
@@ -795,65 +874,48 @@ class CLIInterface:
                 allow_headers=["*"],
             )
 
-            # Request/Response models
-            class TaskRequest(BaseModel):
-                task: str
-                model: Optional[str] = "phi3-mini"
-                tools: Optional[List[str]] = None
-                temperature: Optional[float] = 0.7
-                max_iterations: Optional[int] = 10
-                stream: bool = False
+            # Store state in app
+            app.state.cli = cli_instance
 
-            class TaskResponse(BaseModel):
-                output: str
-                success: bool
-                metadata: Dict[str, Any]
-
-            # Initialize agent (reusable)
-            agent_instance = None
-
-            @app.post("/run", response_model=TaskResponse)
+            @app.post("/run")
             async def run_task(request: TaskRequest):
                 """Run a task with an agent."""
-                nonlocal agent_instance
-
                 try:
-                    # Create agent if not exists
-                    if not agent_instance:
-                        tools = []
-                        self.tool_registry.discover_builtin_tools()
-                        tool_names = self.tool_registry.list_tools()[:5]
-                        for name in tool_names:
-                            try:
-                                tool = await self.tool_registry.get_tool(name)
-                                tools.append(tool)
-                            except Exception:
-                                pass
+                    # Create agent for each request to handle different models
+                    tools = []
+                    tool_names = app.state.cli.tool_registry.list_tools()[:5]
+                    for name in tool_names:
+                        try:
+                            tool = await app.state.cli.tool_registry.get_tool(name)
+                            tools.append(tool)
+                        except Exception as tool_err:
+                            logging.debug(f"Failed to load tool {name}: {tool_err}")
 
-                        agent_config = AgentConfig(
-                            name="api-agent",
-                            model=request.model,
-                            tools=tools,
-                            temperature=request.temperature,
-                            max_iterations=request.max_iterations
-                        )
-                        agent_instance = Agent(agent_config)
+                    agent_config = AgentConfig(
+                        name="api-agent",
+                        model=request.model,
+                        tools=tools,
+                        temperature=request.temperature,
+                        max_iterations=request.max_iterations
+                    )
+                    agent_instance = Agent(agent_config)
 
                     # Run task
                     response = agent_instance.run(request.task)
 
-                    return TaskResponse(
-                        output=response.output,
-                        success=response.success,
-                        metadata={
-                            "mode": response.mode.value,
+                    return JSONResponse(content={
+                        "output": response.output,
+                        "success": response.success,
+                        "metadata": {
+                            "mode": response.mode.value if hasattr(response.mode, 'value') else str(response.mode),
                             "iterations": response.iterations,
                             "tool_calls": response.tool_calls,
                             "execution_time": response.execution_time
                         }
-                    )
+                    })
 
                 except Exception as e:
+                    logging.exception("Error running task")
                     raise HTTPException(status_code=500, detail=str(e))
 
             @app.get("/health")
@@ -862,10 +924,35 @@ class CLIInterface:
                 return {"status": "healthy", "version": __version__}
 
             @app.get("/tools")
-            async def list_tools():
+            async def list_tools_endpoint():
                 """List available tools."""
-                tools = self.tool_registry.list_tools()
-                return {"tools": tools}
+                tools = app.state.cli.tool_registry.list_tools()
+                tool_info = []
+                for tool_name in tools:
+                    try:
+                        metadata = app.state.cli.tool_registry.get_metadata(tool_name)
+                        tool_info.append({
+                            "name": tool_name,
+                            "description": metadata.description,
+                            "category": metadata.category.value if hasattr(metadata.category, 'value') else str(metadata.category)
+                        })
+                    except Exception:
+                        tool_info.append({"name": tool_name, "description": "N/A", "category": "unknown"})
+                return {"tools": tool_info, "count": len(tools)}
+
+            @app.get("/")
+            async def root():
+                """Root endpoint with API information."""
+                return {
+                    "name": "effGen API",
+                    "version": __version__,
+                    "endpoints": {
+                        "POST /run": "Run a task with an agent",
+                        "GET /health": "Health check",
+                        "GET /tools": "List available tools",
+                        "GET /docs": "OpenAPI documentation"
+                    }
+                }
 
             # Start server
             self.print(f"Starting server on {args.host}:{args.port}")
@@ -876,18 +963,14 @@ class CLIInterface:
                 app,
                 host=args.host,
                 port=args.port,
-                log_level="info" if args.verbose else "warning"
+                log_level="info" if getattr(args, 'verbose', False) else "warning"
             )
 
             return 0
 
-        except ImportError:
-            self.print_error("FastAPI and uvicorn are required for server mode.")
-            self.print("Install with: pip install fastapi uvicorn")
-            return 1
         except Exception as e:
             self.print_error(f"Error starting server: {e}")
-            if args.verbose:
+            if getattr(args, 'verbose', False):
                 import traceback
                 traceback.print_exc()
             return 1
@@ -960,7 +1043,7 @@ class CLIInterface:
         # Create default configuration
         default_config = {
             "models": {
-                "default": "phi3-mini",
+                "default": "Qwen/Qwen2.5-3B-Instruct",
                 "phi3_mini": {
                     "model_path": "microsoft/Phi-3-mini-4k-instruct",
                     "temperature": 0.7,
@@ -1159,7 +1242,7 @@ class CLIInterface:
             self.print_warning("No models configuration found")
             self.print("Common models:")
             common_models = [
-                "phi3-mini",
+                "Qwen/Qwen2.5-3B-Instruct",
                 "mistral-7b",
                 "llama-2-7b",
                 "gemma-7b"
@@ -1270,8 +1353,8 @@ def create_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  effgen run "What is the weather in Paris?" --model phi3-mini
-  effgen chat --model phi3-mini --temperature 0.8
+  effgen run "What is the weather in Paris?" --model Qwen/Qwen2.5-3B-Instruct
+  effgen chat --model Qwen/Qwen2.5-3B-Instruct --temperature 0.8
   effgen serve --port 8000
   effgen config show --file configs/models.yaml
   effgen tools list
