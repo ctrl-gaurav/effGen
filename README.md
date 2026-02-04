@@ -1,7 +1,7 @@
 <div align="center">
 
 <!-- Animated Header -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=180&section=header&text=effGen&fontSize=80&fontColor=fff&animation=twinkling&fontAlignY=35&desc=Enabling%20Small%20Language%20Models%20as%20Capable%20Autonomous%20Agents&descSize=18&descAlignY=55"/>
+<img src="assets/header.svg" alt="effGen" width="100%"/>
 
 <br/>
 
@@ -410,6 +410,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 **Made with ❤️ for the AI community**
 
 <!-- Footer Wave -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=100&section=footer"/>
+<img src="assets/footer.svg" alt="effGen footer" width="100%"/>
 
 </div>

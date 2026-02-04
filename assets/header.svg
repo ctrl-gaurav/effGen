@@ -1,0 +1,519 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 200" width="1280" height="200">
+<defs>
+
+  <!-- ══════ BACKGROUNDS ══════ -->
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#03060f"/>
+    <stop offset="100%" stop-color="#080c1a"/>
+  </linearGradient>
+
+  <!-- ══════ NEBULA CLOUDS ══════ -->
+  <radialGradient id="neb0" cx="50%" cy="42%" r="40%">
+    <stop offset="0%"   stop-color="#6C63FF" stop-opacity="0.18"/>
+    <stop offset="50%"  stop-color="#6C63FF" stop-opacity="0.05"/>
+    <stop offset="100%" stop-color="#6C63FF" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="neb1" cx="50%" cy="48%" r="25%">
+    <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0.12"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="nebL" cx="8%" cy="55%" r="24%">
+    <stop offset="0%"   stop-color="#6C63FF" stop-opacity="0.09"/>
+    <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="nebR" cx="92%" cy="52%" r="22%">
+    <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0.08"/>
+    <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
+  </radialGradient>
+
+  <!-- ══════ GRID GRADIENTS (applied to paths, works correctly) ══════ -->
+  <linearGradient id="gV" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0"/>
+    <stop offset="50%"  stop-color="#4ECDC4" stop-opacity="0.04"/>
+    <stop offset="78%"  stop-color="#4ECDC4" stop-opacity="0.16"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0.3"/>
+  </linearGradient>
+  <linearGradient id="gH" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="55%"  stop-color="#6C63FF" stop-opacity="0"/>
+    <stop offset="78%"  stop-color="#6C63FF" stop-opacity="0.1"/>
+    <stop offset="100%" stop-color="#6C63FF" stop-opacity="0.25"/>
+  </linearGradient>
+  <!-- horizon glow band -->
+  <linearGradient id="horizGlow" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0"/>
+    <stop offset="25%"  stop-color="#4ECDC4" stop-opacity="0.12"/>
+    <stop offset="50%"  stop-color="#fff"    stop-opacity="0.22"/>
+    <stop offset="75%"  stop-color="#4ECDC4" stop-opacity="0.12"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0"/>
+  </linearGradient>
+
+  <!-- ══════ SCAN-LINE pulse across grid ══════ -->
+  <linearGradient id="scanLine" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0"/>
+    <stop offset="40%"  stop-color="#4ECDC4" stop-opacity="0.5"/>
+    <stop offset="50%"  stop-color="#fff"    stop-opacity="0.9"/>
+    <stop offset="60%"  stop-color="#4ECDC4" stop-opacity="0.5"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0"/>
+  </linearGradient>
+
+  <!-- ══════ ORB ══════ -->
+  <radialGradient id="orbFill" cx="46%" cy="40%" r="50%">
+    <stop offset="0%"   stop-color="#fff"    stop-opacity="0.9"/>
+    <stop offset="15%"  stop-color="#c3bfff"/>
+    <stop offset="35%"  stop-color="#6C63FF"/>
+    <stop offset="60%"  stop-color="#312d6e" stop-opacity="0.7"/>
+    <stop offset="100%" stop-color="#0a0916" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="orbAtmo" cx="50%" cy="50%" r="50%">
+    <stop offset="0%"   stop-color="#6C63FF" stop-opacity="0.35"/>
+    <stop offset="45%"  stop-color="#6C63FF" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#6C63FF" stop-opacity="0"/>
+  </radialGradient>
+
+  <!-- ══════ TITLE COLORS ══════ -->
+  <linearGradient id="effFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="#ffffff"/>
+    <stop offset="100%" stop-color="#c8c4ff"/>
+  </linearGradient>
+  <linearGradient id="genFill" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%"   stop-color="#4ECDC4"/>
+    <stop offset="100%" stop-color="#7c6cff"/>
+  </linearGradient>
+  <linearGradient id="neonEdge" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#6C63FF"/>
+    <stop offset="50%"  stop-color="#4ECDC4"/>
+    <stop offset="100%" stop-color="#a78bfa"/>
+  </linearGradient>
+
+  <!-- ══════ LIGHT-RAY across title ══════ -->
+  <linearGradient id="ray" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#fff" stop-opacity="0"/>
+    <stop offset="47%"  stop-color="#fff" stop-opacity="0"/>
+    <stop offset="50%"  stop-color="#fff" stop-opacity="0.5"/>
+    <stop offset="53%"  stop-color="#fff" stop-opacity="0"/>
+    <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+  </linearGradient>
+
+  <!-- ══════ CIRCUIT traces color ══════ -->
+  <linearGradient id="traceColorA" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#4ECDC4" stop-opacity="0.4"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0.1"/>
+  </linearGradient>
+  <linearGradient id="traceColorB" x1="1" y1="0" x2="0" y2="0">
+    <stop offset="0%" stop-color="#4ECDC4" stop-opacity="0.4"/>
+    <stop offset="100%" stop-color="#4ECDC4" stop-opacity="0.1"/>
+  </linearGradient>
+  <linearGradient id="traceColorC" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.08"/>
+  </linearGradient>
+  <linearGradient id="traceColorD" x1="1" y1="0" x2="0" y2="0">
+    <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.08"/>
+  </linearGradient>
+
+  <!-- ══════ LOGO-GLYPH hex ring colors ══════ -->
+  <linearGradient id="hexStroke" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#4ECDC4"/>
+    <stop offset="100%" stop-color="#6C63FF"/>
+  </linearGradient>
+
+  <!-- ══════ BOTTOM EDGE glow ══════ -->
+  <linearGradient id="bottomEdge" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%"   stop-color="#6C63FF" stop-opacity="0"/>
+    <stop offset="30%"  stop-color="#6C63FF" stop-opacity="0.5"/>
+    <stop offset="50%"  stop-color="#4ECDC4" stop-opacity="0.85"/>
+    <stop offset="70%"  stop-color="#6C63FF" stop-opacity="0.5"/>
+    <stop offset="100%" stop-color="#6C63FF" stop-opacity="0"/>
+  </linearGradient>
+
+  <!-- ══════ FILTERS ══════ -->
+  <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="8"/>
+  </filter>
+  <filter id="titleNeon" x="-20%" y="-30%" width="140%" height="160%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="5" result="b"/>
+    <feFlood flood-color="#6C63FF" flood-opacity="0.5" result="c"/>
+    <feComposite in="c" in2="b" operator="in" result="s"/>
+    <feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="dotBloom" x="-100%" y="-100%" width="300%" height="300%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+  </filter>
+  <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="1.8"/>
+  </filter>
+
+  <!-- ══════ CLIP ══════ -->
+  <clipPath id="main"><rect width="1280" height="200"/></clipPath>
+  <clipPath id="titleBox"><rect x="440" y="50" width="400" height="68"/></clipPath>
+
+</defs>
+
+<!-- ═══════════════════════════════════════════════════════════
+     GLOBAL STYLES
+     ═══════════════════════════════════════════════════════════ -->
+<style>
+  /* ── parallax star layers ── */
+  @keyframes starDriftA { 0%{transform:translateX(0)} 100%{transform:translateX(-40px)} }
+  @keyframes starDriftB { 0%{transform:translateX(0)} 100%{transform:translateX(25px)}  }
+  @keyframes starDriftC { 0%{transform:translateX(0)} 100%{transform:translateX(-18px)} }
+  .sA{animation:starDriftA 30s linear infinite}
+  .sB{animation:starDriftB 45s linear infinite}
+  .sC{animation:starDriftC 60s linear infinite}
+
+  /* ── twinkle ── */
+  @keyframes tw1{0%,100%{opacity:.1}  50%{opacity:.9}}
+  @keyframes tw2{0%,100%{opacity:.2}  50%{opacity:.7}}
+  @keyframes tw3{0%,100%{opacity:.05} 50%{opacity:.5}}
+  .t1{animation:tw1 2s   ease-in-out infinite}
+  .t2{animation:tw2 3s   ease-in-out infinite}
+  .t3{animation:tw3 1.7s ease-in-out infinite}
+
+  /* ── grid scan-line sweeps down ── */
+  @keyframes scanDown{
+    0%  {transform:translateY(-40px);opacity:0}
+    12% {opacity:1}
+    88% {opacity:1}
+    100%{transform:translateY(210px);opacity:0}
+  }
+  .scanDown{animation:scanDown 4s ease-in-out infinite}
+
+  /* ── orb pulse + glow ── */
+  @keyframes orbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.055)}}
+  .orbPulse{animation:orbPulse 3.2s ease-in-out infinite;transform-origin:640px 78px}
+  @keyframes orbGlowPulse{0%,100%{opacity:.5}50%{opacity:.82}}
+  .orbGP{animation:orbGlowPulse 3.2s ease-in-out infinite}
+
+  /* ── orb inner arc rotation ── */
+  @keyframes arcSpin1{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes arcSpin2{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
+  .arc1{animation:arcSpin1 8s  linear infinite;transform-origin:640px 78px}
+  .arc2{animation:arcSpin2 12s linear infinite;transform-origin:640px 78px}
+  .arc3{animation:arcSpin1 18s linear infinite;transform-origin:640px 78px}
+
+  /* ── light ray across title ── */
+  @keyframes raySweep{0%{transform:translateX(-400px)}100%{transform:translateX(400px)}}
+  .raySweep{animation:raySweep 3.5s ease-in-out infinite}
+
+  /* ── subtitle breathe ── */
+  @keyframes subBreath{0%,100%{opacity:.45;letter-spacing:3px}50%{opacity:.7;letter-spacing:2.2px}}
+  .subBreath{animation:subBreath 4s ease-in-out infinite}
+
+  /* ── hex logo-glyph spin ── */
+  @keyframes hexSpin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  .hexSpin{animation:hexSpin 20s linear infinite;transform-origin:640px 78px}
+
+  /* ── circuit node pulse ── */
+  @keyframes nodePulse{0%,100%{r:2;opacity:.35}50%{r:3.2;opacity:.7}}
+  .nP{animation:nodePulse 2.5s ease-in-out infinite}
+</style>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 0  ─  background
+     ═══════════════════════════════════════════════════════════ -->
+<rect width="1280" height="200" fill="url(#bg)"/>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 1  ─  nebula atmosphere
+     ═══════════════════════════════════════════════════════════ -->
+<rect width="1280" height="200" fill="url(#neb0)"/>
+<rect width="1280" height="200" fill="url(#neb1)"/>
+<rect width="1280" height="200" fill="url(#nebL)"/>
+<rect width="1280" height="200" fill="url(#nebR)"/>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 2  ─  parallax star fields (3 depth layers)
+     ═══════════════════════════════════════════════════════════ -->
+<!-- far — tiny, slow drift, slow twinkle -->
+<g class="sC">
+  <circle class="t3" cx="38"   cy="14"  r=".65" fill="#fff" style="animation-delay:.4s"/>
+  <circle class="t3" cx="142"  cy="52"  r=".55" fill="#fff" style="animation-delay:1.0s"/>
+  <circle class="t3" cx="305"  cy="9"   r=".7"  fill="#fff" style="animation-delay:.7s"/>
+  <circle class="t3" cx="478"  cy="40"  r=".5"  fill="#fff" style="animation-delay:1.9s"/>
+  <circle class="t3" cx="672"  cy="7"   r=".6"  fill="#fff" style="animation-delay:.3s"/>
+  <circle class="t3" cx="811"  cy="36"  r=".55" fill="#fff" style="animation-delay:1.4s"/>
+  <circle class="t3" cx="988"  cy="12"  r=".65" fill="#fff" style="animation-delay:.8s"/>
+  <circle class="t3" cx="1138" cy="48"  r=".5"  fill="#fff" style="animation-delay:1.7s"/>
+  <circle class="t3" cx="1228" cy="19"  r=".6"  fill="#fff" style="animation-delay:.15s"/>
+  <circle class="t3" cx="82"   cy="88"  r=".45" fill="#fff" style="animation-delay:1.3s"/>
+  <circle class="t3" cx="1052" cy="72"  r=".55" fill="#fff" style="animation-delay:.6s"/>
+  <circle class="t3" cx="560"  cy="76"  r=".5"  fill="#fff" style="animation-delay:2.1s"/>
+  <circle class="t3" cx="740"  cy="82"  r=".45" fill="#fff" style="animation-delay:.9s"/>
+</g>
+<!-- mid — medium, moderate drift -->
+<g class="sB">
+  <circle class="t2" cx="72"   cy="32"  r=".9"  fill="#fff" style="animation-delay:.5s"/>
+  <circle class="t2" cx="215"  cy="75"  r=".85" fill="#fff" style="animation-delay:1.2s"/>
+  <circle class="t2" cx="392"  cy="25"  r="1.0" fill="#fff" style="animation-delay:.1s"/>
+  <circle class="t2" cx="542"  cy="64"  r=".75" fill="#fff" style="animation-delay:1.6s"/>
+  <circle class="t2" cx="728"  cy="19"  r=".9"  fill="#fff" style="animation-delay:.75s"/>
+  <circle class="t2" cx="902"  cy="55"  r=".85" fill="#fff" style="animation-delay:2.0s"/>
+  <circle class="t2" cx="1068" cy="28"  r=".95" fill="#fff" style="animation-delay:.3s"/>
+  <circle class="t2" cx="1198" cy="65"  r=".8"  fill="#fff" style="animation-delay:.95s"/>
+  <circle class="t2" cx="175"  cy="42"  r=".9"  fill="#4ECDC4" style="animation-delay:1.1s"/>
+  <circle class="t2" cx="1105" cy="52"  r=".85" fill="#6C63FF" style="animation-delay:.65s"/>
+</g>
+<!-- near — largest, fastest drift, fastest twinkle -->
+<g class="sA">
+  <circle class="t1" cx="115"  cy="58"  r="1.3" fill="#fff" style="animation-delay:.2s"/>
+  <circle class="t1" cx="255"  cy="17"  r="1.2" fill="#fff" style="animation-delay:.85s"/>
+  <circle class="t1" cx="1158" cy="40"  r="1.4" fill="#fff" style="animation-delay:.4s"/>
+  <circle class="t1" cx="1018" cy="15"  r="1.15" fill="#fff" style="animation-delay:1.5s"/>
+  <circle class="t1" cx="330"  cy="70"  r="1.0" fill="#a78bfa" style="animation-delay:1.8s"/>
+  <circle class="t1" cx="948"  cy="38"  r="1.1" fill="#4ECDC4" style="animation-delay:.5s"/>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 3  ─  perspective grid (vanishing point 640,100)
+     ═══════════════════════════════════════════════════════════ -->
+<g clip-path="url(#main)">
+  <!-- vertical rays — drawn as closed paths so gV gradient renders properly -->
+  <!-- Each is a thin triangle: vanish-point → bottom-left-edge → bottom-right-edge -->
+  <path d="M640,100 L-2,200   L62,200  Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L62,200   L142,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L142,200  L222,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L222,200  L302,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L302,200  L382,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L382,200  L462,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L462,200  L542,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L542,200  L622,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L622,200  L660,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L660,200  L740,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L740,200  L820,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L820,200  L900,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L900,200  L980,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L980,200  L1060,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L1060,200 L1140,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L1140,200 L1220,200 Z" fill="url(#gV)" opacity=".7"/>
+  <path d="M640,100 L1220,200 L1282,200 Z" fill="url(#gV)" opacity=".7"/>
+
+  <!-- actual grid-line strokes on top (thin, same gradient) -->
+  <line x1="640" y1="100" x2="-2"    y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="62"    y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="142"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="222"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="302"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="382"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="462"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="542"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="640"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="740"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="820"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="900"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="980"   y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="1060"  y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="1140"  y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="1220"  y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+  <line x1="640" y1="100" x2="1282"  y2="200" stroke="url(#gV)" stroke-width=".55" fill="none"/>
+
+  <!-- horizontal perspective lines (x-extents computed from vanish-point projection) -->
+  <!-- y=108 → very narrow -->  <line x1="588" y1="108" x2="692"  y2="108" stroke="url(#gH)" stroke-width=".4" fill="none"/>
+  <!-- y=117 -->                <line x1="530" y1="117" x2="750"  y2="117" stroke="url(#gH)" stroke-width=".45" fill="none"/>
+  <!-- y=128 -->                <line x1="448" y1="128" x2="832"  y2="128" stroke="url(#gH)" stroke-width=".5" fill="none"/>
+  <!-- y=142 -->                <line x1="330" y1="142" x2="950"  y2="142" stroke="url(#gH)" stroke-width=".55" fill="none"/>
+  <!-- y=158 -->                <line x1="168" y1="158" x2="1112" y2="158" stroke="url(#gH)" stroke-width=".6" fill="none"/>
+  <!-- y=178 -->                <line x1="0"   y1="178" x2="1280" y2="178" stroke="url(#gH)" stroke-width=".65" fill="none"/>
+
+  <!-- ── horizon glow band at the vanishing line ── -->
+  <rect x="0" y="98" width="1280" height="4" fill="url(#horizGlow)" opacity=".7"/>
+
+  <!-- ── scan-line pulse sweeping down ── -->
+  <g class="scanDown">
+    <line x1="0" y1="140" x2="1280" y2="140" stroke="url(#scanLine)" stroke-width="2" opacity=".85"/>
+  </g>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 4  ─  circuit traces + travelling pulses
+     ═══════════════════════════════════════════════════════════ -->
+<!-- LEFT traces -->
+<path d="M545,95  L435,95  L435,132 L295,132" fill="none" stroke="url(#traceColorA)" stroke-width=".9"/>
+<path d="M435,95  L365,95  L365,62  L215,62"  fill="none" stroke="url(#traceColorC)" stroke-width=".8"/>
+<path d="M295,132 L195,132 L195,162 L95,162"  fill="none" stroke="url(#traceColorA)" stroke-width=".7"/>
+<!-- RIGHT traces (mirrored) -->
+<path d="M735,95  L845,95  L845,132 L985,132" fill="none" stroke="url(#traceColorB)" stroke-width=".9"/>
+<path d="M845,95  L915,95  L915,62  L1065,62" fill="none" stroke="url(#traceColorD)" stroke-width=".8"/>
+<path d="M985,132 L1085,132 L1085,162 L1185,162" fill="none" stroke="url(#traceColorB)" stroke-width=".7"/>
+
+<!-- node dots at trace terminals (animated pulse) -->
+<circle class="nP" cx="295" cy="132" r="2"   fill="#4ECDC4" style="animation-delay:0s"/>
+<circle class="nP" cx="215" cy="62"  r="2"   fill="#a78bfa" style="animation-delay:.6s"/>
+<circle class="nP" cx="95"  cy="162" r="1.8" fill="#4ECDC4" style="animation-delay:1.2s"/>
+<circle class="nP" cx="985" cy="132" r="2"   fill="#4ECDC4" style="animation-delay:.3s"/>
+<circle class="nP" cx="1065" cy="62" r="2"   fill="#a78bfa" style="animation-delay:.9s"/>
+<circle class="nP" cx="1185" cy="162" r="1.8" fill="#4ECDC4" style="animation-delay:1.5s"/>
+
+<!-- travelling pulse dots (animateMotion — works in GitHub SVG) -->
+<!-- L1 -->
+<circle r="2.8" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".9">
+  <animateMotion dur="2.6s" repeatCount="indefinite">
+    <mpath href="#pathL1"/>
+  </animateMotion>
+</circle>
+<path id="pathL1" d="M545,95 L435,95 L435,132 L295,132" fill="none"/>
+
+<!-- L1 delayed clone -->
+<circle r="2.2" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".65">
+  <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite">
+    <mpath href="#pathL1"/>
+  </animateMotion>
+</circle>
+
+<!-- L2 -->
+<circle r="2.4" fill="#a78bfa" filter="url(#dotBloom)" opacity=".85">
+  <animateMotion dur="3.2s" repeatCount="indefinite">
+    <mpath href="#pathL2"/>
+  </animateMotion>
+</circle>
+<path id="pathL2" d="M435,95 L365,95 L365,62 L215,62" fill="none"/>
+
+<circle r="1.9" fill="#a78bfa" filter="url(#dotBloom)" opacity=".55">
+  <animateMotion dur="3.2s" begin="1.6s" repeatCount="indefinite">
+    <mpath href="#pathL2"/>
+  </animateMotion>
+</circle>
+
+<!-- L3 -->
+<circle r="2.0" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".75">
+  <animateMotion dur="3.8s" repeatCount="indefinite">
+    <mpath href="#pathL3"/>
+  </animateMotion>
+</circle>
+<path id="pathL3" d="M295,132 L195,132 L195,162 L95,162" fill="none"/>
+
+<!-- R1 -->
+<circle r="2.8" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".9">
+  <animateMotion dur="2.6s" repeatCount="indefinite">
+    <mpath href="#pathR1"/>
+  </animateMotion>
+</circle>
+<path id="pathR1" d="M735,95 L845,95 L845,132 L985,132" fill="none"/>
+
+<circle r="2.2" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".65">
+  <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite">
+    <mpath href="#pathR1"/>
+  </animateMotion>
+</circle>
+
+<!-- R2 -->
+<circle r="2.4" fill="#a78bfa" filter="url(#dotBloom)" opacity=".85">
+  <animateMotion dur="3.2s" repeatCount="indefinite">
+    <mpath href="#pathR2"/>
+  </animateMotion>
+</circle>
+<path id="pathR2" d="M845,95 L915,95 L915,62 L1065,62" fill="none"/>
+
+<circle r="1.9" fill="#a78bfa" filter="url(#dotBloom)" opacity=".55">
+  <animateMotion dur="3.2s" begin="1.6s" repeatCount="indefinite">
+    <mpath href="#pathR2"/>
+  </animateMotion>
+</circle>
+
+<!-- R3 -->
+<circle r="2.0" fill="#4ECDC4" filter="url(#dotBloom)" opacity=".75">
+  <animateMotion dur="3.8s" repeatCount="indefinite">
+    <mpath href="#pathR3"/>
+  </animateMotion>
+</circle>
+<path id="pathR3" d="M985,132 L1085,132 L1085,162 L1185,162" fill="none"/>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 5  ─  holographic orb + rotating arc segments
+     ═══════════════════════════════════════════════════════════ -->
+<!-- atmosphere bloom -->
+<circle class="orbGP" cx="640" cy="78" r="72" fill="url(#orbAtmo)" filter="url(#bloom)"/>
+
+<!-- rotating arc rings (3 rings at different speeds & tilts) -->
+<!-- ring 1 — equatorial, fast -->
+<g class="arc1">
+  <ellipse cx="640" cy="78" rx="42" ry="10" fill="none" stroke="#4ECDC4" stroke-width=".7" opacity=".3"
+           stroke-dasharray="80 52"/>
+</g>
+<!-- ring 2 — tilted, medium -->
+<g class="arc2">
+  <ellipse cx="640" cy="78" rx="38" ry="22" fill="none" stroke="#a78bfa" stroke-width=".6" opacity=".25"
+           stroke-dasharray="65 70" transform="rotate(35 640 78)"/>
+</g>
+<!-- ring 3 — near-vertical, slow -->
+<g class="arc3">
+  <ellipse cx="640" cy="78" rx="12" ry="40" fill="none" stroke="#6C63FF" stroke-width=".55" opacity=".2"
+           stroke-dasharray="50 75" transform="rotate(-20 640 78)"/>
+</g>
+
+<!-- orb body -->
+<g class="orbPulse">
+  <circle cx="640" cy="78" r="32" fill="url(#orbFill)"/>
+  <!-- inner ring rim -->
+  <circle cx="640" cy="78" r="32" fill="none" stroke="#4ECDC4" stroke-width=".5" opacity=".2"/>
+  <!-- specular -->
+  <ellipse cx="631" cy="69" rx="8" ry="4.5" fill="#fff" opacity=".16" filter="url(#softGlow)"/>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 6  ─  geometric logo-glyph (hexagon AI motif)
+                 Sits behind/around the orb, slow rotation
+     ═══════════════════════════════════════════════════════════ -->
+<!-- outer hex ring — dashed, slow spin -->
+<g class="hexSpin">
+  <!-- hexagon: flat-top, radius 52, centered 640,78 -->
+  <polygon points="692,78 666,123.1 614,123.1 588,78 614,32.9 666,32.9"
+           fill="none" stroke="url(#hexStroke)" stroke-width=".7"
+           stroke-dasharray="22 18" opacity=".22"/>
+</g>
+<!-- inner hex — counter-spin, different dash -->
+<g style="animation:arcSpin2 14s linear infinite;transform-origin:640px 78px">
+  <polygon points="672,78 656,105.7 624,105.7 608,78 624,50.3 656,50.3"
+           fill="none" stroke="#4ECDC4" stroke-width=".55"
+           stroke-dasharray="14 22" opacity=".18"/>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 7  ─  TITLE  "effGen"
+     ═══════════════════════════════════════════════════════════ -->
+<!-- deep bloom behind text -->
+<text x="640" y="108" text-anchor="middle"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="66" font-weight="800" letter-spacing="-1"
+      fill="#6C63FF" opacity=".45" filter="url(#bloom)">effGen</text>
+
+<!-- "eff" — white-to-lavender vertical gradient -->
+<text x="609" y="108" text-anchor="end"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="66" font-weight="800" letter-spacing="-1"
+      fill="url(#effFill)" filter="url(#titleNeon)">eff</text>
+<!-- "Gen" — teal-to-purple gradient -->
+<text x="615" y="108" text-anchor="start"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="66" font-weight="800" letter-spacing="-1"
+      fill="url(#genFill)" filter="url(#titleNeon)">Gen</text>
+
+<!-- light-ray sweep clipped to title bounding box -->
+<g clip-path="url(#titleBox)">
+  <rect class="raySweep" x="440" y="50" width="400" height="68" fill="url(#ray)" opacity=".75"/>
+</g>
+
+<!-- neon outline crisp pass -->
+<text x="609" y="108" text-anchor="end"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="66" font-weight="800" letter-spacing="-1"
+      fill="none" stroke="url(#neonEdge)" stroke-width=".35" opacity=".55">eff</text>
+<text x="615" y="108" text-anchor="start"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="66" font-weight="800" letter-spacing="-1"
+      fill="none" stroke="url(#neonEdge)" stroke-width=".35" opacity=".55">Gen</text>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 8  ─  subtitle
+     ═══════════════════════════════════════════════════════════ -->
+<text class="subBreath" x="640" y="143" text-anchor="middle"
+      font-family="'Segoe UI',Inter,'Helvetica Neue',Arial,sans-serif"
+      font-size="14.5" font-weight="300" fill="#7a8da8" letter-spacing="2.8">
+  Enabling Small Language Models as Capable Autonomous Agents
+</text>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LAYER 9  ─  bottom edge light-line
+     ═══════════════════════════════════════════════════════════ -->
+<line x1="0" y1="199.6" x2="1280" y2="199.6" stroke="url(#bottomEdge)" stroke-width="1.1" opacity=".75"/>
+</svg>
