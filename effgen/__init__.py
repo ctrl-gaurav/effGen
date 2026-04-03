@@ -93,6 +93,13 @@ from effgen.guardrails import (
 from effgen.tools import BaseTool, ToolRegistry
 from effgen.tools import get_registry as get_tool_registry
 
+# MLX engine imports (Apple Silicon only)
+try:
+    from effgen.models.mlx_engine import MLXEngine
+    from effgen.models.mlx_vlm_engine import MLXVLMEngine
+except ImportError:
+    pass
+
 # Additional convenience imports
 try:
     from effgen.tools.fallback import ToolFallbackChain

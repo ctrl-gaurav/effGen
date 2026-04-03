@@ -241,6 +241,53 @@ models:
     temperature: 0.7
     top_p: 0.9
 
+  # =============================================================================
+  # MLX MODELS - Apple Silicon Local Inference
+  # =============================================================================
+
+  # Mistral 7B (MLX, 4-bit quantized for Apple Silicon)
+  mistral_7b_mlx:
+    type: huggingface
+    model_id: mlx-community/Mistral-7B-Instruct-v0.3-4bit
+    inference_engine: mlx  # Options: mlx, mlx_vlm, vllm, transformers, tgi
+
+    # Generation Parameters
+    max_length: 8192
+    temperature: 0.7
+    top_p: 0.9
+
+  # Qwen 2.5 3B (MLX, 4-bit quantized for Apple Silicon)
+  qwen25_3b_mlx:
+    type: huggingface
+    model_id: mlx-community/Qwen2.5-3B-Instruct-4bit
+    inference_engine: mlx
+
+    max_length: 4096
+    temperature: 0.7
+    top_p: 0.9
+
+  # LiquidAI LFM2.5 1.2B (MLX, 8-bit quantized for Apple Silicon)
+  # Hybrid conv+attention architecture, strong at agentic tasks & data extraction
+  lfm25_mlx:
+    type: huggingface
+    model_id: LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit
+    inference_engine: mlx
+
+    max_length: 32768
+    temperature: 0.1
+    top_p: 0.1
+    repetition_penalty: 1.05
+
+  # Qwen2-VL 2B Vision-Language (MLX-VLM, 4-bit quantized)
+  qwen2_vl_mlx:
+    type: huggingface
+    model_id: mlx-community/Qwen2-VL-2B-Instruct-4bit
+    inference_engine: mlx_vlm
+
+    max_length: 4096
+    temperature: 0.7
+    top_p: 0.9
+
 # =============================================================================
 # MODEL SELECTION CONFIGURATION
 # =============================================================================

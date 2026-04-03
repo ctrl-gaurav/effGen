@@ -188,7 +188,7 @@ class ConfigValidator:
 
         # Validate inference engine
         inference_engine = config.get("inference_engine", "transformers")
-        valid_engines = ["transformers", "vllm", "tgi", "ctransformers"]
+        valid_engines = ["transformers", "vllm", "tgi", "ctransformers", "mlx", "mlx_vlm"]
         if inference_engine not in valid_engines:
             result.add_error(
                 f"Model '{model_name}' has invalid inference_engine. "

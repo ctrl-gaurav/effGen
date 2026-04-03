@@ -39,6 +39,17 @@ from effgen.models.openai_adapter import OpenAIAdapter
 from effgen.models.transformers_engine import TransformersEngine
 from effgen.models.vllm_engine import VLLMEngine
 
+# MLX engines (Apple Silicon only, lazy import)
+try:
+    from effgen.models.mlx_engine import MLXEngine
+except ImportError:
+    pass
+
+try:
+    from effgen.models.mlx_vlm_engine import MLXVLMEngine
+except ImportError:
+    pass
+
 __all__ = [
     # Base classes
     "BaseModel",
@@ -54,6 +65,8 @@ __all__ = [
     # Engine implementations
     "VLLMEngine",
     "TransformersEngine",
+    "MLXEngine",
+    "MLXVLMEngine",
 
     # API adapters
     "OpenAIAdapter",

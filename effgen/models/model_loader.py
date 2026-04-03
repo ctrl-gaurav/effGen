@@ -123,8 +123,17 @@ class ModelLoader:
             model = self._load_anthropic_model(model_name, engine_config, **kwargs)
         elif model_type == ModelType.GEMINI:
             model = self._load_gemini_model(model_name, engine_config, **kwargs)
+        elif model_type == ModelType.MLX:
+            # MLX model detected (e.g., mlx-community/ prefix) — use MLX engine
+            if self.force_engine is None:
+                self.force_engine = "mlx"
+            model = self._load_huggingface_model(model_name, engine_config, **kwargs)
+        elif model_type == ModelType.MLX_VLM:
+            if self.force_engine is None:
+                self.force_engine = "mlx_vlm"
+            model = self._load_huggingface_model(model_name, engine_config, **kwargs)
         else:
-            # HuggingFace model - use Transformers by default, vLLM optional
+            # HuggingFace model - use Transformers by default, vLLM/MLX optional
             model = self._load_huggingface_model(model_name, engine_config, **kwargs)
 
         # Load the model
@@ -163,6 +172,11 @@ class ModelLoader:
         for prefix in self.GEMINI_MODELS:
             if model_lower.startswith(prefix):
                 return ModelType.GEMINI
+
+        # Check for MLX-community models (pre-converted for Apple Silicon)
+        if "mlx-community/" in model_lower:
+            logger.info(f"Detected MLX-community model: {model_name}")
+            return ModelType.MLX
 
         # Check if it's a local path
         if os.path.exists(model_name):
@@ -249,9 +263,13 @@ class ModelLoader:
         model_name: str,
         config: dict[str, Any] | None = None,
         **kwargs
-    ) -> VLLMEngine | TransformersEngine:
+    ) -> "VLLMEngine | TransformersEngine | BaseModel":
         """
-        Load HuggingFace model with Transformers-first strategy.
+        Load HuggingFace model with intelligent engine selection.
+
+        Engine selection priority:
+        1. Explicitly requested engine (force_engine parameter)
+        2. Auto-detect: MLX on Apple Silicon (when no CUDA), else Transformers
 
         Args:
             model_name: HuggingFace model ID or local path
@@ -259,10 +277,29 @@ class ModelLoader:
             **kwargs: Additional parameters
 
         Returns:
-            TransformersEngine or VLLMEngine instance
+            Model engine instance (VLLMEngine, TransformersEngine, MLXEngine, or MLXVLMEngine)
         """
         params = config or {}
         params.update(kwargs)
+
+        # Check if MLX engine is explicitly requested
+        if self.force_engine == "mlx":
+            logger.info("Using MLX engine (explicitly requested)")
+            try:
+                return self._load_with_mlx(model_name, params)
+            except Exception as e:
+                logger.warning(f"MLX loading failed: {e}")
+                logger.info("Falling back to Transformers...")
+                return self._load_with_transformers(model_name, params)
+
+        if self.force_engine == "mlx_vlm":
+            logger.info("Using MLX-VLM engine (explicitly requested)")
+            try:
+                return self._load_with_mlx_vlm(model_name, params)
+            except Exception as e:
+                logger.warning(f"MLX-VLM loading failed: {e}")
+                logger.info("Falling back to Transformers...")
+                return self._load_with_transformers(model_name, params)
 
         # Check if vLLM engine is explicitly requested
         if self.force_engine == "vllm":
@@ -273,6 +310,20 @@ class ModelLoader:
                 logger.warning(f"vLLM loading failed: {e}")
                 logger.info("Falling back to Transformers...")
                 return self._load_with_transformers(model_name, params)
+
+        # Auto-detection: prefer MLX on Apple Silicon when no CUDA available
+        if self.force_engine is None:
+            try:
+                from effgen.hardware.platform import is_apple_silicon, is_mlx_available
+                if is_apple_silicon() and is_mlx_available() and not torch.cuda.is_available():
+                    logger.info("Apple Silicon detected with MLX available, using MLX engine")
+                    try:
+                        return self._load_with_mlx(model_name, params)
+                    except Exception as e:
+                        logger.warning(f"MLX auto-detection loading failed: {e}")
+                        logger.info("Falling back to Transformers...")
+            except ImportError:
+                pass
 
         # Default to Transformers (more compatible, easier setup)
         logger.info("Using Transformers engine (default)")
@@ -316,6 +367,74 @@ class ModelLoader:
             params["download_dir"] = self.cache_dir
 
         return VLLMEngine(model_name=model_name, **params)
+
+    def _load_with_mlx(
+        self,
+        model_name: str,
+        params: dict[str, Any]
+    ) -> "BaseModel":
+        """
+        Load model with MLX (Apple Silicon).
+
+        Args:
+            model_name: Model identifier (mlx-community/ or HuggingFace ID)
+            params: Configuration parameters
+
+        Returns:
+            MLXEngine instance
+
+        Raises:
+            RuntimeError: If MLX is unavailable or loading fails
+        """
+        from effgen.models.mlx_engine import MLXEngine
+
+        logger.info(f"Attempting to load with MLX: {model_name}")
+
+        # Filter out CUDA-specific params that don't apply to MLX
+        mlx_params = {
+            k: v for k, v in params.items()
+            if k not in (
+                "tensor_parallel_size", "gpu_memory_utilization", "quantization",
+                "max_num_seqs", "max_num_batched_tokens", "download_dir",
+                "device_map", "quantization_bits",
+            )
+        }
+
+        return MLXEngine(model_name=model_name, **mlx_params)
+
+    def _load_with_mlx_vlm(
+        self,
+        model_name: str,
+        params: dict[str, Any]
+    ) -> "BaseModel":
+        """
+        Load vision-language model with MLX-VLM (Apple Silicon).
+
+        Args:
+            model_name: Model identifier
+            params: Configuration parameters
+
+        Returns:
+            MLXVLMEngine instance
+
+        Raises:
+            RuntimeError: If MLX-VLM is unavailable or loading fails
+        """
+        from effgen.models.mlx_vlm_engine import MLXVLMEngine
+
+        logger.info(f"Attempting to load VLM with MLX-VLM: {model_name}")
+
+        # Filter out CUDA-specific params
+        mlx_params = {
+            k: v for k, v in params.items()
+            if k not in (
+                "tensor_parallel_size", "gpu_memory_utilization", "quantization",
+                "max_num_seqs", "max_num_batched_tokens", "download_dir",
+                "device_map", "quantization_bits",
+            )
+        }
+
+        return MLXVLMEngine(model_name=model_name, **mlx_params)
 
     def _load_with_transformers(
         self,

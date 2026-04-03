@@ -40,15 +40,31 @@ TB = 1024 * GB
 
 def is_gpu_available() -> bool:
     """
-    Check if GPU is available.
+    Check if CUDA GPU is available.
 
     Returns:
-        True if at least one GPU is available, False otherwise
+        True if at least one CUDA GPU is available, False otherwise
     """
     if not TORCH_AVAILABLE:
         return False
 
     return torch.cuda.is_available() and torch.cuda.device_count() > 0
+
+
+def is_accelerator_available() -> bool:
+    """
+    Check if any hardware accelerator is available (CUDA or Apple Silicon with MLX).
+
+    Returns:
+        True if CUDA GPU or Apple Silicon with MLX is available
+    """
+    if is_gpu_available():
+        return True
+    try:
+        from effgen.hardware.platform import is_apple_silicon, is_mlx_available
+        return is_apple_silicon() and is_mlx_available()
+    except ImportError:
+        return False
 
 
 def get_device_count() -> int:

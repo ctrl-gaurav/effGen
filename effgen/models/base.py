@@ -21,6 +21,8 @@ class ModelType(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    MLX = "mlx"
+    MLX_VLM = "mlx_vlm"
 
 
 @dataclass
