@@ -35,6 +35,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🍎 | **4 Apr 2026** | **Apple Silicon + GUI Tools**: MLX & MLX-VLM backends for native Metal GPU acceleration, 6 Gradio GUI apps (Agent Builder, Chat, Agent Visualizer, Benchmark Dashboard, Tool Builder, Tool Tester), Python 3.14 support |
 | 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [See changelog](CHANGELOG.md#013---2026-03-25) |
 | 🔧 | **12 Mar 2026** | **v0.1.2 Released**: Test-driven hardening — 10 example agents, 19 bug fixes, cross-model compatibility matrix (11 models, 73% pass rate). [See changelog](CHANGELOG.md#012---2026-03-12) |
 | 🔒 | **6 Mar 2026** | **v0.1.1 Released**: Stabilization — fixed license/metadata consistency, improved error handling, added 6 examples, expanded test suite. [See changelog](CHANGELOG.md#011---2026-03-06) |
@@ -74,12 +75,19 @@ print(f"Answer: {result.output}")
 
 ## ⚡ Installation
 
-> **Requires Python 3.10 or newer.** Tested on Python 3.10, 3.11, 3.12, 3.13.
+> **Requires Python 3.10 or newer.** Tested on Python 3.10, 3.11, 3.12, 3.13, 3.14.
 
 ### 📦 From PyPI (Recommended)
 
 ```bash
 pip install effgen
+```
+
+### 🍎 Apple Silicon (MLX — Recommended for Mac)
+
+```bash
+pip install effgen[mlx]          # Text models on Apple Silicon
+pip install effgen[mlx-vlm]      # Vision-Language models on Apple Silicon
 ```
 
 ### 🚀 With vLLM for Faster Inference
@@ -154,6 +162,26 @@ result = agent.run("Calculate 15% tip on $85.50")
 print(result.output)
 ```
 
+### 🍎 Apple Silicon (MLX)
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator
+
+# Load MLX model — native Metal GPU, unified memory, no CPU-GPU transfer
+model = load_model("LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit", engine="mlx")
+
+config = AgentConfig(
+    name="mlx_agent",
+    model=model,
+    tools=[Calculator()],
+)
+agent = Agent(config=config)
+result = agent.run("What is sqrt(144) + 2^10?")
+print(result.output)
+```
+
 ---
 
 ## ✨ Features
@@ -171,9 +199,9 @@ SLM Optimized<br/>
 </td>
 <td align="center" width="14%">
 
-**🔄**<br/>
-Multi-Model<br/>
-<sub>HF, OpenAI, etc.</sub>
+**🍎**<br/>
+Apple Silicon<br/>
+<sub>MLX + Metal GPU</sub>
 
 </td>
 <td align="center" width="14%">
@@ -185,9 +213,9 @@ Tool Integration<br/>
 </td>
 <td align="center" width="14%">
 
-**🧩**<br/>
-Task Decomp<br/>
-<sub>Auto breakdown</sub>
+**🖥️**<br/>
+6 GUI Apps<br/>
+<sub>Gradio dashboards</sub>
 
 </td>
 <td align="center" width="14%">
@@ -359,30 +387,54 @@ Wikipedia<br/>
 
 ## 📚 Examples
 
-```bash
-# Core agent examples (v0.1.2)
-python examples/qa_agent.py                   # Q&A agent (no tools)
-python examples/calculator_agent.py           # Math with Calculator + PythonREPL
-python examples/advanced_multi_tool_agent.py  # 5 tools + fallback chains
-python examples/file_operations_agent.py      # File read/write/search
-python examples/coding_agent.py               # Code execution + iteration
-python examples/conversational_agent.py       # Multi-turn memory
-python examples/advanced_streaming_agent.py   # Token streaming with callbacks
-python examples/data_processing_agent.py      # JSON & data pipelines
-python examples/multi_agent_pipeline.py       # Multi-agent orchestration
-python examples/error_recovery_agent.py       # Error handling patterns
+### 🖥️ GUI Applications (Gradio)
 
-# Quick-start examples
-python examples/basic_agent.py                # Basic agent (Transformers)
-python examples/basic_agent_vllm.py           # Basic agent (vLLM - 5-10x faster)
-python examples/preset_agents.py              # Ready-to-use agent presets
-python examples/streaming_agent.py            # Simple streaming
-python examples/memory_agent.py               # Simple multi-turn memory
-python examples/multi_tool_agent.py           # Simple multi-tool
-python examples/weather_agent.py              # Weather via Open-Meteo (free)
-python examples/plugin_example.py             # Custom tool plugins
-python examples/web_agent.py                  # Web search agent
-python examples/retrieval_agent.py            # RAG-based retrieval
+```bash
+# Visual agent & tool development
+python examples/agent_builder/app.py              # Agent Builder — configure, test, export agents (port 7860)
+python examples/basic/chat_gui_mlx.py              # MLX Chat — streaming chat with Apple Silicon models (port 7860)
+python examples/basic/agent_viz_mlx.py             # Agent Visualizer — step-by-step reasoning + code editor (port 7860)
+python examples/basic/benchmark_gui.py             # Benchmark Dashboard — performance & eval leaderboard (port 7862)
+python examples/basic/tool_builder_gui.py          # Tool Builder — visually create custom tools (port 7863)
+python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 14 tools (port 7864)
+```
+
+### 🍎 Apple Silicon (MLX)
+
+```bash
+python examples/basic/basic_agent_mlx.py           # Basic MLX agent with calculator
+python examples/basic/chat_gui_mlx.py --autoload   # Chat GUI with auto model loading
+python examples/basic/agent_viz_mlx.py --autoload   # Agent visualizer with auto model loading
+```
+
+### 🤖 Core Agent Examples
+
+```bash
+python examples/basic/qa_agent.py                  # Q&A agent (no tools)
+python examples/basic/calculator_agent.py          # Math with Calculator + PythonREPL
+python examples/tools/advanced_multi_tool_agent.py # 5 tools + fallback chains
+python examples/tools/file_operations_agent.py     # File read/write/search
+python examples/tools/coding_agent.py              # Code execution + iteration
+python examples/advanced/conversational_agent.py   # Multi-turn memory
+python examples/advanced/advanced_streaming_agent.py # Token streaming with callbacks
+python examples/advanced/data_processing_agent.py  # JSON & data pipelines
+python examples/advanced/multi_agent_pipeline.py   # Multi-agent orchestration
+python examples/advanced/error_recovery_agent.py   # Error handling patterns
+```
+
+### ⚡ Quick-Start Examples
+
+```bash
+python examples/basic/basic_agent.py               # Basic agent (Transformers)
+python examples/basic/basic_agent_vllm.py          # Basic agent (vLLM - 5-10x faster)
+python examples/plugins_presets/preset_agents.py   # Ready-to-use agent presets
+python examples/web_retrieval/streaming_agent.py   # Simple streaming
+python examples/web_retrieval/memory_agent.py      # Simple multi-turn memory
+python examples/tools/multi_tool_agent.py          # Simple multi-tool
+python examples/web_retrieval/weather_agent.py     # Weather via Open-Meteo (free)
+python examples/plugins_presets/plugin_example.py  # Custom tool plugins
+python examples/web_retrieval/web_agent.py         # Web search agent
+python examples/web_retrieval/retrieval_agent.py   # RAG-based retrieval
 ```
 
 > 📊 See [examples/compatibility_matrix.md](examples/compatibility_matrix.md) for model compatibility across all agents.
@@ -457,17 +509,27 @@ result = agent.run("What does the documentation say about configuration?")
 
 ## 🤖 Multi-Model Support
 
-effGen is tested across 11 model families. Top recommendations:
+effGen supports **5 inference backends** and is tested across 11+ model families:
+
+| Backend | Platform | Best For |
+|---------|----------|----------|
+| **MLX** | Apple Silicon (M1/M2/M3/M4) | Native Metal GPU, unified memory, 4/8-bit quantization |
+| **MLX-VLM** | Apple Silicon | Vision-Language models (Qwen2-VL, LLaVA, Phi-3 Vision, 30+ architectures) |
+| **vLLM** | NVIDIA GPU | High-throughput batch inference |
+| **Transformers** | Any (CPU/GPU) | Universal compatibility |
+| **API** | Cloud | OpenAI, Anthropic, Google Gemini |
+
+### Top Recommended Models
 
 | Model | Size | Compatibility |
 |-------|------|---------------|
+| **LFM2.5-1.2B-Instruct-MLX-8bit** | 1.2B | Apple Silicon optimized, fast agentic |
 | **Qwen2.5-1.5B-Instruct** | 1.5B | 10/10 agents pass |
 | **Qwen2.5-3B-Instruct** | 3B | 10/10 agents pass (recommended default) |
 | **Phi-4-mini-instruct** | 3.8B | 10/10 agents pass |
 | Qwen3-1.7B | 1.7B | 9.5/10 |
 | Qwen2.5-7B-Instruct | 7B | 9/10 |
 | Llama-3.2-3B-Instruct | 3B | 8.5/10 |
-| gemma-3-4b-it | 4B | 8/10 |
 
 > Full matrix with 11 models x 10 agents: [compatibility_matrix.md](examples/compatibility_matrix.md)
 
