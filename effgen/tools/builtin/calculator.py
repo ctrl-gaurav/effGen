@@ -350,10 +350,7 @@ class Calculator(BaseTool):
         Returns:
             Numerical result or list/tuple for aggregate functions
         """
-        if isinstance(node, ast.Num):  # Number
-            return node.n
-
-        elif isinstance(node, ast.Constant):  # Python 3.8+ constants
+        if isinstance(node, ast.Constant):  # Numbers and constants
             if isinstance(node.value, (int, float)):
                 return node.value
             raise ValueError(f"Unsupported constant type: {type(node.value)}")
