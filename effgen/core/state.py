@@ -5,7 +5,6 @@ Agent state management for effGen framework.
 from __future__ import annotations
 
 import json
-import pickle
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
@@ -56,9 +55,6 @@ class AgentState:
         if format == "json":
             with open(filepath, "w") as f:
                 json.dump(self.to_dict(), f, indent=2, default=str)
-        elif format == "pickle":
-            with open(filepath, "wb") as f:
-                pickle.dump(self, f)
         else:
             raise ValueError(f"Unsupported format: {format}")
 
@@ -78,9 +74,6 @@ class AgentState:
             from ._compat import load_from_dict
 
             return load_from_dict(cls, data, label="AgentState")
-        elif format == "pickle":
-            with open(filepath, "rb") as f:
-                return pickle.load(f)
         else:
             raise ValueError(f"Unsupported format: {format}")
 
