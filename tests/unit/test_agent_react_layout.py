@@ -30,6 +30,7 @@ import effgen.core.agent_react_parsing as agent_react_parsing
 import effgen.core.agent_stream_native as agent_stream_native
 import effgen.core.agent_tool_execution as agent_tool_execution
 import effgen.core.agent_tool_loop as agent_tool_loop
+import effgen.core.result_relay as result_relay
 from effgen.core.agent import Agent
 from effgen.core.agent_react import AgentReActMixin
 
@@ -144,7 +145,13 @@ def _imported_modules(module) -> set[str]:
 
 @pytest.mark.parametrize(
     "module",
-    [agent_react_parsing, agent_native_tools, agent_tool_loop, agent_stream_native],
+    [
+        agent_react_parsing,
+        agent_native_tools,
+        agent_tool_loop,
+        agent_stream_native,
+        result_relay,
+    ],
     ids=lambda m: m.__name__,
 )
 def test_new_modules_do_not_import_the_agent_module(module) -> None:
