@@ -112,7 +112,20 @@ class SubAgentRouter:
             "build and test",
             "analyze trends",
             "multi-step",
-            "end-to-end"
+            "end-to-end",
+            # Spanish equivalents — bilingual by design, same rationale as
+            # ComplexityAnalyzer.DOMAINS (no language-detection step; see
+            # docs/i18n-notes.md)
+            "investiga y analiza",
+            "compara múltiples",
+            "integral",
+            "recopila datos de varias",
+            "crea un informe sobre",
+            "investiga y resume",
+            "construye y prueba",
+            "analiza tendencias",
+            "multi-paso",
+            "de principio a fin"
         ]
     }
 
@@ -383,7 +396,24 @@ class SubAgentRouter:
         # Pattern 6: action verb + bare "agents" (e.g., "spawn agents")
         pattern6 = rf"\b{action_verbs}\s+agents?\b"
 
-        for pattern in [pattern1, pattern2, pattern3, pattern4, pattern5, pattern6]:
+        # Spanish equivalents of patterns 1-6 (bilingual by design, see
+        # DOMAINS note in complexity_analyzer.py). Word order differs from
+        # English in pattern4_es (Spanish commonly puts the noun before the
+        # qualifier: "modo subagente" as well as "subagente modo"), so both
+        # orderings are matched rather than a single direct translation.
+        action_verbs_es = r"(?:usa|activa|lanza|despliega|inicia|dispara|ejecuta|crea)"
+        agent_nouns_es = r"(?:sub[\s\-]?agentes?|subagentes?|m[uú]ltiples?\s+agentes?|m[aá]s\s+agentes?|agentes?\s+adicionales)"
+        num_pattern_es = r"(?:\d+|dos|tres|cuatro|cinco|varios|unos?\s+pocos|algunos)\s+"
+
+        pattern1_es = rf"\b{action_verbs_es}\s+(?:{num_pattern_es})?{agent_nouns_es}\b"
+        pattern2_es = rf"\b{action_verbs_es}\s+{num_pattern_es}agentes?\b"
+        pattern3_es = r"\b(?:divide|separa|descompón|descompon|parte)\s+(?:\w+\s+)?en\s+(?:sub[\s\-]?tareas?|subtareas?|sub[\s\-]?agentes?|agentes?|partes?)"
+        pattern4_es = r"\b(?:sub[\s\-]?agente\s+(?:modo|enrutamiento|sistema|ejecuci[oó]n)|modo\s+sub[\s\-]?agente)\b"
+        pattern5_es = rf"\b(?:con|usando)\s+{num_pattern_es}agentes?\b"
+        pattern6_es = rf"\b{action_verbs_es}\s+agentes?\b"
+
+        for pattern in [pattern1, pattern2, pattern3, pattern4, pattern5, pattern6,
+                        pattern1_es, pattern2_es, pattern3_es, pattern4_es, pattern5_es, pattern6_es]:
             if re.search(pattern, task_lower):
                 return True
 
