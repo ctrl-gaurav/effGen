@@ -71,6 +71,51 @@ _REASONING_STRUCTURED_OUTPUT_MIN_TOKENS = 8192
 # per model per process.
 _reasoning_stream_models: set[str] = set()
 
+#: Generation parameters the agent forwards to the adapter as keyword arguments,
+#: beyond the sampling settings :class:`GenerationConfig` carries.
+#:
+#: ``GenerationConfig`` covers temperature, budget, penalties and stop
+#: sequences. Everything else that shapes a request — how the tools are
+#: presented and whether the model may decline to call one — travels beside it,
+#: and the agent has to copy it across explicitly. It used to copy exactly one
+#: name, so every other parameter was dropped between the loop and the provider
+#: without an error or a log line: the guard that decided to require a tool call
+#: recorded that it had, and the request went out without it.
+#:
+#: Both model-call paths build their adapter kwargs from this set through
+#: :func:`model_call_kwargs`, so a parameter added here reaches the provider on
+#: every path at once and none of them can drift.
+MODEL_CALL_KWARGS: frozenset[str] = frozenset({"tools", "tool_choice"})
+
+
+def model_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The subset of *kwargs* that is forwarded to the adapter's ``generate``.
+
+    Only the names in :data:`MODEL_CALL_KWARGS` travel: the rest of the agent's
+    keyword arguments are its own bookkeeping — the iteration cap, the
+    checkpoint knobs, the multimodal inputs — and a provider asked to accept one
+    of those rejects the whole request.
+
+    A ``tool_choice`` is dropped when no tool definitions travel with it.
+    Requiring a call from a request that offers nothing to call is rejected by
+    every provider that enforces the choice, and the two come apart on their
+    own: a run steered toward an answer withholds the definitions, and a caller
+    who asked for a required call on an agent whose tools reach the model as
+    prose has asked for something that request cannot carry. Dropping it here
+    covers every adapter at once, which is where the pair is decided.
+
+    Args:
+        kwargs: The keyword arguments the agent was called with.
+
+    Returns:
+        A new dict holding the forwardable parameters that were supplied.
+    """
+    picked = {name: kwargs[name] for name in MODEL_CALL_KWARGS if name in kwargs}
+    if not picked.get("tools"):
+        picked.pop("tool_choice", None)
+    return picked
+
+
 if TYPE_CHECKING:
     pass
 
@@ -412,10 +457,9 @@ class AgentGenerationMixin:
                         ),
                     )
 
-                    # Pass through extra kwargs (e.g. tools for native calling)
-                    extra_gen_kwargs = {}
-                    if "tools" in kwargs:
-                        extra_gen_kwargs["tools"] = kwargs["tools"]
+                    # Generation parameters that travel beside GenerationConfig
+                    # (the tool definitions, and whether a call is required).
+                    extra_gen_kwargs = model_call_kwargs(kwargs)
 
                     result = current_model.generate(prompt, config=gen_config, **extra_gen_kwargs)
 
@@ -1038,9 +1082,7 @@ class AgentGenerationMixin:
             stop_sequences=kwargs.get('stop_sequences', default_stop_sequences),
         )
 
-        extra_gen_kwargs = {}
-        if "tools" in kwargs:
-            extra_gen_kwargs["tools"] = kwargs["tools"]
+        extra_gen_kwargs = model_call_kwargs(kwargs)
 
         async def _run_model(model: BaseModel) -> dict[str, Any]:
             loop = asyncio.get_running_loop()

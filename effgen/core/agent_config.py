@@ -256,7 +256,7 @@ _MODEL_LOAD_KWARGS = frozenset({
 _RUN_KWARGS = frozenset({
     "debug", "max_tokens", "temperature", "top_p", "top_k", "seed",
     "presence_penalty", "frequency_penalty", "repetition_penalty",
-    "stop_sequences", "reasoning_effort", "tools",
+    "stop_sequences", "reasoning_effort", "tools", "tool_choice",
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
     "middleware", "session", "cite_sources",
 })
