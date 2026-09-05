@@ -31,6 +31,7 @@ import effgen.core.agent_stream_native as agent_stream_native
 import effgen.core.agent_tool_execution as agent_tool_execution
 import effgen.core.agent_tool_loop as agent_tool_loop
 import effgen.core.result_relay as result_relay
+import effgen.core.retrieval_requery as retrieval_requery
 from effgen.core.agent import Agent
 from effgen.core.agent_react import AgentReActMixin
 
@@ -93,6 +94,7 @@ NUDGES = (
     "NUDGE_ALREADY_COMPUTED",
     "NUDGE_NO_TOOLS",
     "NUDGE_NOT_USABLE",
+    "NUDGE_SEARCH_AGAIN",
 )
 
 
@@ -151,6 +153,7 @@ def _imported_modules(module) -> set[str]:
         agent_tool_loop,
         agent_stream_native,
         result_relay,
+        retrieval_requery,
     ],
     ids=lambda m: m.__name__,
 )
