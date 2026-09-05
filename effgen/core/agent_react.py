@@ -40,6 +40,7 @@ from .agent_react_parsing import AgentReActParsingMixin
 from .agent_tool_execution import AgentToolExecutionMixin
 from .agent_tool_loop import NativeToolLoop
 from .execution_tracker import EventType, ExecutionEvent
+from .result_relay import relay_result
 from .router import RoutingDecision, RoutingStrategy
 from .tool_call_record import ToolCallList
 
@@ -454,6 +455,13 @@ class AgentReActMixin(
                             calls=guards.calls,
                             scratchpad=_scratchpad,
                         )
+                    # A tool that computed the answer itself — a move sequence,
+                    # a colouring, a sorted list — is answered by summarising it
+                    # far too often, and the result the run is still holding is
+                    # then lost. Put it back, after the scaffolding strip above
+                    # so a result carrying an "Answer:" line of its own is not
+                    # read as a label on the answer.
+                    output = relay_result(output, guards.calls, self.tools)
                 meta: dict[str, Any] = {
                     "reason": "final_answer",
                     "tool_calling_strategy": self._tool_calling_strategy.name,

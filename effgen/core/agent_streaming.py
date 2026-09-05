@@ -26,6 +26,8 @@ from .agent_runtime import (
     unknown_tool_observation,
 )
 from .agent_tool_loop import NativeToolLoop
+from .result_relay import unrelayed_result
+from .tool_call_record import ToolCall, truncate_result
 
 if TYPE_CHECKING:
     from .agent_config import AgentConfig
@@ -63,6 +65,7 @@ class AgentStreamingMixin:
         # the attributes this module actually reads are declared; the other
         # mixins declare their own.
         config: AgentConfig
+        tools: dict[str, Any]
 
         def _tool_contract(self) -> str: ...
 
@@ -393,6 +396,10 @@ class AgentStreamingMixin:
         # could not state it and the two paths asked the model different
         # questions about the same observations.
         previous_actions: list[tuple[str, str]] = []
+        # What each dispatched call returned, in the shape the blocking loop's
+        # records take, so both paths decide from the same evidence whether the
+        # answer dropped a result a tool computed.
+        executed_calls: list[ToolCall] = []
 
         # Build conversation history
         conversation_history = self._format_conversation_history()
@@ -514,6 +521,12 @@ class AgentStreamingMixin:
             # Check for final answer
             if parsed.get("final_answer"):
                 answer = sanitize_final_answer(parsed["final_answer"]) or parsed["final_answer"]
+                # A tool that computed the answer itself is answered by
+                # summarising it far too often, and the result the run is still
+                # holding is then lost. Put it back, exactly as run() does.
+                appended = unrelayed_result(answer, executed_calls, self.tools)
+                if appended is not None:
+                    answer = f"{answer.rstrip()}\n\n{appended}"
                 if on_answer:
                     on_answer(answer)
                 # Store in memory
@@ -548,6 +561,12 @@ class AgentStreamingMixin:
                 if action in self.tools:
                     tool_result = self._execute_tool(action, action_input)
                     tool_calls += 1
+                    executed_calls.append(ToolCall(
+                        name=action,
+                        arguments=action_input,
+                        result=truncate_result(tool_result),
+                        iteration=iterations,
+                    ))
 
                     scratchpad += f"\nAction: {action}"
                     scratchpad += f"\nAction Input: {action_input}"

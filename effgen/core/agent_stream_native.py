@@ -63,6 +63,7 @@ from .agent_runtime import (
     unknown_tool_observation,
 )
 from .agent_tool_loop import NativeToolLoop
+from .result_relay import unrelayed_result
 from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
@@ -482,6 +483,16 @@ class AgentNativeStreamMixin:
                         self._last_stream_response, include_events
                     )
                     return
+                # A tool that computed the answer itself is answered by
+                # summarising it far too often, and the result the run is still
+                # holding is then lost. Put it back — as a further delta, so
+                # what the consumer was streamed and what the response carries
+                # stay the same answer.
+                appended = unrelayed_result(text, guards.calls, self.tools)
+                if appended is not None:
+                    delta = f"\n\n{appended}"
+                    text = text.rstrip() + delta
+                    yield _emit(delta)
                 if on_answer:
                     on_answer(text)
                 self.short_term_memory.add_user_message(task)
