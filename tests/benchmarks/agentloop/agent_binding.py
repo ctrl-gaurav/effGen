@@ -224,6 +224,20 @@ def read_outcome(response) -> str | None:
     return "stopped" if reason in stopped else "failed"
 
 
+def read_iterations(response) -> int | None:
+    """How many loop turns the run spent, when the response reports them.
+
+    Accuracy is bought with iterations, so the count travels with every record
+    and the trade stays visible. A response from a build that does not carry
+    the field records ``None`` rather than a guess.
+    """
+    value = getattr(response, "iterations", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _calls_from_trace(trace) -> list[dict[str, Any]]:
     calls = []
     for event in trace:
@@ -248,6 +262,7 @@ __all__ = [
     "agent_config_kwargs",
     "answer_text",
     "build_tools",
+    "read_iterations",
     "read_outcome",
     "read_response",
     "read_stop_reason",
