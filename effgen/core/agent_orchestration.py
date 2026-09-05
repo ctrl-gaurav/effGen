@@ -42,6 +42,7 @@ from .agent_runtime import _strip_run_citation_markers, sanitize_final_answer
 from .execution_tracker import EventType, ExecutionEvent
 
 if TYPE_CHECKING:
+    from .agent_config import AgentConfig
     from .messages import Message
 
 # A run's log records carry the agent module's logger name, so a filter or a
@@ -73,6 +74,8 @@ class AgentOrchestrationMixin:
         # Contributed by :class:`~effgen.core.agent.Agent`, which owns the
         # per-call state. Declared for the type checker only — at run time it
         # arrives through the MRO, and this statement does not execute.
+        config: AgentConfig
+
         def _set_effective_output_schema(
             self, schema: dict[str, Any] | None
         ) -> None: ...

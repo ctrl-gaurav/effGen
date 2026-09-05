@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+from ._i18n import count_and_clauses, fold, fold_keywords
+
 logger = logging.getLogger(__name__)
+
 
 
 @lru_cache(maxsize=512)
@@ -106,18 +109,28 @@ class ComplexityAnalyzer:
     }
 
     # Domain keywords for identifying different knowledge domains.
+    #
+    # These are matched as WHOLE WORDS (see _mentions), so a Spanish verb needs
+    # both the form a description uses and the form an instruction uses —
+    # "analizar" and "analiza" — because neither contains the other and a stem
+    # covering both would not be a word. Keywords are compared against text
+    # folded to unaccented lowercase (effgen.core._i18n), which is applied to
+    # the lists too, so they stay spelled correctly here.
     # Bilingual (EN/ES) by design: matching against a merged keyword set
     # avoids needing a language-detection step, which is unreliable on the
     # short queries typical of a complexity router (see docs/i18n-notes.md).
-    DOMAINS = {
+    DOMAINS = fold_keywords({
         "technical": ["code", "programming", "software", "algorithm", "debug", "implement", "script", "api",
-                      "código", "programación", "software", "algoritmo", "depurar", "implementar"],
+                      "código", "programación", "algoritmo", "depurar", "depura",
+                      "implementar", "implementa"],
         "research": ["study", "research", "investigate", "analyze", "survey", "review", "literature",
-                     "estudio", "investigación", "investigar", "analizar", "encuesta", "revisión", "literatura"],
+                     "estudio", "investigación", "investigar", "investiga",
+                     "analizar", "analiza", "encuesta", "revisión", "literatura"],
         "business": ["market", "sales", "revenue", "business", "strategy", "roi", "profit",
                      "mercado", "ventas", "ingresos", "negocio", "estrategia", "beneficio"],
         "creative": ["design", "create", "write", "compose", "generate", "draft", "brainstorm",
-                     "diseño", "diseña", "crear", "escribir", "componer", "generar", "borrador"],
+                     "diseño", "diseñar", "diseña", "crear", "crea", "escribir", "escribe",
+                      "componer", "compone", "generar", "genera", "borrador"],
         "data": ["data", "statistics", "analytics", "metrics", "dataset", "visualization", "analysis",
                  "datos", "estadísticas", "analítica", "métricas", "conjunto de datos", "visualización", "análisis"],
         "scientific": ["experiment", "hypothesis", "theory", "scientific", "methodology", "findings",
@@ -126,39 +139,42 @@ class ComplexityAnalyzer:
                   "legal", "ley", "regulación", "cumplimiento", "contrato", "política"],
         "financial": ["financial", "accounting", "budget", "investment", "forecast", "valuation",
                       "financiero", "contabilidad", "presupuesto", "inversión", "pronóstico", "valuación"]
-    }
+    })
 
     # Tool indicators for different tool types (bilingual EN/ES, see DOMAINS note above)
-    TOOL_INDICATORS = {
+    TOOL_INDICATORS = fold_keywords({
         "web_search": ["search", "find online", "look up", "google", "web",
-                       "buscar", "búsqueda", "consultar en línea", "web"],
+                       "buscar", "busca", "búsqueda", "consultar en línea", "web"],
         "code_executor": ["run code", "execute", "test", "python", "script",
-                          "ejecutar código", "ejecutar", "probar", "script"],
+                          "ejecutar código", "ejecutar", "ejecuta", "probar", "prueba", "script"],
         "calculator": ["calculate", "compute", "math", "equation", "formula",
-                       "calcular", "computar", "matemáticas", "ecuación", "fórmula"],
+                       "calcular", "calcula", "computar", "computa", "matemáticas",
+                       "ecuación", "fórmula"],
         "file_ops": ["file", "document", "read", "write", "save", "load",
-                     "archivo", "documento", "leer", "escribir", "guardar", "cargar"],
+                     "archivo", "documento", "leer", "lee", "escribir", "escribe",
+                     "guardar", "guarda", "cargar", "carga"],
         "api": ["api", "request", "fetch data", "endpoint", "rest",
-                "solicitud", "obtener datos", "endpoint"],
+                "solicitud", "obtener datos", "obtén datos", "endpoint"],
         "database": ["database", "sql", "query", "table", "data",
                      "base de datos", "consulta", "tabla", "datos"],
         "image": ["image", "picture", "photo", "visualization", "chart", "graph",
                   "imagen", "foto", "visualización", "gráfico", "gráfica"],
         "video": ["video", "movie", "stream", "multimedia",
-                  "vídeo", "video", "película", "transmisión"]
-    }
+                  "vídeo", "película", "transmisión"]
+    })
 
     # Reasoning complexity indicators (bilingual EN/ES, see DOMAINS note above)
-    REASONING_INDICATORS = {
+    REASONING_INDICATORS = fold_keywords({
         "simple": ["list", "what is", "define", "show", "display",
                    "lista", "qué es", "define", "muestra", "despliega"],
         "moderate": ["explain", "describe", "how", "summarize", "outline",
                      "explica", "describe", "cómo", "resume", "esquematiza"],
         "complex": ["analyze", "evaluate", "compare", "assess", "critique",
-                    "analiza", "evalúa", "compara", "critica"],
+                    "analizar", "analiza", "evaluar", "evalúa", "comparar", "compara", "critica"],
         "very_complex": ["synthesize", "design", "create strategy", "optimize", "architect", "comprehensive",
-                          "sintetiza", "diseña", "crea una estrategia", "optimiza", "arquitectura", "integral"]
-    }
+                          "sintetizar", "sintetiza", "diseñar", "diseña", "crea una estrategia",
+                          "optimizar", "optimiza", "arquitectura", "integral"]
+    })
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         """
@@ -187,7 +203,7 @@ class ComplexityAnalyzer:
         Returns:
             ComplexityScore with detailed breakdown
         """
-        task_lower = task.lower()
+        task_lower = fold(task)
 
         # Calculate individual scores
         task_length_score = self._score_task_length(task)
@@ -279,10 +295,14 @@ class ComplexityAnalyzer:
         # not the raw count, is the signal, so the contribution tapers off
         # for longer text instead of scaling unbounded with length.
         words = task.split()
-        # " y " (Spanish "and") is a near-unambiguous conjunction, same
-        # density-tapering logic as " and " above — added for bilingual
-        # EN/ES support.
-        raw_and_clauses = task.lower().count(" and ") + task.lower().count(" y ")
+        # " y " is Spanish for "and" and carries the same signal, but unlike
+        # " and " it is ambiguous: an English task naming an axis or a
+        # variable ("the y axis and the x axis") contains it without
+        # describing a second requirement, and counting it there inflated the
+        # requirement count of English text. It is counted only where a
+        # Spanish function word says the sentence is Spanish, which no
+        # English task carries by accident.
+        raw_and_clauses = count_and_clauses(task)
         num_and_clauses = round(raw_and_clauses * min(1.0, 30 / max(len(words), 1)))
 
         # Count numbered items

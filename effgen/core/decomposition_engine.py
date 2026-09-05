@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ._i18n import count_and_clauses, fold
 from .task import SubTask, TaskPriority
 
 logger = logging.getLogger(__name__)
@@ -181,21 +182,25 @@ Respond with ONLY the JSON, no additional text."""
         Returns:
             TaskStructure with analysis
         """
-        task_lower = task.lower()
+        task_lower = fold(task)
         structure = TaskStructure()
 
         # Check for multiple distinct requirements
         structure.has_multiple_questions = self._detect_multiple_requirements(task)
 
-        # Check for data gathering needs (bilingual EN/ES, see complexity_analyzer.DOMAINS note)
+        # Bilingual EN/ES. The task is folded to unaccented lowercase first
+        # (see effgen.core._i18n), so the Spanish keywords are written the same
+        # way: 'despues', not 'después'. Verbs are stored in the form an
+        # instruction uses — 'analiza', not 'analizar' — because a substring
+        # test finds the shorter inside the longer and not the other way round.
         structure.has_data_gathering = any(word in task_lower for word in
             ["research", "find", "search", "gather", "collect", "fetch", "retrieve",
-             "investiga", "busca", "búsqueda", "recopila", "recolecta", "obtén"])
+             "investiga", "busca", "búsqueda", "recopila", "recolecta", "obten"])
 
         # Check for analysis needs
         structure.has_analysis = any(word in task_lower for word in
             ["analyze", "compare", "evaluate", "assess", "calculate", "compute",
-             "analiza", "compara", "evalúa", "calcula", "computa"])
+             "analiza", "compara", "evalua", "calcula", "computa"])
 
         # Check for synthesis needs
         structure.has_synthesis = any(word in task_lower for word in
@@ -205,7 +210,7 @@ Respond with ONLY the JSON, no additional text."""
         # Check for dependencies
         structure.has_dependencies = any(word in task_lower for word in
             ["first", "then", "after", "before", "once", "following", "next", "subsequently",
-             "primero", "luego", "después", "antes", "una vez", "a continuación", "siguiente", "posteriormente"])
+             "primero", "luego", "despues", "antes", "una vez", "a continuacion", "siguiente", "posteriormente"])
 
         # Determine if parallelizable
         structure.parallelizable = (
@@ -228,8 +233,8 @@ Respond with ONLY the JSON, no additional text."""
         if task.count("?") > 1:
             return True
 
-        # Multiple "and" clauses
-        if task.lower().count(" and ") > 2:
+        # Multiple "and" clauses, in either language
+        if count_and_clauses(task) > 2:
             return True
 
         # Numbered or bulleted list
@@ -455,16 +460,16 @@ Respond with ONLY the JSON, no additional text."""
 
     def _infer_specialization(self, task_part: str) -> str:
         """Infer required specialization from task description."""
-        task_lower = task_part.lower()
+        task_lower = fold(task_part)
 
         if any(word in task_lower for word in ["search", "find", "research", "gather",
                                                 "busca", "investiga", "encuentra", "recopila"]):
             return "research"
         elif any(word in task_lower for word in ["code", "program", "implement", "script",
-                                                  "código", "programa", "implementa"]):
+                                                  "codigo", "programa", "implementa"]):
             return "coding"
         elif any(word in task_lower for word in ["analyze", "calculate", "compute", "evaluate",
-                                                  "analiza", "calcula", "computa", "evalúa"]):
+                                                  "analiza", "calcula", "computa", "evalua"]):
             return "analysis"
         elif any(word in task_lower for word in ["summarize", "combine", "integrate", "synthesize",
                                                   "resume", "combina", "integra", "sintetiza"]):

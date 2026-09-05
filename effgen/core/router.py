@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ._i18n import fold
 from .complexity_analyzer import ComplexityAnalyzer, ComplexityScore
 from .decomposition_engine import DecompositionEngine, TaskStructure
 from .task import SubTask
@@ -113,11 +114,12 @@ class SubAgentRouter:
             "analyze trends",
             "multi-step",
             "end-to-end",
-            # Spanish equivalents — bilingual by design, same rationale as
-            # ComplexityAnalyzer.DOMAINS (no language-detection step; see
-            # docs/i18n-notes.md)
+            # Spanish equivalents. Compared against text folded to
+            # unaccented lowercase (see effgen.core._i18n), so they are
+            # written folded too. No language-detection step: see
+            # docs/i18n-notes.md for why that was rejected.
             "investiga y analiza",
-            "compara múltiples",
+            "compara multiples",
             "integral",
             "recopila datos de varias",
             "crea un informe sobre",
@@ -352,7 +354,7 @@ class SubAgentRouter:
 
     def _check_keyword_triggers(self, task: str) -> bool:
         """Check if task contains keyword triggers."""
-        task_lower = task.lower()
+        task_lower = fold(task)
         triggers = self.config["keyword_triggers"]
         return any(trigger in task_lower for trigger in triggers)
 
@@ -368,7 +370,7 @@ class SubAgentRouter:
         - "split into sub-tasks" / "break into subtasks"
         - "deploy multiple agents" / "spawn agents"
         """
-        task_lower = task.lower()
+        task_lower = fold(task)
 
         # Action verbs that indicate user intent to use sub-agents
         action_verbs = r"(?:use|enable|launch|spawn|deploy|activate|start|trigger|run|create)"
@@ -421,7 +423,9 @@ class SubAgentRouter:
 
     def _get_matched_triggers(self, task: str) -> list[str]:
         """Get list of matched keyword triggers."""
-        task_lower = task.lower()
+        # Folded exactly as _check_keyword_triggers folds it, or an accented
+        # task would route to sub-agents while reporting no trigger for it.
+        task_lower = fold(task)
         triggers = self.config["keyword_triggers"]
         matched = [trigger for trigger in triggers if trigger in task_lower]
         # Also check user-explicit triggers
