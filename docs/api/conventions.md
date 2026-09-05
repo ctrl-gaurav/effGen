@@ -267,7 +267,13 @@ assert answer == response.output          # a turn that answered
 ```
 
 For a turn that answered, joining the `answer` events reproduces
-`response.output` exactly. A turn the loop stopped — at its iteration cap, on a
+`response.output` exactly. A turn that could still be sent back to search — one
+that follows a retrieval call, on a run that has not searched again yet — is
+held back until the turn is complete and then delivered all at once, as the
+same deltas it would have streamed, so a turn that is discarded and re-asked
+never reaches the screen; that raises
+`usage["ttft_ms"]` on at most one turn per run and leaves every other turn
+streaming as it did. A turn the loop stopped — at its iteration cap, on a
 repeated call, on a tool that reproduced its own result — and a turn whose model
 wrote its tool call out as text instead of making it both have no answer to
 stream: `output` carries the typed outcome and it arrives as a `status` event,
@@ -318,6 +324,16 @@ because it does not know the question. Form is settled, in this order:
 The one thing effGen still says after retrieved passages is what the passages
 are — source material, not the answer — and what to do if they do not answer the
 question. Neither is a statement about length or wording.
+
+When the answer to that is "they do not" — the run's own answer reports that the
+material does not answer the question — the run spends one further search with a
+different query before that answer is accepted, and only ever one. It costs one
+tool call and one model call on the runs where it happens, and nothing at all on
+a run whose passages answered the question, on a run whose tools compute rather
+than retrieve, or on a run that has already been asked to write its answer from
+what it has. The outcome vocabulary does not move: a run that searches again
+still reports `stop_reason="final_answer"`, and an answer of "not found" after
+the second search is an **answered** run, not a failure.
 
 ```python
 from pydantic import BaseModel
