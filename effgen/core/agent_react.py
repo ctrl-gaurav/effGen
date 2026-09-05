@@ -56,10 +56,12 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
+    NUDGE_MUST_EXECUTE,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
     _infer_provider_from_model,
     find_written_tool_call,
+    model_can_require_tool_call,
     sanitize_final_answer,
     unknown_tool_observation,
 )
@@ -83,7 +85,9 @@ class AgentReActMixin(
     if TYPE_CHECKING:
         # Contributed by :class:`~effgen.core.agent.Agent`, which owns the
         # per-call state. Declared for the type checker only — at run time it
-        # arrives through the MRO, and this statement does not execute.
+        # arrives through the MRO, and these statements do not execute.
+        model: Any
+
         def _effective_output_schema(self) -> dict[str, Any] | None: ...
 
         # Contributed by :class:`~effgen.core.agent_runtime.AgentRuntimeMixin`,
@@ -259,6 +263,34 @@ class AgentReActMixin(
                     answer_shape=_answer_shape,
                     tool_contract=self._tool_contract(),
                 )
+
+            # A turn that answered while holding a tool doing work the model
+            # cannot do in its head was sent back once (see the acceptance check
+            # below); this is the turn that follows, and it is required to call.
+            #
+            # The constraint only exists where the definitions travel as a
+            # request parameter the provider enforces. On the ReAct-text path
+            # there is nothing to constrain — the tools are prose in the prompt —
+            # and on an adapter that does not advertise it, sending it anyway
+            # loses the turn. Both degrade to the nudge already in the
+            # scratchpad, which is the whole of the ask for them.
+            #
+            # The flag is spent whether or not it could be used, so a turn that
+            # could not be constrained does not leak the constraint onto a later
+            # one.
+            if guards.take_forced_tool_call():
+                if "tools" in gen_kwargs and model_can_require_tool_call(self.model):
+                    gen_kwargs["tool_choice"] = "required"
+                    logger.info(
+                        "forced tool call: requiring a call on iteration %d",
+                        iterations,
+                    )
+                else:
+                    logger.info(
+                        "forced tool call: nudge only on iteration %d "
+                        "(no request-level constraint available here)",
+                        iterations,
+                    )
 
             # Debug: log first iteration prompt to see if history is included
             if iterations == 1 and conversation_history:
@@ -486,6 +518,21 @@ class AgentReActMixin(
                 final_answer = None
 
             if final_answer:
+                # An agent holding a tool that does work the model cannot do in
+                # its head has not answered by saying what the tool would have
+                # returned: nothing computed that result. The first such answer
+                # is not accepted — the turn goes back naming the tool, and the
+                # turn after it is required to call one where that can be
+                # required. Only the first: a model that declines twice will
+                # decline again, and the iterations buy more elsewhere.
+                refused_tool = guards.note_execution_refusal()
+                if refused_tool is not None:
+                    scratchpad += (
+                        "\nObservation: "
+                        + NUDGE_MUST_EXECUTE.format(tool=refused_tool)
+                    )
+                    continue
+
                 # Record final debug iteration
                 if debug_trace is not None:
                     from ..debug.inspector import DebugIteration

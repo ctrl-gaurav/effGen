@@ -112,6 +112,31 @@ def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str
     return "unknown"
 
 
+def model_can_require_tool_call(model: Any) -> bool:
+    """Whether *model* accepts a turn that requires a tool call.
+
+    Asks the adapter, which is the only thing that knows how its provider
+    shapes a request. Anything that does not answer — a duck-typed stand-in with
+    no such method, an adapter whose probe raises — is read as "no": the loop
+    then asks in words instead, which every model understands, rather than
+    sending a constraint the provider may reject and losing the turn.
+
+    Args:
+        model: The loaded model, or ``None``.
+
+    Returns:
+        bool: True only when the adapter says the constraint reaches the
+        provider in a form it honours.
+    """
+    if model is None:
+        return False
+    try:
+        return bool(model.supports_forced_tool_call())
+    except Exception:
+        logger.debug("supports_forced_tool_call probe failed", exc_info=True)
+        return False
+
+
 def resolve_output_budget(
     per_call: int | None, configured: int | None, model: Any
 ) -> int:
@@ -184,6 +209,15 @@ NUDGE_NOT_USABLE = (
     "That was not a usable answer. Call the tool correctly or give a "
     "plain Final Answer."
 )
+# Sent back to a model that answered without running a tool that does work it
+# cannot do in its head. It names the tool, so unlike the nudges above it is a
+# template rather than a fixed string, and the pattern that strips it is
+# anchored on its two fixed halves (see ``_MUST_EXECUTE_RE``). ``{tool}`` is
+# filled from the agent's own tool names and from nothing else.
+NUDGE_MUST_EXECUTE = (
+    "You have not run a tool yet. Run the {tool} tool and answer from what it "
+    "returns, not from what you expect it to return."
+)
 
 # The single line that used to close the first prompt of a run whose tools
 # reached the model through a local chat template, and only then. It is
@@ -249,6 +283,17 @@ _SCAFFOLD_LITERAL_RES: tuple[re.Pattern[str], ...] = tuple(
 _UNKNOWN_TOOL_OBS_RE = re.compile(
     r"[ \t]*\n?[ \t]*No tool named '[^\n]*?' is available\.[ \t]*"
     r"The tools you can use are:[^\n]*?" + re.escape(UNKNOWN_TOOL_CLOSE)
+)
+
+# ``NUDGE_MUST_EXECUTE`` names a tool in its middle, so it is a template and not
+# a fixed literal. Anchor on both fixed halves — the ``[^\n]*?`` covers a real
+# tool name and the unrendered ``{tool}`` alike, so the constant as written and
+# the constant as sent are both stripped.
+_MUST_EXECUTE_RE = re.compile(
+    r"[ \t]*\n?[ \t]*"
+    + re.escape(NUDGE_MUST_EXECUTE.split("{tool}")[0])
+    + r"[^\n]*?"
+    + re.escape(NUDGE_MUST_EXECUTE.split("{tool}")[1])
 )
 
 # A line-anchored "Final Answer:" / "Answer:" label (allows quote/list prefixes).
@@ -571,8 +616,11 @@ def sanitize_final_answer(text: str | None) -> str | None:
     # 1. Remove literal loop-bookkeeping strings (with any adjacent newline).
     for pat in _SCAFFOLD_LITERAL_RES:
         s = pat.sub("", s)
-    # 1b. Remove the unknown-tool observation, whose middle varies per agent.
+    # 1b. Remove the two nudges whose middle varies per agent: the unknown-tool
+    # observation, which lists the agent's tools, and the execute nudge, which
+    # names one of them.
     s = _UNKNOWN_TOOL_OBS_RE.sub("", s)
+    s = _MUST_EXECUTE_RE.sub("", s)
     # 2. Remove tool-echo prefixes, keeping the result after the arrow.
     s = _TOOL_ECHO_RE.sub("", s)
     # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).

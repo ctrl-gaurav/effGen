@@ -148,6 +148,29 @@ def select_tool_contract(tools: Iterable[Any]) -> str:
     return contract
 
 
+def is_execution_tool(tool: Any) -> bool:
+    """True when *tool* does work the model cannot carry out in its head.
+
+    The same declared categories that select :data:`TOOL_CONTRACT_EXECUTE`
+    answer this, so "which tools must actually run" and "which tools are told to
+    run" can never disagree: adding a category to the execute contract adds it
+    here, and the test that enumerates every member covers both.
+
+    It is asked of a tool the agent holds, not of a task or a model, because the
+    difference it marks is a property of the tool: describing what a code
+    executor would have printed is not the same as running it, while answering
+    without searching is a worse answer rather than an impossible one.
+
+    Args:
+        tool: A tool object, or anything carrying a ``category`` or a
+            ``metadata.category``.
+
+    Returns:
+        bool: True for a tool in an execution category.
+    """
+    return contract_for_category(_category_of(tool)) is TOOL_CONTRACT_EXECUTE
+
+
 def _category_of(tool: Any) -> Any:
     """The category *tool* declares, or ``None`` when it declares none.
 

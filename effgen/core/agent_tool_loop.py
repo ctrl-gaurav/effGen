@@ -17,9 +17,11 @@ what happened. This module imports nothing from ``agent.py``.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..prompts.tool_contract import is_execution_tool
 from ..tools.base_tool import ToolCategory
 from .agent_runtime import (
     NUDGE_HAVE_ANSWER,
@@ -27,6 +29,8 @@ from .agent_runtime import (
     written_call_only,
 )
 from .tool_call_record import ToolCall, truncate_result
+
+logger = logging.getLogger(__name__)
 
 #: Prefix :meth:`Agent._execute_tool` puts on a failed dispatch. A failed call is
 #: not evidence of a repeated result, so the result-based short circuit skips it.
@@ -138,6 +142,12 @@ class NativeToolLoop:
     #: One record per dispatched call, in call order — what
     #: ``AgentResponse.tool_calls`` reports back to the caller.
     calls: "list[ToolCall]" = field(default_factory=list)
+    #: How many times this run has been sent back for answering without running
+    #: an execution tool. Capped at one; see :meth:`note_execution_refusal`.
+    execution_refusals: int = 0
+    #: Set by a refusal and cleared by the turn that spends it, so it constrains
+    #: exactly one turn. See :meth:`take_forced_tool_call`.
+    force_tool_call: bool = False
 
     # ------------------------------------------------------------------
     # Offering tools
@@ -154,6 +164,71 @@ class NativeToolLoop:
     def note_batch_run(self) -> None:
         """Record that a turn dispatched several calls at once."""
         self.batch_tool_runs += 1
+
+    # ------------------------------------------------------------------
+    # Requiring a call
+    # ------------------------------------------------------------------
+    def execution_tools(self) -> list[str]:
+        """The names of the held tools that do work the model cannot do itself.
+
+        Read from each tool's declared category through
+        :func:`~effgen.prompts.tool_contract.is_execution_tool`, so the set is
+        whatever the tools say they are.
+        """
+        return [
+            name for name, tool in self.tools.items() if is_execution_tool(tool)
+        ]
+
+    def note_execution_refusal(self) -> str | None:
+        """Answer without running the executor: refuse it once, name the tool.
+
+        An agent holding a code executor and answering with no call has reported
+        a result nothing produced — it described what the code would print. That
+        answer is not accepted the first time: the turn goes back with a nudge
+        naming the tool, and the turn after it is sent requiring a call.
+
+        **Only the first.** A model that declines twice will decline again, and
+        the iteration budget buys more elsewhere; the second refusal is
+        accepted, so a run cannot be spent circling on this.
+
+        Returns:
+            The tool name to name in the nudge, or ``None`` when this run holds
+            no execution tool, has already dispatched a call, or has already
+            been sent back once.
+        """
+        if self.execution_refusals or self.calls:
+            return None
+        names = self.execution_tools()
+        if not names:
+            return None
+        self.execution_refusals += 1
+        self.force_tool_call = True
+        logger.info(
+            "execution refusal: answered with no call while holding '%s'; "
+            "requiring a call on the next turn",
+            names[0],
+        )
+        return names[0]
+
+    def take_forced_tool_call(self) -> bool:
+        """Whether this turn should require a tool call. Spent on read.
+
+        Reading clears the flag, so the constraint covers exactly one turn and
+        never the turn after it — which has to be free to state the answer, and
+        would otherwise be forced to call a tool it no longer needs.
+
+        The earliest turn this can return True for is the second: nothing sets
+        the flag but a refusal, and a refusal is a judgement on a turn that has
+        already been generated. **Turn one is never constrained**, and that is
+        deliberate rather than incidental. Given room to reason first, a small
+        model writes a correct program and then calls the executor with it; a
+        model emitting a native tool call usually returns empty ``content``, so
+        forcing the opening turn buys the call at the cost of the reasoning that
+        makes the call worth anything. An earlier attempt at this fix forced
+        every turn and was reverted for exactly that.
+        """
+        forced, self.force_tool_call = self.force_tool_call, False
+        return forced
 
     # ------------------------------------------------------------------
     # Repeat detection
