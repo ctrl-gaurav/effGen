@@ -187,21 +187,25 @@ Respond with ONLY the JSON, no additional text."""
         # Check for multiple distinct requirements
         structure.has_multiple_questions = self._detect_multiple_requirements(task)
 
-        # Check for data gathering needs
+        # Check for data gathering needs (bilingual EN/ES, see complexity_analyzer.DOMAINS note)
         structure.has_data_gathering = any(word in task_lower for word in
-            ["research", "find", "search", "gather", "collect", "fetch", "retrieve"])
+            ["research", "find", "search", "gather", "collect", "fetch", "retrieve",
+             "investiga", "busca", "búsqueda", "recopila", "recolecta", "obtén"])
 
         # Check for analysis needs
         structure.has_analysis = any(word in task_lower for word in
-            ["analyze", "compare", "evaluate", "assess", "calculate", "compute"])
+            ["analyze", "compare", "evaluate", "assess", "calculate", "compute",
+             "analiza", "compara", "evalúa", "calcula", "computa"])
 
         # Check for synthesis needs
         structure.has_synthesis = any(word in task_lower for word in
-            ["report", "summary", "combine", "integrate", "synthesize", "compile"])
+            ["report", "summary", "combine", "integrate", "synthesize", "compile",
+             "informe", "resumen", "combina", "integra", "sintetiza", "compila"])
 
         # Check for dependencies
         structure.has_dependencies = any(word in task_lower for word in
-            ["first", "then", "after", "before", "once", "following", "next", "subsequently"])
+            ["first", "then", "after", "before", "once", "following", "next", "subsequently",
+             "primero", "luego", "después", "antes", "una vez", "a continuación", "siguiente", "posteriormente"])
 
         # Determine if parallelizable
         structure.parallelizable = (
@@ -434,13 +438,17 @@ Respond with ONLY the JSON, no additional text."""
         """Infer required specialization from task description."""
         task_lower = task_part.lower()
 
-        if any(word in task_lower for word in ["search", "find", "research", "gather"]):
+        if any(word in task_lower for word in ["search", "find", "research", "gather",
+                                                "busca", "investiga", "encuentra", "recopila"]):
             return "research"
-        elif any(word in task_lower for word in ["code", "program", "implement", "script"]):
+        elif any(word in task_lower for word in ["code", "program", "implement", "script",
+                                                  "código", "programa", "implementa"]):
             return "coding"
-        elif any(word in task_lower for word in ["analyze", "calculate", "compute", "evaluate"]):
+        elif any(word in task_lower for word in ["analyze", "calculate", "compute", "evaluate",
+                                                  "analiza", "calcula", "computa", "evalúa"]):
             return "analysis"
-        elif any(word in task_lower for word in ["summarize", "combine", "integrate", "synthesize"]):
+        elif any(word in task_lower for word in ["summarize", "combine", "integrate", "synthesize",
+                                                  "resume", "combina", "integra", "sintetiza"]):
             return "synthesis"
         else:
             return "general"

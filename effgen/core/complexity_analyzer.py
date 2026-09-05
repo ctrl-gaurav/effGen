@@ -105,36 +105,59 @@ class ComplexityAnalyzer:
         "reasoning_depth": 0.20
     }
 
-    # Domain keywords for identifying different knowledge domains
+    # Domain keywords for identifying different knowledge domains.
+    # Bilingual (EN/ES) by design: matching against a merged keyword set
+    # avoids needing a language-detection step, which is unreliable on the
+    # short queries typical of a complexity router (see docs/i18n-notes.md).
     DOMAINS = {
-        "technical": ["code", "programming", "software", "algorithm", "debug", "implement", "script", "api"],
-        "research": ["study", "research", "investigate", "analyze", "survey", "review", "literature"],
-        "business": ["market", "sales", "revenue", "business", "strategy", "roi", "profit"],
-        "creative": ["design", "create", "write", "compose", "generate", "draft", "brainstorm"],
-        "data": ["data", "statistics", "analytics", "metrics", "dataset", "visualization", "analysis"],
-        "scientific": ["experiment", "hypothesis", "theory", "scientific", "methodology", "findings"],
-        "legal": ["legal", "law", "regulation", "compliance", "contract", "policy"],
-        "financial": ["financial", "accounting", "budget", "investment", "forecast", "valuation"]
+        "technical": ["code", "programming", "software", "algorithm", "debug", "implement", "script", "api",
+                      "código", "programación", "software", "algoritmo", "depurar", "implementar"],
+        "research": ["study", "research", "investigate", "analyze", "survey", "review", "literature",
+                     "estudio", "investigación", "investigar", "analizar", "encuesta", "revisión", "literatura"],
+        "business": ["market", "sales", "revenue", "business", "strategy", "roi", "profit",
+                     "mercado", "ventas", "ingresos", "negocio", "estrategia", "beneficio"],
+        "creative": ["design", "create", "write", "compose", "generate", "draft", "brainstorm",
+                     "diseño", "diseña", "crear", "escribir", "componer", "generar", "borrador"],
+        "data": ["data", "statistics", "analytics", "metrics", "dataset", "visualization", "analysis",
+                 "datos", "estadísticas", "analítica", "métricas", "conjunto de datos", "visualización", "análisis"],
+        "scientific": ["experiment", "hypothesis", "theory", "scientific", "methodology", "findings",
+                       "experimento", "hipótesis", "teoría", "científico", "metodología", "hallazgos"],
+        "legal": ["legal", "law", "regulation", "compliance", "contract", "policy",
+                  "legal", "ley", "regulación", "cumplimiento", "contrato", "política"],
+        "financial": ["financial", "accounting", "budget", "investment", "forecast", "valuation",
+                      "financiero", "contabilidad", "presupuesto", "inversión", "pronóstico", "valuación"]
     }
 
-    # Tool indicators for different tool types
+    # Tool indicators for different tool types (bilingual EN/ES, see DOMAINS note above)
     TOOL_INDICATORS = {
-        "web_search": ["search", "find online", "look up", "google", "web"],
-        "code_executor": ["run code", "execute", "test", "python", "script"],
-        "calculator": ["calculate", "compute", "math", "equation", "formula"],
-        "file_ops": ["file", "document", "read", "write", "save", "load"],
-        "api": ["api", "request", "fetch data", "endpoint", "rest"],
-        "database": ["database", "sql", "query", "table", "data"],
-        "image": ["image", "picture", "photo", "visualization", "chart", "graph"],
-        "video": ["video", "movie", "stream", "multimedia"]
+        "web_search": ["search", "find online", "look up", "google", "web",
+                       "buscar", "búsqueda", "consultar en línea", "web"],
+        "code_executor": ["run code", "execute", "test", "python", "script",
+                          "ejecutar código", "ejecutar", "probar", "script"],
+        "calculator": ["calculate", "compute", "math", "equation", "formula",
+                       "calcular", "computar", "matemáticas", "ecuación", "fórmula"],
+        "file_ops": ["file", "document", "read", "write", "save", "load",
+                     "archivo", "documento", "leer", "escribir", "guardar", "cargar"],
+        "api": ["api", "request", "fetch data", "endpoint", "rest",
+                "solicitud", "obtener datos", "endpoint"],
+        "database": ["database", "sql", "query", "table", "data",
+                     "base de datos", "consulta", "tabla", "datos"],
+        "image": ["image", "picture", "photo", "visualization", "chart", "graph",
+                  "imagen", "foto", "visualización", "gráfico", "gráfica"],
+        "video": ["video", "movie", "stream", "multimedia",
+                  "vídeo", "video", "película", "transmisión"]
     }
 
-    # Reasoning complexity indicators
+    # Reasoning complexity indicators (bilingual EN/ES, see DOMAINS note above)
     REASONING_INDICATORS = {
-        "simple": ["list", "what is", "define", "show", "display"],
-        "moderate": ["explain", "describe", "how", "summarize", "outline"],
-        "complex": ["analyze", "evaluate", "compare", "assess", "critique"],
-        "very_complex": ["synthesize", "design", "create strategy", "optimize", "architect", "comprehensive"]
+        "simple": ["list", "what is", "define", "show", "display",
+                   "lista", "qué es", "define", "muestra", "despliega"],
+        "moderate": ["explain", "describe", "how", "summarize", "outline",
+                     "explica", "describe", "cómo", "resume", "esquematiza"],
+        "complex": ["analyze", "evaluate", "compare", "assess", "critique",
+                    "analiza", "evalúa", "compara", "critica"],
+        "very_complex": ["synthesize", "design", "create strategy", "optimize", "architect", "comprehensive",
+                          "sintetiza", "diseña", "crea una estrategia", "optimiza", "arquitectura", "integral"]
     }
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -256,7 +279,10 @@ class ComplexityAnalyzer:
         # not the raw count, is the signal, so the contribution tapers off
         # for longer text instead of scaling unbounded with length.
         words = task.split()
-        raw_and_clauses = task.lower().count(" and ")
+        # " y " (Spanish "and") is a near-unambiguous conjunction, same
+        # density-tapering logic as " and " above — added for bilingual
+        # EN/ES support.
+        raw_and_clauses = task.lower().count(" and ") + task.lower().count(" y ")
         num_and_clauses = round(raw_and_clauses * min(1.0, 30 / max(len(words), 1)))
 
         # Count numbered items
