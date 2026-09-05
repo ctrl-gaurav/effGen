@@ -731,7 +731,7 @@ class MultiAgentOrchestrator:
         manager_name = team.manager_agent.name
 
         # Defensive language note, mirroring the fix applied to
-        # DecompositionEngine's templates (PR #151): team.manager_agent.run()
+        # DecompositionEngine's templates: team.manager_agent.run()
         # already applies the manager's own system_prompt as a normal Agent
         # call (unlike DecompositionEngine._llm_decompose, which bypasses the
         # Agent wrapper via a raw llm_client.generate()), so this path is
