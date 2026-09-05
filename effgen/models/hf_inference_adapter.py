@@ -1149,6 +1149,16 @@ class HFInferenceAdapter(BaseModel):
         """True when the catalog marks this model as supporting native tools."""
         return bool(self._info.get("supports_native_tools", False))
 
+    def supports_forced_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice`` is honoured here.
+
+        The HF router's OpenAI-compatible chat endpoint enforces the choice, so
+        a turn can be sent that requires a call. A model that is not offered
+        tool definitions cannot be required to call one, so this follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
+
     def supports_streaming(self) -> bool:
         """True: HF Inference chat endpoints stream."""
         return True

@@ -50,6 +50,44 @@ from effgen.observability.tracing import set_span_attribute as _set_span_attr
 logger = logging.getLogger(__name__)
 
 
+#: The OpenAI-protocol ``tool_choice`` words, in the shape the Messages API
+#: takes. effGen speaks one vocabulary to every adapter — ``"auto"``,
+#: ``"required"``, ``"none"`` — and each adapter puts it on the wire the way its
+#: own provider spells it, so a caller who wants a call required does not have
+#: to know which provider is behind the agent.
+_TOOL_CHOICE_WIRE: dict[str, dict[str, str]] = {
+    "auto": {"type": "auto"},
+    "required": {"type": "any"},
+    "none": {"type": "none"},
+}
+
+
+def _translate_tool_choice(request: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a ``tool_choice`` word into Anthropic's object form, in place.
+
+    A value that is already an object is left as it is, so a caller writing
+    Anthropic-native requests by hand keeps working. An unrecognized word is
+    also left alone rather than guessed at: the provider's own error names the
+    problem better than a silent substitution would.
+
+    ``tool_choice`` without ``tools`` is dropped. Requiring a call from a
+    request that offers nothing to call is rejected by the API, and the agent
+    withholds the definitions on purpose when a run is being steered toward an
+    answer, so the pair has to come apart cleanly.
+    """
+    choice = request.get("tool_choice")
+    if choice is None:
+        return request
+    if not request.get("tools"):
+        request.pop("tool_choice", None)
+        return request
+    if isinstance(choice, str):
+        wire = _TOOL_CHOICE_WIRE.get(choice)
+        if wire is not None:
+            request["tool_choice"] = dict(wire)
+    return request
+
+
 def _tool_calls_from_blocks(raw_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic ``tool_use`` content blocks into the reported shape.
 
@@ -1042,6 +1080,7 @@ class AnthropicAdapter(FunctionCallingModel):
             )
 
             request.update(kwargs)
+            _translate_tool_choice(request)
             response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
@@ -1092,6 +1131,15 @@ class AnthropicAdapter(FunctionCallingModel):
     def supports_tool_calling(self) -> bool:
         """Alias for :meth:`supports_function_calling`."""
         return self.supports_function_calling()
+
+    def supports_forced_tool_call(self) -> bool:
+        """True when tools are offered: the Messages API enforces the choice.
+
+        Anthropic spells the constraint differently from the OpenAI protocol —
+        an object, not a word — so :func:`_translate_tool_choice` rewrites it on
+        the way out. What a caller passes is the same either way.
+        """
+        return self.supports_tool_calling()
 
     # ── Token counting ────────────────────────────────────────────────────
 

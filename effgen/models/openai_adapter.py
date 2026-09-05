@@ -1515,6 +1515,18 @@ class OpenAIAdapter(FunctionCallingModel):
         """True when the catalog marks this model as supporting native tools."""
         return OPENAI_MODELS.get(self.model_name, {}).get("supports_native_tools", True)
 
+    def supports_forced_tool_call(self) -> bool:
+        """True when tools are offered: the Chat Completions API honours ``tool_choice``.
+
+        A model that is not offered tool definitions cannot be required to call
+        one, so this follows :meth:`supports_tool_calling` rather than standing
+        on its own. The same holds for any server speaking the same protocol,
+        which is why
+        :class:`~effgen.models.openai_compatible_adapter.OpenAICompatibleAdapter`
+        inherits it unchanged.
+        """
+        return self.supports_tool_calling()
+
     def streams_tool_calls(self) -> bool:
         """True: a streamed turn's native tool calls are recorded."""
         return True

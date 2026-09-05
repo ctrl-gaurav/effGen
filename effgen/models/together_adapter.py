@@ -873,6 +873,16 @@ class TogetherAdapter(BaseModel):
         """Return True if the loaded model supports native tool-calling."""
         return TOGETHER_MODELS.get(self.model_name, {}).get("supports_native_tools", False)
 
+    def supports_forced_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice`` is honoured here.
+
+        Together's OpenAI-compatible endpoint enforces the
+        choice, so a turn can be sent that requires a call. A model that is
+        not offered tool definitions cannot be required to call one, so this
+        follows :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
+
     def streams_tool_calls(self) -> bool:
         """True: a streamed turn's native tool calls are recorded."""
         return True

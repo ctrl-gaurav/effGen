@@ -832,6 +832,28 @@ class BaseModel(ABC):
         """
         return "api" if self.supports_tool_calling() else "none"
 
+    def supports_forced_tool_call(self) -> bool:
+        """Whether a turn can be sent that *requires* the model to call a tool.
+
+        Offering tools and requiring one are different capabilities. Every
+        adapter that takes tool definitions can offer them; only a request layer
+        that enforces the choice can require one, and a model asked to do
+        something its provider does not implement fails the whole turn rather
+        than answering it. So a caller with a reason to force a call — the agent
+        loop after a model said it would use a tool and then did not — has to be
+        able to ask first.
+
+        The default is ``False``: an adapter advertises this only once its
+        request shaping is known to carry the constraint through, so an adapter
+        that has not considered it degrades to asking in words rather than
+        sending a request the provider will reject.
+
+        Returns:
+            bool: True if ``tool_choice="required"`` reaches the provider in a
+            form it honours.
+        """
+        return False
+
     # ------------------------------------------------------------------
     # Multi-turn tool loop
     # ------------------------------------------------------------------
