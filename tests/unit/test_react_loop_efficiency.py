@@ -587,3 +587,104 @@ class TestUnsynthesizedRetrievalIsNotASuccess:
         assert resp.metadata.get("partial") is True
         assert "225" in resp.partial.text
         assert "calculator" in (resp.output or "")
+
+
+class _NarratesWhileItCalls(BaseModel):
+    """Emits its working and two tool calls in one turn, then the answer.
+
+    A model asked to reason step by step writes the steps out — "3 * 60 =
+    180" — in the same message that carries the calls, because a native tool
+    call is attached to the message the model has just finished writing. That
+    text is a plan: the results have not come back yet.
+    """
+
+    def __init__(self):
+        super().__init__(model_name="narrator", model_type=ModelType.OPENAI)
+        self.calls = 0
+
+    def load(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def unload(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def count_tokens(self, text: str) -> TokenCount:  # pragma: no cover
+        return TokenCount(count=len(text.split()), model_name=self.model_name)
+
+    def get_context_length(self) -> int:  # pragma: no cover
+        return 4096
+
+    def generate_batch(self, prompts, config=None, **kwargs):  # pragma: no cover
+        return [self.generate(p, config=config, **kwargs) for p in prompts]
+
+    def generate_with_tools(self, prompt, tools, config=None, **kwargs):  # pragma: no cover
+        return self.generate(prompt, config=config, tools=tools, **kwargs)
+
+    def generate_stream(self, prompt, config=None, **kwargs):  # pragma: no cover
+        yield self.generate(prompt, config=config, **kwargs).text
+
+    def supports_function_calling(self) -> bool:
+        return True
+
+    def supports_tool_calling(self) -> bool:
+        return True
+
+    def generate(self, prompt, config=None, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return GenerationResult(
+                text=(
+                    "Step 1: the second month is 3 * 60 = 180.\n"
+                    "Step 2: the third month is 180 - 30% = 126.\n"
+                    "Let me check both with the calculator."
+                ),
+                tokens_used=5, finish_reason="tool_calls",
+                model_name=self.model_name,
+                metadata={"tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "calculator",
+                        "arguments": '{"operation": "calculate", "expression": "3 * 60"}',
+                    }},
+                    {"id": "b", "type": "function", "function": {
+                        "name": "calculator",
+                        "arguments": '{"operation": "calculate", "expression": "180 * 0.7"}',
+                    }},
+                ]},
+            )
+        return GenerationResult(
+            text="Final Answer: 366", tokens_used=5, finish_reason="stop",
+            model_name=self.model_name, metadata={},
+        )
+
+
+class TestWorkingIsNotAnAnswer:
+    """Text written alongside a turn's own tool calls is not that turn's answer.
+
+    The loop recovers an answer stated without a ``Final Answer:`` label once a
+    tool has run, and it recognises one by phrases as short as ``=``. On a turn
+    that dispatched its own calls the model wrote before any of them returned,
+    so accepting its text ends the run on the working and discards every result
+    the turn just fetched.
+    """
+
+    def _agent(self, model):
+        return Agent(config=AgentConfig(
+            name="narrating-loop", model=model, tools=[Calculator()],
+            max_iterations=6, raise_on_error=False, tool_calling_mode="native",
+        ))
+
+    def test_the_run_continues_past_the_turn_that_made_the_calls(self):
+        model = _NarratesWhileItCalls()
+        resp = self._agent(model).run(
+            "A program had 60 downloads, then three times as many, then 30% fewer."
+        )
+        assert model.calls > 1, "the loop stopped on the turn that made the calls"
+        assert resp.output.strip() == "366"
+
+    def test_the_results_the_turn_fetched_are_kept(self):
+        model = _NarratesWhileItCalls()
+        resp = self._agent(model).run(
+            "A program had 60 downloads, then three times as many, then 30% fewer."
+        )
+        assert resp.tool_calls == 2
+        assert "Step 1:" not in (resp.output or "")

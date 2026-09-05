@@ -511,7 +511,7 @@ class AgentReActMixin(
             # model asked to reason step by step writes "3 * 60 = 180" while it
             # calls the calculator, and the loop used to stop there and return
             # the working as the answer.
-            if tool_calls > 0 and not parsed.get("action"):
+            if tool_calls > 0 and not parsed.get("action") and not dispatched_calls_this_turn:
                 # No action and we've used tools - model might be stating the answer
                 response_text = response["text"].strip()
                 # Check for answer-like patterns
