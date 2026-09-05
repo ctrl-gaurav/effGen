@@ -574,6 +574,22 @@ class SubAgentManager:
         from .agent import Agent, AgentConfig
 
         base_prompt = config.system_prompt or "You are a helpful AI assistant."
+
+        # Append a language/register note derived from the parent's own
+        # system_prompt, if it has one. Without this, every spawned
+        # specialist keeps one of the five fixed English personas from
+        # get_default_config() regardless of what language or register the
+        # root agent was configured for — the child inherits the parent's
+        # *model* (see `model` above) but never its *system_prompt*.
+        parent_system_prompt = getattr(parent, "config", None)
+        parent_system_prompt = getattr(parent_system_prompt, "system_prompt", None)
+        if parent_system_prompt:
+            base_prompt = (
+                f"{base_prompt}\n\n"
+                "Additionally, follow this instruction from the coordinating "
+                f"agent, including any language it specifies: \"{parent_system_prompt}\""
+            )
+
         child_cfg = AgentConfig(
             name=f"{config.specialization.value}_specialist",
             model=model,                       # reuse the parent's model instance

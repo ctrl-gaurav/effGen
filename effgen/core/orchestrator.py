@@ -730,11 +730,29 @@ class MultiAgentOrchestrator:
         worker_names = [agent.name for agent in team.agents]
         manager_name = team.manager_agent.name
 
+        # Defensive language note, mirroring the fix applied to
+        # DecompositionEngine's templates (PR #151): team.manager_agent.run()
+        # already applies the manager's own system_prompt as a normal Agent
+        # call (unlike DecompositionEngine._llm_decompose, which bypasses the
+        # Agent wrapper via a raw llm_client.generate()), so this path is
+        # less exposed to begin with. Still, the instruction text below is
+        # fixed English and asks for a specific delegation format, which can
+        # pull a small model back toward English for the subtask lines
+        # themselves — this note removes that ambiguity explicitly rather
+        # than relying on the system_prompt alone to override it.
+        manager_system_prompt = getattr(getattr(team.manager_agent, "config", None), "system_prompt", None)
+        language_note = ""
+        if manager_system_prompt:
+            language_note = (
+                "\nWrite the subtask lines in the same language as this "
+                f"instruction: \"{manager_system_prompt}\"\n"
+            )
+
         # Manager decomposes task. Ask it to *name the worker* on each subtask
         # line ("<worker>: <what to do>") so subtasks are routed to the specialist
         # the manager intended, not by list position.
         decomposition_prompt = f"""You are a manager coordinating a team. Break down this task into subtasks for your team.
-
+{language_note}
 Task: {task}
 
 Available workers: {', '.join(worker_names)}
@@ -789,7 +807,7 @@ Use only the worker names listed above."""
 
         # Manager synthesizes
         synthesis_prompt = f"""Synthesize the results from your team into a final answer for: {task}
-
+{language_note}
 Team results:
 {self._format_team_results(responses)}
 
