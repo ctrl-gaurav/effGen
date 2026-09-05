@@ -28,6 +28,7 @@ from .agent_runtime import (
     NUDGE_HAVE_RESULTS,
     written_call_only,
 )
+from .retrieval_requery import MAX_RETRIEVAL_REQUERIES
 from .tool_call_record import ToolCall, truncate_result
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,11 @@ class NativeToolLoop:
     #: Set by a refusal and cleared by the turn that spends it, so it constrains
     #: exactly one turn. See :meth:`take_forced_tool_call`.
     force_tool_call: bool = False
+    #: How many times this run has been sent back to search again after its own
+    #: answer reported that what came back does not answer the question. Capped
+    #: at :data:`~effgen.core.retrieval_requery.MAX_RETRIEVAL_REQUERIES`; see
+    #: :meth:`take_retrieval_requery`.
+    retrieval_requeries: int = 0
 
     # ------------------------------------------------------------------
     # Offering tools
@@ -209,6 +215,23 @@ class NativeToolLoop:
             names[0],
         )
         return names[0]
+
+    def take_retrieval_requery(self) -> bool:
+        """Whether this run may be sent back to search again. Spent on read.
+
+        Reading it consumes the allowance, so a run gets one further search and
+        the answer it writes afterwards is accepted whatever it says. That bound
+        is the point: a model that already searches several times unprompted
+        does not need a policy of searching until something turns up, and a
+        model that stopped after one bad query needs exactly one more.
+
+        Returns:
+            True the first time it is called on a run, False afterwards.
+        """
+        if self.retrieval_requeries >= MAX_RETRIEVAL_REQUERIES:
+            return False
+        self.retrieval_requeries += 1
+        return True
 
     def take_forced_tool_call(self) -> bool:
         """Whether this turn should require a tool call. Spent on read.

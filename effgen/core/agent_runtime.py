@@ -218,6 +218,16 @@ NUDGE_MUST_EXECUTE = (
     "You have not run a tool yet. Run the {tool} tool and answer from what it "
     "returns, not from what you expect it to return."
 )
+# Sent back to a run whose search came back without what the question asked
+# for. It offers the move the retrieval close does not: search again, with
+# different words, before concluding. Bounded at one use per run, so a run that
+# still cannot find it says so on the turn after this and is believed.
+NUDGE_SEARCH_AGAIN = (
+    "[The search has not returned what the question asks for. Search once more "
+    "with a different query — different words, or a narrower or broader "
+    "phrasing — then answer. If the second search does not find it either, say "
+    "so.]"
+)
 
 # The single line that used to close the first prompt of a run whose tools
 # reached the model through a local chat template, and only then. It is
@@ -272,6 +282,7 @@ _SCAFFOLD_LITERALS: tuple[str, ...] = (
     NUDGE_ALREADY_COMPUTED,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
+    NUDGE_SEARCH_AGAIN,
     "Please provide your final response using 'Final Answer:' now.",
 )
 _SCAFFOLD_LITERAL_RES: tuple[re.Pattern[str], ...] = tuple(

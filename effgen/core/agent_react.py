@@ -41,6 +41,7 @@ from .agent_tool_execution import AgentToolExecutionMixin
 from .agent_tool_loop import NativeToolLoop
 from .execution_tracker import EventType, ExecutionEvent
 from .result_relay import relay_result
+from .retrieval_requery import REQUERY_FORCES_TOOL_CALL, should_requery
 from .router import RoutingDecision, RoutingStrategy
 from .tool_call_record import ToolCallList
 
@@ -60,6 +61,7 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_MUST_EXECUTE,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
+    NUDGE_SEARCH_AGAIN,
     _infer_provider_from_model,
     find_written_tool_call,
     model_can_require_tool_call,
@@ -174,6 +176,32 @@ class AgentReActMixin(
         # written-out call has been seen once too often — live in the loop policy
         # the streaming loop shares, so both reach the same decisions.
         guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
+
+        def _requery(answer: str) -> bool:
+            """Send this run back for one more search, or leave the answer alone.
+
+            True when the answer was not accepted and the scratchpad now asks
+            for a different query. Called from every point that would otherwise
+            accept an answer, so which of them the model happened to reach —
+            with an answer label or without one — does not decide whether the
+            run gets its second search.
+            """
+            if not should_requery(
+                sanitize_final_answer(answer) or answer,
+                guards.calls,
+                self._is_context_retrieval_tool,
+                tools_suppressed=guards.tools_suppressed(),
+                iterations_left=max_iterations - iterations,
+                requery_spent=guards.retrieval_requeries > 0,
+            ):
+                return False
+            if not guards.take_retrieval_requery():
+                return False
+            nonlocal scratchpad
+            scratchpad += "\nObservation: " + NUDGE_SEARCH_AGAIN
+            if REQUERY_FORCES_TOOL_CALL:
+                guards.force_tool_call = True
+            return True
 
         # Optional periodic checkpointing
         _ckpt_interval = _ckpt_interval_arg
@@ -550,6 +578,16 @@ class AgentReActMixin(
                     )
                     continue
 
+                # A run whose search came back without what the question asked
+                # for has one more query to spend before that answer is taken.
+                # The answer is judged after sanitization so what is read is
+                # what the caller would have received, and the allowance is
+                # spent here, so the answer written after the second search is
+                # accepted whatever it says — including that it still cannot be
+                # found, which is an answer and not a failure.
+                if _requery(final_answer):
+                    continue
+
                 # Record final debug iteration
                 if debug_trace is not None:
                     from ..debug.inspector import DebugIteration
@@ -580,6 +618,8 @@ class AgentReActMixin(
                 response_text = response["text"].strip()
                 # Check for answer-like patterns
                 if any(phrase in response_text.lower() for phrase in ["the answer is", "the result is", "the sum is", "equals", "="]):
+                    if _requery(response_text):
+                        continue
                     logger.info("Detected answer statement without 'Final Answer:' keyword")
                     if debug_trace is not None:
                         from ..debug.inspector import DebugIteration

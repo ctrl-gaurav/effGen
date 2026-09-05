@@ -21,12 +21,14 @@ from .agent_config import AgentMode
 from .agent_response import StreamEvent
 from .agent_runtime import (
     NUDGE_NO_TOOLS,
+    NUDGE_SEARCH_AGAIN,
     resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
 )
 from .agent_tool_loop import NativeToolLoop
 from .result_relay import unrelayed_result
+from .retrieval_requery import should_requery
 from .tool_call_record import ToolCall, truncate_result
 
 if TYPE_CHECKING:
@@ -80,6 +82,8 @@ class AgentStreamingMixin:
             cite_sources: bool = False,
             numbered_passages: int = 0,
         ) -> str: ...
+
+        def _is_context_retrieval_tool(self, action: str) -> bool: ...
 
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
@@ -400,6 +404,11 @@ class AgentStreamingMixin:
         # records take, so both paths decide from the same evidence whether the
         # answer dropped a result a tool computed.
         executed_calls: list[ToolCall] = []
+        # Whether this stream has already been sent back to search again. This
+        # path keeps its own loop state rather than a ``NativeToolLoop``, so the
+        # one-shot bound is a flag here; the decision itself is the same one the
+        # blocking loop makes, from the same records.
+        requery_spent = False
 
         # Build conversation history
         conversation_history = self._format_conversation_history()
@@ -521,6 +530,23 @@ class AgentStreamingMixin:
             # Check for final answer
             if parsed.get("final_answer"):
                 answer = sanitize_final_answer(parsed["final_answer"]) or parsed["final_answer"]
+                # A run whose search came back without what the question asked
+                # for spends one more query before this answer is taken. The
+                # turn is accumulated before it is parsed, so nothing has
+                # reached the consumer yet and the second search is invisible
+                # to it. Tools are never withdrawn on this path, so the
+                # condition the blocking loop reads from its guards is fixed.
+                if not requery_spent and should_requery(
+                    answer,
+                    executed_calls,
+                    self._is_context_retrieval_tool,
+                    tools_suppressed=False,
+                    iterations_left=max_iterations - iterations,
+                    requery_spent=False,
+                ):
+                    requery_spent = True
+                    scratchpad += "\nObservation: " + NUDGE_SEARCH_AGAIN
+                    continue
                 # A tool that computed the answer itself is answered by
                 # summarising it far too often, and the result the run is still
                 # holding is then lost. Put it back, exactly as run() does.

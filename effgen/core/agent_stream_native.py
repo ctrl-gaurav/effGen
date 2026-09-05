@@ -57,13 +57,20 @@ from .agent_runtime import (
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
     NUDGE_NOT_USABLE,
+    NUDGE_SEARCH_AGAIN,
     find_written_tool_call,
+    model_can_require_tool_call,
     resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
 )
 from .agent_tool_loop import NativeToolLoop
 from .result_relay import unrelayed_result
+from .retrieval_requery import (
+    REQUERY_FORCES_TOOL_CALL,
+    REQUERY_MIN_ITERATIONS_LEFT,
+    should_requery,
+)
 from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
@@ -209,6 +216,8 @@ class AgentNativeStreamMixin:
         # :class:`~effgen.core.agent.Agent`. Declared for the type checker only
         # — at run time they arrive through the MRO, and these statements do
         # not execute.
+        model: Any
+
         def _extract_partial_answer(self, scratchpad: str) -> str | None: ...
 
         def _partial_result(
@@ -363,6 +372,23 @@ class AgentNativeStreamMixin:
 
         while iterations < max_iterations:
             iterations += 1
+            # A turn that could still be sent back to search is accumulated
+            # rather than streamed. The decision needs the whole answer, and on
+            # this path tokens reach the consumer as they arrive — so a turn
+            # judged after the fact would already be on screen, and neither
+            # withdrawing it nor emitting a second answer is something a
+            # consumer can be asked to handle. Every other turn streams exactly
+            # as before; the cost is the first token of at most one turn per
+            # run, and only on a run holding a retrieval tool that has already
+            # searched with its further query unspent.
+            defer_turn = (
+                guards.retrieval_requeries == 0
+                and not guards.tools_suppressed()
+                and max_iterations - iterations >= REQUERY_MIN_ITERATIONS_LEFT
+                and bool(guards.calls)
+                and self._is_context_retrieval_tool(guards.calls[-1].name)
+            )
+            held: list[str] = []
             prompt = self._native_tool_prompt(
                 task, scratchpad, conversation_history, guards.previous_actions
             )
@@ -378,6 +404,24 @@ class AgentNativeStreamMixin:
                 )
                 if isinstance(tool_defs, list):
                     gen_kwargs["tools"] = tool_defs
+
+            # The turn after a re-query is required to call, where the provider
+            # enforces it; everywhere else the ask degrades to the nudge already
+            # in the scratchpad. Spent whether or not it could be used, so it
+            # never leaks onto a later turn.
+            if guards.take_forced_tool_call():
+                if "tools" in gen_kwargs and model_can_require_tool_call(self.model):
+                    gen_kwargs["tool_choice"] = "required"
+                    logger.info(
+                        "forced tool call: requiring a call on iteration %d",
+                        iterations,
+                    )
+                else:
+                    logger.info(
+                        "forced tool call: nudge only on iteration %d "
+                        "(no request-level constraint available here)",
+                        iterations,
+                    )
 
             clear_stream_usage(self.model)
             clear_stream_tool_calls(self.model)
@@ -406,8 +450,11 @@ class AgentNativeStreamMixin:
                     else:
                         delta = answer.push(token)
                     if delta:
-                        committed = True
-                        yield _emit(delta)
+                        if defer_turn:
+                            held.append(delta)
+                        else:
+                            committed = True
+                            yield _emit(delta)
             except Exception as exc:  # noqa: BLE001 - handled below
                 logger.debug("Native streaming turn failed", exc_info=True)
                 failure = exc
@@ -445,13 +492,43 @@ class AgentNativeStreamMixin:
                 # ---- the turn is the answer -------------------------------
                 delta = answer.flush()
                 if delta:
-                    committed = True
-                    yield _emit(delta)
+                    if defer_turn:
+                        held.append(delta)
+                    else:
+                        committed = True
+                        yield _emit(delta)
                 if not turn_committed or not raw.strip():
                     scratchpad += "\nThought: "
                     scratchpad += "\nAction: (continue reasoning)"
                     continue
                 text = answer.emitted
+                # A run whose search came back without what the question asked
+                # for spends one more query before this answer is taken. The
+                # turn was accumulated rather than streamed, so nothing has
+                # reached the consumer and the discarded turn leaves no trace.
+                if (
+                    defer_turn
+                    and should_requery(
+                        text,
+                        guards.calls,
+                        self._is_context_retrieval_tool,
+                        tools_suppressed=guards.tools_suppressed(),
+                        iterations_left=max_iterations - iterations,
+                        requery_spent=guards.retrieval_requeries > 0,
+                    )
+                    and guards.take_retrieval_requery()
+                ):
+                    scratchpad += "\nObservation: " + NUDGE_SEARCH_AGAIN
+                    if REQUERY_FORCES_TOOL_CALL:
+                        guards.force_tool_call = True
+                    answer = _AnswerStream()
+                    continue
+                # The turn is being kept, so what was held back is delivered
+                # now, before anything that follows it.
+                for _held in held:
+                    committed = True
+                    yield _emit(_held)
+                held = []
                 if not text.strip():
                     # The turn produced only scaffolding. When what leaked is a
                     # call for a tool this agent holds, the model is writing the
@@ -505,6 +582,10 @@ class AgentNativeStreamMixin:
                 return
 
             # ---- the turn made tool calls ---------------------------------
+            for _held in held:
+                committed = True
+                yield _emit(_held)
+            held = []
             thought = "" if turn_committed else raw.strip()
             if thought:
                 if on_thought:
