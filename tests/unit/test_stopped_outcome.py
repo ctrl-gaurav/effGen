@@ -186,7 +186,10 @@ STOPPED_PATHS = [
         id="loop_detected",
     ),
     pytest.param(
-        [_calc("12*3"), _calc("36*1")], {}, "repeated_tool_result",
+        # 36*1 and 18*2 both return 36, so the tool reproduces its own result
+        # with a fresh input each time. The first repeat buys a turn to state
+        # the answer; the second finds that turn spent and stops the run.
+        [_calc("12*3"), _calc("36*1"), _calc("18*2")], {}, "repeated_tool_result",
         id="repeated_tool_result",
     ),
     pytest.param(
@@ -270,7 +273,7 @@ def test_a_run_stopped_with_nothing_to_show_carries_no_partial():
 def test_a_retrieval_loop_reports_the_same_shape_as_a_compute_one():
     """Both categories stop the same way; only the wording differs."""
     response = _agent(
-        [_search("refunds")], tools=[_Passages()], max_iterations=4,
+        [_search("refunds")], tools=[_Passages()], max_iterations=8,
     ).run("Explain the refund window.")
 
     assert response.outcome == "stopped"

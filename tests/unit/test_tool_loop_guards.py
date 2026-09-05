@@ -15,6 +15,7 @@ from effgen.core.agent_tool_loop import (
     FUZZY_LOOP_THRESHOLD,
     FUZZY_LOOP_THRESHOLD_DATA,
     MAX_BATCH_TOOL_RUNS,
+    NUDGE_AFTER_CALLS,
     NativeToolLoop,
 )
 from effgen.tools.base_tool import ToolCategory
@@ -32,8 +33,15 @@ class _Tool:
         self.name = name
 
 
-def _loop(**tools):
-    return NativeToolLoop(tools or {"calculator": _Tool()}, nudge_cap=10)
+#: A budget generous enough for the declared drift thresholds to be reachable.
+#: :meth:`NativeToolLoop.fuzzy_threshold` bounds the count by the run's own
+#: iteration cap, so a loop built with a cap of 10 would answer 9 whatever the
+#: tool's category says.
+ROOMY_CAP = 40
+
+
+def _loop(cap=ROOMY_CAP, **tools):
+    return NativeToolLoop(tools or {"calculator": _Tool()}, nudge_cap=cap)
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +92,8 @@ def test_enough_differing_calls_to_one_tool_is_a_fuzzy_loop():
 
 def test_a_data_processing_tool_gets_the_wider_threshold():
     loop = NativeToolLoop(
-        {"cruncher": _Tool(ToolCategory.DATA_PROCESSING, "cruncher")}, nudge_cap=10
+        {"cruncher": _Tool(ToolCategory.DATA_PROCESSING, "cruncher")},
+        nudge_cap=ROOMY_CAP,
     )
     assert loop.fuzzy_threshold("cruncher") == FUZZY_LOOP_THRESHOLD_DATA
     for i in range(FUZZY_LOOP_THRESHOLD_DATA):
@@ -140,16 +149,23 @@ def test_forcing_a_text_answer_suppresses_tools():
 @pytest.mark.parametrize(
     ("iteration", "call_count", "result", "expected"),
     [
-        (8, 0, "42", NUDGE_HAVE_ANSWER),
-        (2, 1, "42", NUDGE_HAVE_RESULTS),
+        (ROOMY_CAP - 2, 0, "42", NUDGE_HAVE_ANSWER),
+        (2, NUDGE_AFTER_CALLS, "42", NUDGE_HAVE_RESULTS),
+        (2, NUDGE_AFTER_CALLS - 1, "42", None),
         (2, 0, "42", None),
-        (2, 1, "Error executing tool calculator: boom", None),
+        (2, NUDGE_AFTER_CALLS, "Error executing tool calculator: boom", None),
     ],
 )
 def test_the_post_tool_nudge_matches_the_loop_state(
     iteration, call_count, result, expected
 ):
     assert _loop().post_tool_nudge(iteration, call_count, result) == expected
+
+
+def test_the_drift_threshold_never_exceeds_the_runs_own_budget():
+    """A count the iteration cap cannot reach is dead code, not a guard."""
+    assert _loop(cap=10).fuzzy_threshold("calculator") == 9
+    assert _loop(cap=ROOMY_CAP).fuzzy_threshold("calculator") == FUZZY_LOOP_THRESHOLD
 
 
 # ---------------------------------------------------------------------------

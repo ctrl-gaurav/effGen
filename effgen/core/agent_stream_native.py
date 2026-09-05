@@ -584,17 +584,50 @@ class AgentNativeStreamMixin:
                 )
 
             check = guards.check_action(action, action_input)
+            # An exact repeat of a call that already succeeded is answered from
+            # the record and the run carries on, the same as on the blocking
+            # path: a pure computation is idempotent, so running it again
+            # returns what it returned before.
+            replay = None
+            if check.is_exact_loop and not check.is_fuzzy_loop:
+                replay = guards.cached_result(check)
+            if replay is not None:
+                logger.info(
+                    "[Repeat] '%s' was already called with this input; "
+                    "replaying the recorded result instead of ending the run",
+                    action,
+                )
+                scratchpad += (
+                    f"\nAction: {action}"
+                    f"\nAction Input: {action_input}"
+                    f"\nObservation: {replay}"
+                )
+                if on_observation:
+                    on_observation(replay)
+                if include_events:
+                    yield StreamEvent(kind="observation", tool=action, text=replay)
+                nudge = guards.post_tool_nudge(
+                    iterations, check.action_call_count, replay
+                )
+                if nudge:
+                    scratchpad += f"\n{nudge}"
+                continue
             if check.is_loop:
                 logger.info(
                     "[Loop detected] Repeated action '%s' (%s) while streaming",
                     action, check.loop_type,
                 )
                 partial = self._extract_partial_answer(scratchpad)
-                if (
-                    partial
-                    and self._is_context_retrieval_tool(action)
-                    and not guards.force_text_answer
-                ):
+                # What a tool returned is not an answer, whatever the tool was.
+                # Stop offering tools and spend one turn asking the model to
+                # state the answer from the observations it already has, before
+                # falling back to the progress itself.
+                if partial and not guards.force_text_answer:
+                    logger.info(
+                        "[Loop synthesis] '%s' is repeating; asking for an "
+                        "answer stated from the observations so far",
+                        action,
+                    )
                     guards.force_text_answer = True
                     scratchpad += (
                         f"\nAction: {action}"
@@ -646,6 +679,9 @@ class AgentNativeStreamMixin:
                 action, arguments=action_input, result=observation,
                 iteration=iterations,
             )
+            # Keep the result against the exact call that produced it, so
+            # proposing that call again is answered from the record.
+            guards.record_pair_result(check, observation)
             scratchpad += (
                 f"\nAction: {action}"
                 f"\nAction Input: {action_input}"
@@ -667,10 +703,15 @@ class AgentNativeStreamMixin:
                 return
 
             if guards.result_is_repeat(action, observation):
-                if (
-                    self._is_context_retrieval_tool(action)
-                    and not guards.force_text_answer
-                ):
+                # A repeated result means the model is re-deriving, not that the
+                # task is answered — so give it one turn to state the answer
+                # from the observation before falling back to the observation.
+                if not guards.force_text_answer:
+                    logger.info(
+                        "[Loop synthesis] Tool '%s' repeated a result; "
+                        "asking for an answer stated from it",
+                        action,
+                    )
                     guards.force_text_answer = True
                     scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
                     continue

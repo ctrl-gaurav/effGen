@@ -32,18 +32,42 @@ from .tool_call_record import ToolCall, truncate_result
 #: not evidence of a repeated result, so the result-based short circuit skips it.
 TOOL_ERROR_PREFIX = "Error executing tool"
 
-#: How many calls to one tool count as a loop when the inputs keep changing.
+#: How many calls to one tool read as circling when the inputs keep changing.
 #: Small models re-format the same call rather than repeating it byte for byte,
 #: so the exact-pair check alone never fires for them.
-FUZZY_LOOP_THRESHOLD = 5
+#:
+#: This counts *drift*, not work. It was 5, which is below the length of an
+#: ordinary multi-step task: a word problem with four arithmetic steps and one
+#: check spends five calls doing exactly what it was asked to do, and the guard
+#: read that as a loop and ended the run holding an intermediate value. Twelve
+#: distinct calls to one tool is past the length of any chain of work a single
+#: tool is asked to carry, so only a model that really is circling reaches it.
+FUZZY_LOOP_THRESHOLD = 12
 
 #: The same threshold for a tool whose job is to chew through data, where
-#: several calls in a row are the normal shape of the work.
-FUZZY_LOOP_THRESHOLD_DATA = 7
+#: several calls in a row are the normal shape of the work — so the count that
+#: reads as circling sits higher again.
+FUZZY_LOOP_THRESHOLD_DATA = 16
+
+#: The lowest a drift threshold may be driven by a small iteration budget. Four
+#: steps and a check is five calls of legitimate work, so a guard that fires
+#: below six is guarding against work. A run whose budget cannot reach this
+#: floor ends at its iteration cap instead, which is what actually happened.
+FUZZY_LOOP_FLOOR = 6
 
 #: Batch tool runs allowed before the loop stops offering tools. A model that
 #: answers a multi-call turn with another multi-call turn is not converging.
-MAX_BATCH_TOOL_RUNS = 2
+#:
+#: Raised from 2 for the same reason as the drift threshold: a model that emits
+#: two calls per turn covers a four-step task in two turns and then has its
+#: tools taken away with the task unfinished. Six multi-call turns is past the
+#: shape of any batched work, so the cap still catches a model that will never
+#: converge and no longer catches one that was going to finish.
+MAX_BATCH_TOOL_RUNS = 6
+
+#: Calls to one tool before the loop reminds the model it already has results.
+#: See :meth:`NativeToolLoop.post_tool_nudge` for why this is not 1.
+NUDGE_AFTER_CALLS = 6
 
 
 @dataclass
@@ -90,6 +114,14 @@ class NativeToolLoop:
 
     #: ``(action, normalized_input)`` for every call dispatched so far.
     previous_actions: list[tuple[str, str]] = field(default_factory=list)
+    #: What each dispatched ``(action, normalized_input)`` returned, so proposing
+    #: that call again can be answered from the record instead of ending the
+    #: run. See :meth:`cached_result`.
+    results_by_pair: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: How many times each pair has been proposed again after it first ran. One
+    #: replay is a model that did not read the observation; several mean it is
+    #: not going to move on.
+    replays_by_pair: dict[tuple[str, str], int] = field(default_factory=dict)
     #: ``(action, normalized_result)`` for every call that returned without error.
     previous_results: list[tuple[str, str]] = field(default_factory=list)
     #: Multi-call turns dispatched as one batch.
@@ -141,12 +173,27 @@ class NativeToolLoop:
             return normalized
 
     def fuzzy_threshold(self, action: str) -> int:
-        """How many calls to *action* read as a loop when the inputs differ."""
+        """How many calls to *action* read as circling when the inputs differ.
+
+        The count comes from the tool's declared category — a data-processing
+        tool is expected to be called more often than one that answers a
+        question — and is then bounded by the run's own iteration budget.
+
+        Both bounds matter. A threshold the budget cannot reach is not a guard,
+        it is dead code, and the run ends at its cap reporting that it ran out
+        of iterations. A threshold driven below :data:`FUZZY_LOOP_FLOOR` by a
+        short budget is worse: it fires on work. So the count sits one below the
+        cap when the cap is the smaller of the two, which also leaves the turn
+        the loop needs to ask for an answer before it gives up.
+        """
         tool = self.tools.get(action)
         category = getattr(getattr(tool, "metadata", None), "category", None)
-        if category == ToolCategory.DATA_PROCESSING:
-            return FUZZY_LOOP_THRESHOLD_DATA
-        return FUZZY_LOOP_THRESHOLD
+        declared = (
+            FUZZY_LOOP_THRESHOLD_DATA
+            if category == ToolCategory.DATA_PROCESSING
+            else FUZZY_LOOP_THRESHOLD
+        )
+        return max(FUZZY_LOOP_FLOOR, min(declared, self.nudge_cap - 1))
 
     def check_action(self, action: str, action_input: str) -> LoopCheck:
         """Report whether dispatching *action* now would repeat earlier work.
@@ -167,6 +214,46 @@ class NativeToolLoop:
     def record_action(self, check: LoopCheck) -> None:
         """Remember the call *check* describes as dispatched."""
         self.previous_actions.append(check.pair)
+
+    #: Times one exact call may be answered from the record before the repeat
+    #: is read as a model that is not going to move on. One replay covers the
+    #: common case — a model restating its plan before reading the observation
+    #: — and two bound a run that would otherwise spin.
+    MAX_REPLAYS_PER_PAIR = 2
+
+    def record_pair_result(self, check: LoopCheck, tool_result: str) -> None:
+        """Remember what the call *check* describes returned.
+
+        Only a dispatch that succeeded is kept: replaying an error teaches the
+        model nothing it has not already seen, and the point of the record is to
+        hand back a result worth having.
+        """
+        if isinstance(tool_result, str) and tool_result.startswith(TOOL_ERROR_PREFIX):
+            return
+        self.results_by_pair.setdefault(check.pair, tool_result)
+
+    def cached_result(self, check: LoopCheck) -> str | None:
+        """Return what this exact call returned before, or ``None``.
+
+        A model proposing a call it already made is usually not looping. It has
+        restated its plan without reading the observation, or lost the result
+        while re-deriving it. Both are answered by handing the recorded result
+        back and letting the run continue: a pure computation is idempotent, so
+        running it again returns what it returned before, and that is what the
+        repeat is answered with.
+
+        Returns ``None`` once the same pair has been replayed
+        :attr:`MAX_REPLAYS_PER_PAIR` times, so a run that really is stuck still
+        reaches the loop-breaking path.
+        """
+        result = self.results_by_pair.get(check.pair)
+        if result is None:
+            return None
+        seen = self.replays_by_pair.get(check.pair, 0)
+        if seen >= self.MAX_REPLAYS_PER_PAIR:
+            return None
+        self.replays_by_pair[check.pair] = seen + 1
+        return result
 
     def record_execution(
         self,
@@ -246,9 +333,15 @@ class NativeToolLoop:
     ) -> str | None:
         """Return the line to append after a tool ran, or ``None`` for silence.
 
-        Near the cap the loop asks for the answer outright; a tool on its second
-        run has almost certainly produced what the answer needs, so the model is
-        pointed at the scratchpad before it drifts into re-planning.
+        Near the cap the loop asks for the answer outright. Away from it, the
+        reminder is for a model still calling the same tool long after it has
+        what it needs, so it waits until the call count is genuinely unusual
+        (:data:`NUDGE_AFTER_CALLS`) rather than merely plural.
+
+        It used to fire on a tool's *second* call. On any task that needs more
+        than two steps that is an instruction to stop half way, and the smallest
+        models take it: they answer with whichever intermediate value is most
+        recent.
 
         Args:
             iteration: The turn number that just ran, counted from one.
@@ -262,7 +355,9 @@ class NativeToolLoop:
         """
         if iteration >= self.nudge_cap - 2:
             return NUDGE_HAVE_ANSWER
-        if action_call_count >= 1 and not tool_result.startswith(TOOL_ERROR_PREFIX):
+        if action_call_count >= NUDGE_AFTER_CALLS and not tool_result.startswith(
+            TOOL_ERROR_PREFIX
+        ):
             return NUDGE_HAVE_RESULTS
         return None
 

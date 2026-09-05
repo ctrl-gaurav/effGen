@@ -504,6 +504,36 @@ def test_both_loops_build_the_same_prompts_for_the_same_turns():
     assert streamed_model.tool_kwargs == blocking_model.tool_kwargs
 
 
+def test_both_loops_replay_a_repeated_call_instead_of_ending_the_run():
+    """An exact repeat is answered from the record on the streaming path too.
+
+    The two loops share the guards, so a model that restates its call must
+    reach the same answer with the same number of dispatches either way.
+    """
+    script = [
+        _turn("", [("calculator", {"expression": "4817*236"})]),
+        _turn("", [("calculator", {"expression": "4817*236"})]),
+        _turn("The product is 1136812."),
+    ]
+
+    streamed_tool = _Calculator()
+    streamed_agent = _agent(
+        _ScriptedModel([dict(t) for t in script]), tools=[streamed_tool]
+    )
+    list(streamed_agent.stream(TASK, include_events=True))
+    streamed = streamed_agent.last_stream_response
+
+    blocking_tool = _Calculator()
+    blocking = _agent(
+        _ScriptedModel([dict(t) for t in script]), tools=[blocking_tool]
+    ).run(TASK)
+
+    assert streamed.outcome == blocking.outcome == "answered"
+    assert "1136812" in streamed.output and "1136812" in blocking.output
+    # One dispatch on each path: the repeat came from the record.
+    assert streamed_tool.calls == blocking_tool.calls == ["4817*236"]
+
+
 @pytest.mark.parametrize(
     ("script", "max_iterations", "reason"),
     [

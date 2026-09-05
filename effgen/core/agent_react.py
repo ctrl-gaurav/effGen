@@ -550,23 +550,59 @@ class AgentReActMixin(
                 # enough times with drifting inputs that it reads as a loop.
                 check = guards.check_action(action, action_input)
                 action_call_count = check.action_call_count
+                # An exact repeat of a call that already succeeded is answered
+                # from the record. A pure computation is idempotent, so running
+                # it again returns what it returned before; the record supplies
+                # that, and the run carries on with the step it was on.
+                #
+                # Treating the second identical call as proof the model was
+                # stuck ended the run holding whatever the last observation
+                # happened to be, which on a multi-step task is an intermediate
+                # value. A model repeats a call because it restated its plan
+                # before reading the observation; handing the result back lets
+                # it finish the task instead.
+                replay = None
+                if check.is_exact_loop and not check.is_fuzzy_loop:
+                    replay = guards.cached_result(check)
+                if replay is not None:
+                    logger.info(
+                        "[Repeat] '%s' was already called with this input; "
+                        "replaying the recorded result instead of ending the run",
+                        action,
+                    )
+                    scratchpad += (
+                        f"\nAction: {action}"
+                        f"\nAction Input: {action_input}"
+                        f"\nObservation: {replay}"
+                    )
+                    cur_observation = replay
+                    nudge = guards.post_tool_nudge(
+                        iterations, action_call_count, replay
+                    )
+                    if nudge:
+                        scratchpad += f"\n{nudge}"
+                    continue
                 if check.is_loop:
                     logger.info(
                         f"[Loop detected] Repeated action '{action}' ({check.loop_type}) — "
-                        f"breaking loop and returning last observation"
+                        f"the run stops offering this tool"
                     )
                     # Extract the last successful observation from scratchpad
                     partial = self._extract_partial_answer(scratchpad)
-                    # A retrieval/search tool's observation is source material,
-                    # so returning it here hands back a passage dump in place of
-                    # an answer. The model already has what it retrieved: stop
-                    # offering tools and give it one turn to write the answer
-                    # from the scratchpad before falling back to the passages.
-                    if (
-                        partial
-                        and self._is_context_retrieval_tool(action)
-                        and not guards.force_text_answer
-                    ):
+                    # What a tool returned is not an answer, whatever the tool
+                    # was: a retrieved passage is source material, and a
+                    # computed number is usually an intermediate one, so
+                    # handing either back loses the question it belonged to.
+                    # The model already has both in the scratchpad. Stop
+                    # offering tools and spend one turn asking it to state the
+                    # answer from what it has, before falling back to the
+                    # progress itself.
+                    if partial and not guards.force_text_answer:
+                        logger.info(
+                            "[Loop synthesis] '%s' is repeating; asking for an "
+                            "answer stated from the observations so far",
+                            action,
+                        )
                         guards.force_text_answer = True
                         scratchpad += (
                             f"\nAction: {action}"
@@ -650,6 +686,9 @@ class AgentReActMixin(
                         duration=tool_elapsed,
                         iteration=iterations,
                     )
+                    # Keep the result against the exact call that produced it,
+                    # so proposing that call again is answered from the record.
+                    guards.record_pair_result(check, tool_result)
                     cur_observation = tool_result
 
                     # Metrics for tool execution
@@ -677,27 +716,24 @@ class AgentReActMixin(
                             answer_source="direct_calculator_result",
                         )
 
-                    # Result-based short-circuit: small models often re-derive an
-                    # answer they already have (e.g. "15^2" then "15*15", both
-                    # 225) with slightly different inputs, so the exact-input loop
-                    # guard never fires. If a tool reproduces a result it already
-                    # returned, the answer is confident — stop and return it
-                    # instead of burning iterations on redundant re-planning.
+                    # Result-based short-circuit: a model often re-derives a
+                    # result it already has (e.g. "15^2" then "15*15", both
+                    # 225) with slightly different inputs, so the exact-input
+                    # loop guard never fires. A tool that reproduces its own
+                    # output means the model is re-deriving rather than moving
+                    # on, and re-offering it produces the same turn again.
                     if guards.result_is_repeat(action, tool_result):
-                        # A retrieval/search tool's output is context, not a
-                        # synthesized answer, so returning it verbatim hands
-                        # back a passage dump. The observation is already in
-                        # the scratchpad: stop offering tools and give the
-                        # model one turn to write the answer from it. A
-                        # compute tool (e.g. calculator) reproducing its
-                        # result is a confident answer and is returned as-is.
-                        if (
-                            self._is_context_retrieval_tool(action)
-                            and not guards.force_text_answer
-                        ):
+                        # What the tool returned is not the answer, whatever
+                        # the tool is: a retrieved passage is source material,
+                        # and a repeated number is usually an intermediate one.
+                        # The observation is in the scratchpad, so stop
+                        # offering tools and give the model one turn to state
+                        # the answer from it, falling back to the progress
+                        # itself only when that turn produces nothing.
+                        if not guards.force_text_answer:
                             logger.info(
-                                "[Loop efficiency] Retrieval tool '%s' repeated a "
-                                "result; asking for a synthesized answer",
+                                "[Loop synthesis] Tool '%s' repeated a result; "
+                                "asking for an answer stated from it",
                                 action,
                             )
                             guards.force_text_answer = True

@@ -6,11 +6,18 @@ on a question they have already answered:
 - A simple-arithmetic tool result is returned directly after a single call
   (``answer_source="direct_calculator_result"``), including power/root phrasings
   ("15 squared", "cube of 3", "square root of 144").
+- An exact repeat of a call that already succeeded is answered from the record
+  and the run continues: a pure computation is idempotent, so running it again
+  returns what it returned before. The replays are capped, so a run that is
+  really stuck still breaks out.
 - Result-based short-circuit: when a tool reproduces a result it already
-  returned — with a *different* input, so the exact-input loop guard does not
-  fire — the loop stops the run. The model never wrote an answer, so the run
-  reports ``outcome="stopped"`` and carries the results it had under
-  ``partial``.
+  returned — with a *different* input, so the exact-input guard does not fire —
+  the loop stops calling and spends one turn asking for the answer stated from
+  what it has. If that turn produces nothing, the run reports
+  ``outcome="stopped"`` and carries the results under ``partial``.
+- The drift threshold sits above the length of real work and below the run's own
+  iteration budget, so a multi-step task finishes and a guard the budget could
+  never reach is not left as dead code.
 - A clean ``Final Answer:`` after one tool call stops immediately.
 - The guardrails never change a correct answer.
 - A repeated action with no usable partial answer (every attempt failed or was
@@ -126,22 +133,48 @@ def test_simple_arithmetic_returns_after_one_call(task, expr):
     assert resp.metadata.get("answer_source") == "direct_calculator_result"
 
 
-def test_repeated_result_short_circuits_with_different_input():
-    """Same result via different inputs stops the loop (no exact-loop match).
+def test_repeated_result_stops_calling_and_asks_for_an_answer():
+    """Same result via different inputs stops the *calling*, not the run.
 
     'explain' disables the direct-calculator fast path, so only the
     result-based short-circuit can stop this at two calls.
+
+    A repeated result means the tool is confident, not that the task is
+    answered: the number it returns is often an intermediate one, and handing
+    "225" back bare loses the question it answered. So the tools are withdrawn
+    and the model gets one turn to state the answer from the observations it
+    already has.
     """
     model = _ScriptedModel([
-        _calc_action("15^2"),    # -> 225
-        _calc_action("15 * 15"),  # different input, same 225 -> short-circuit
-        _calc_action("225 * 1"),  # would be a 3rd call if dedup failed
+        _calc_action("15^2"),     # -> 225
+        _calc_action("15 * 15"),  # different input, same 225 -> stop calling
+        "Final Answer: 15 squared is 225.",
+    ])
+    agent = _make_agent(model)
+    resp = agent.run("Explain step by step and compute 15 squared")
+    assert resp.success is True
+    assert resp.outcome == "answered"
+    assert resp.tool_calls == 2, f"expected 2 tool calls, got {resp.tool_calls}"
+    # The answer is the model's sentence, not the raw observation.
+    assert "225" in (resp.output or "")
+    assert resp.output.strip() != "225"
+
+
+def test_repeated_result_falls_back_to_a_stopped_run_with_the_value():
+    """When the synthesis turn produces nothing usable, the run stops.
+
+    The second repeat finds the turn already spent, so what the tool computed
+    comes back as progress under ``partial`` and ``output`` states the stop.
+    """
+    model = _ScriptedModel([
+        _calc_action("15^2"),     # -> 225
+        _calc_action("15 * 15"),  # same 225 -> the synthesis turn
+        _calc_action("225 * 1"),  # ignores the withdrawal, same 225 again
     ])
     agent = _make_agent(model)
     resp = agent.run("Explain step by step and compute 15 squared")
     assert resp.outcome == "stopped"
     assert resp.stop_reason == "repeated_tool_result"
-    assert resp.tool_calls == 2, f"expected 2 tool calls, got {resp.tool_calls}"
     # The result the tool computed is progress, not the answer the caller asked
     # for — so it travels under ``partial``, not in ``output``.
     assert "225" in resp.partial.text
@@ -390,20 +423,44 @@ def _review_agent(*, context_retrieval: bool) -> Agent:
     ))
 
 
-def test_a_repeated_read_keeps_the_file_as_progress_not_as_the_answer():
-    """A plain file tool that repeats leaves the run stopped, holding the file.
+def test_a_repeated_read_is_answered_from_the_record_and_the_review_lands():
+    """Asking to read the same file twice is answered from what it returned.
 
-    The model never reviewed the file, so the file's contents are not the review
-    the caller asked for: they are what the run had reached.
+    Re-reading a file the run already read is not a loop; it is a model
+    restating its plan. The recorded contents come back as the observation and
+    the run carries on, so the review the caller asked for is what it gets.
     """
     resp = _review_agent(context_retrieval=False).run(
         "Review calc.py and report any correctness risk."
     )
+    assert resp.outcome == "answered"
+    assert resp.stop_reason == "final_answer"
+    assert "zero divisor" in (resp.output or "")
+    # The second read was served from the record, so the tool ran once.
+    assert resp.tool_calls == 1
+
+
+def test_a_read_that_never_becomes_a_review_stops_holding_the_file():
+    """A model that only ever re-reads runs out of replays and the run stops.
+
+    The file's contents are not the review the caller asked for: they are what
+    the run had reached, so they travel under ``partial``.
+    """
+    model = _ScriptedModel([_read_action("calc.py")])
+    resp = Agent(config=AgentConfig(
+        raise_on_error=False,
+        name="review-loop-test", model=model,
+        tools=[_FileReadTool(context_retrieval=False)],
+        max_iterations=8, tool_calling_mode="react",
+    )).run("Review calc.py and report any correctness risk.")
+
     assert resp.outcome == "stopped"
     assert resp.stop_reason == "loop_detected"
     assert resp.metadata.get("partial") is True
     assert " ".join(resp.partial.text.split()) == " ".join(FILE_BODY.split())
     assert resp.output != resp.partial.text
+    # It stopped well inside the budget rather than grinding to the cap.
+    assert resp.iterations < 8
 
 
 def test_a_tool_that_declares_retrieved_context_gets_the_synthesis_turn():
@@ -471,16 +528,16 @@ def test_an_explicit_iteration_cap_of_zero_is_honored():
 def _retrieval_loop_agent(*, script=None):
     """An agent whose retrieval tool keeps returning the same passage.
 
-    The model asks for it, is nudged to synthesize with the tools withdrawn,
-    and asks again — the shape the report measured on the smallest local
-    models and on groq's 8B.
+    The model asks for it, is answered from the record while the replays last,
+    is nudged to state the answer with the tools withdrawn, and asks again —
+    the shape the smallest local models and groq's 8B produce.
     """
     model = _ScriptedModel(script or [_read_action("calc.py")])
     return Agent(config=AgentConfig(
         raise_on_error=False,  # these assert the failure response, not the raise
         name="retrieval-loop-test", model=model,
         tools=[_FileReadTool(context_retrieval=True)],
-        max_iterations=4, tool_calling_mode="react",
+        max_iterations=8, tool_calling_mode="react",
     ))
 
 
