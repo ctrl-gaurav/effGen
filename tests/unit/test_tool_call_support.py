@@ -7,7 +7,8 @@ Three things are pinned here:
   the boolean keeps working.
 * A local chat template that accepts a ``tools`` argument and discards it does
   **not** count as tool-calling support — the model never sees the definitions.
-* The tool-use line reaches the prompt only for template-rendered tools.
+* Every path that hands a model tool definitions states the contract for
+  them, in the same words, whichever way the definitions travel.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from effgen.core.agent_runtime import TEMPLATE_TOOL_USE_INSTRUCTION
 from effgen.models._adapter_utils import TOOL_PROBE_NAME, chat_template_renders_tools
 from effgen.models.base import BaseModel, ModelType
 from effgen.models.lazy import LazyModel
+from effgen.prompts.tool_contract import TOOL_CONTRACT_VERIFY
 from effgen.tools import get_registry
 from tests.fixtures.mock_models import MockModel
 
@@ -375,43 +377,64 @@ class TestNativeModeOnAModelWithNoDefinitions:
         assert "121663" in str(response)
 
 
-class TestTemplateToolUseLine:
+class TestEveryToolPathStatesItsContract:
+    """What a tool-holding prompt says about the tools, on every delivery.
 
-    def test_template_model_with_tools_gets_the_line(self):
+    Tool definitions travel to the model outside the prompt -- through the
+    provider's tool-calling API or a local chat template -- so the prompt is
+    the only place they can be described. Before, a chat-template model got one
+    line and a provider-side one got nothing at all, which meant the same agent
+    was told two different things depending on which adapter was loaded. Now
+    both get the contract for the tools they hold, and the superseded line is
+    stated by neither.
+    """
+
+    def test_a_template_model_with_tools_gets_the_contract(self):
         prompts = _prompts_from_run("template", with_tools=True)
-        assert any(TEMPLATE_TOOL_USE_INSTRUCTION in p for p in prompts)
+        assert any(TOOL_CONTRACT_VERIFY in p for p in prompts)
 
-    def test_the_line_closes_the_prompt_after_the_task(self):
+    def test_the_contract_closes_the_prompt_after_the_task(self):
         prompts = _prompts_from_run("template", with_tools=True)
-        assert prompts[0].endswith("\n\n" + TEMPLATE_TOOL_USE_INSTRUCTION)
+        assert prompts[0].endswith("\n\n" + TOOL_CONTRACT_VERIFY)
 
-    def test_api_model_never_gets_the_line(self):
+    def test_an_api_model_gets_the_same_contract(self):
+        """The path every OpenAI-protocol provider takes said nothing before."""
         prompts = _prompts_from_run("api", with_tools=True)
-        assert not any(TEMPLATE_TOOL_USE_INSTRUCTION in p for p in prompts)
+        assert prompts[0].endswith("\n\n" + TOOL_CONTRACT_VERIFY)
 
-    def test_no_tool_path_never_gets_the_line(self):
+    def test_the_two_deliveries_produce_the_same_opening_prompt(self):
+        assert (_prompts_from_run("template", with_tools=True)[0]
+                == _prompts_from_run("api", with_tools=True)[0])
+
+    def test_the_superseded_line_reaches_no_prompt(self):
+        for support in ("template", "api"):
+            prompts = _prompts_from_run(support, with_tools=True)
+            assert not any(TEMPLATE_TOOL_USE_INSTRUCTION in p for p in prompts)
+
+    def test_a_tool_free_run_states_no_contract(self):
         prompts = _prompts_from_run("template", with_tools=False)
+        assert not any(TOOL_CONTRACT_VERIFY in p for p in prompts)
         assert not any(TEMPLATE_TOOL_USE_INSTRUCTION in p for p in prompts)
 
-    def test_an_adapter_that_only_sets_the_boolean_gets_no_line(self):
-        """A subclass predating the signal inherits ``"api"``, so no line."""
+    def test_an_adapter_that_only_sets_the_boolean_still_gets_it(self):
+        """A subclass predating the finer signal inherits ``"api"``."""
         model = MockModel(responses=["Final Answer: ok"] * 4)
         model.supports_tool_calling = lambda: True
         assert model.tool_call_support() == "api"
-        assert not any(
-            TEMPLATE_TOOL_USE_INSTRUCTION in p for p in _record_prompts(model)
-        )
+        assert any(TOOL_CONTRACT_VERIFY in p for p in _record_prompts(model))
 
-    def test_a_model_object_lacking_the_method_gets_no_line(self):
-        """A model that is not a ``BaseModel`` has no signal to read."""
+    def test_a_model_object_lacking_the_method_gets_it_too(self):
+        """A model that is not a ``BaseModel`` has no finer signal to read.
+
+        It still advertises tool calling and still receives the definitions, so
+        the branch that hands them over states what they are for.
+        """
         model = _NoSignalModel(responses=["Final Answer: ok"] * 4)
         assert not hasattr(model, "tool_call_support")
-        assert not any(
-            TEMPLATE_TOOL_USE_INSTRUCTION in p for p in _record_prompts(model)
-        )
+        assert any(TOOL_CONTRACT_VERIFY in p for p in _record_prompts(model))
 
-    def test_a_signal_that_raises_gets_no_line(self):
-        """A probe that fails changes no prompt rather than breaking the run."""
+    def test_a_signal_that_raises_changes_nothing_about_the_run(self):
+        """A probe that fails still gets the contract its branch calls for."""
 
         class Raises(MockModel):
             def supports_tool_calling(self):
@@ -423,4 +446,4 @@ class TestTemplateToolUseLine:
         model = Raises(responses=["Final Answer: ok"] * 4)
         prompts = _record_prompts(model)
         assert prompts, "the run produced no prompt at all"
-        assert not any(TEMPLATE_TOOL_USE_INSTRUCTION in p for p in prompts)
+        assert any(TOOL_CONTRACT_VERIFY in p for p in prompts)

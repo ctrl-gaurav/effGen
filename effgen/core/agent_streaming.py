@@ -25,6 +25,7 @@ from .agent_runtime import (
     sanitize_final_answer,
     unknown_tool_observation,
 )
+from .agent_tool_loop import NativeToolLoop
 
 if TYPE_CHECKING:
     from .agent_config import AgentConfig
@@ -62,6 +63,20 @@ class AgentStreamingMixin:
         # the attributes this module actually reads are declared; the other
         # mixins declare their own.
         config: AgentConfig
+
+        def _tool_contract(self) -> str: ...
+
+        def _citation_prompt_state(self) -> tuple[bool, int]: ...
+
+        def _answer_shape_instruction(self) -> str: ...
+
+        def _context_answer_instruction(
+            self,
+            previous_actions: list[tuple[str, str]],
+            *,
+            cite_sources: bool = False,
+            numbered_passages: int = 0,
+        ) -> str: ...
 
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
@@ -372,6 +387,12 @@ class AgentStreamingMixin:
         scratchpad = ""
         iterations = 0
         tool_calls = 0
+        # ``(action, normalized_input)`` for every call this stream dispatched,
+        # in the shape the blocking loop keeps. The closing instruction is
+        # chosen from the last call's tool, so without this the streamed prompt
+        # could not state it and the two paths asked the model different
+        # questions about the same observations.
+        previous_actions: list[tuple[str, str]] = []
 
         # Build conversation history
         conversation_history = self._format_conversation_history()
@@ -405,12 +426,20 @@ class AgentStreamingMixin:
                     conversation_history=conversation_history,
                 )
             else:
+                cite_sources, numbered_passages = self._citation_prompt_state()
                 prompt = self._tool_prompt_generator.generate_react_prompt(
                     task=task,
                     scratchpad=scratchpad,
                     conversation_history=conversation_history,
                     system_prompt=self.config.system_prompt,
                     verbose=self._verbose_tools,
+                    closing_instruction=self._context_answer_instruction(
+                        previous_actions,
+                        cite_sources=cite_sources,
+                        numbered_passages=numbered_passages,
+                    ),
+                    answer_shape=self._answer_shape_instruction(),
+                    tool_contract=self._tool_contract(),
                 )
 
             # Stream tokens from the model into a buffer. The raw ReAct
@@ -512,6 +541,9 @@ class AgentStreamingMixin:
                     yield StreamEvent(
                         kind="tool_call", tool=action, tool_input=str(action_input)
                     )
+                previous_actions.append(
+                    (action, NativeToolLoop.normalize_input(action_input))
+                )
 
                 if action in self.tools:
                     tool_result = self._execute_tool(action, action_input)

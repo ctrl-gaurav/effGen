@@ -58,7 +58,6 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_HAVE_RESULTS,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
-    TEMPLATE_TOOL_USE_INSTRUCTION,
     _infer_provider_from_model,
     find_written_tool_call,
     sanitize_final_answer,
@@ -86,6 +85,15 @@ class AgentReActMixin(
         # per-call state. Declared for the type checker only — at run time it
         # arrives through the MRO, and this statement does not execute.
         def _effective_output_schema(self) -> dict[str, Any] | None: ...
+
+        # Contributed by :class:`~effgen.core.agent_runtime.AgentRuntimeMixin`,
+        # which holds the prompt assembly both tool loops share.
+        def _tool_contract(self) -> str: ...
+
+        def _native_tool_prompt(
+            self, task: str, scratchpad: str, conversation_history: str,
+            previous_actions: list[tuple[str, str]],
+        ) -> str: ...
 
     def _run_single_agent(self,
                          task: str,
@@ -214,46 +222,12 @@ class AgentReActMixin(
                 # Native/hybrid mode: use a simple user message and pass
                 # tool definitions via the chat template's tools parameter.
                 # The model will produce native tool call tokens (e.g.
-                # <tool_call> for Qwen, [TOOL_CALLS] for Mistral).
-                _closing = self._compose_closing(
-                    _answer_shape,
-                    self._continuation_instruction(
-                        guards.previous_actions,
-                        cite_sources=_cite_sources,
-                        numbered_passages=_numbered_passages,
-                    ) if scratchpad else "",
+                # <tool_call> for Qwen, [TOOL_CALLS] for Mistral). The prompt is
+                # assembled by the same function the streamed loop calls, so the
+                # two paths cannot say different things to the same model.
+                prompt = self._native_tool_prompt(
+                    task, scratchpad, conversation_history, guards.previous_actions,
                 )
-                if scratchpad:
-                    prompt = (
-                        f"{task}\n\n"
-                        f"Previous steps:\n{scratchpad}\n\n"
-                        f"{_closing}"
-                    )
-                elif _closing:
-                    prompt = f"{task}\n\n{_closing}"
-                else:
-                    prompt = task
-                # Carry prior conversation turns into the native tool-calling
-                # prompt. Without this the model only sees the latest task and
-                # forgets earlier turns, so a multi-turn *session* loses its
-                # context the moment any tool is attached (the ReAct/template
-                # branches below already inject this history).
-                if conversation_history:
-                    prompt = f"{conversation_history}\n\n{prompt}"
-                # Steer the model with the user's custom persona. The native/
-                # hybrid path sends a bare user message (the chat template owns
-                # the system slot for tools), so prepend the persona — otherwise
-                # a custom persona is dropped the moment a tool is attached, even
-                # though the ReAct-text and Gemini-native paths honor it.
-                prompt = f"{self._persona_prefix()}{prompt}"
-                # A chat template hands the model the tool definitions and says
-                # nothing about using them, so state the expectation once, on the
-                # opening turn. Continuation turns already carry their own
-                # instruction, and provider-side tool calling is left alone: it
-                # decides for itself, and the extra line only pushes it into
-                # calls it was right to skip.
-                if not scratchpad and self.tools and self._model_tool_call_support() == "template":
-                    prompt = f"{prompt}\n\n{TEMPLATE_TOOL_USE_INSTRUCTION}"
                 # Pass tool definitions for the chat template
                 tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
                     list(self.tools.values())
@@ -283,6 +257,7 @@ class AgentReActMixin(
                         numbered_passages=_numbered_passages,
                     ),
                     answer_shape=_answer_shape,
+                    tool_contract=self._tool_contract(),
                 )
 
             # Debug: log first iteration prompt to see if history is included
@@ -341,6 +316,12 @@ class AgentReActMixin(
             # it directly — no text parsing needed.
             native_tool_calls = response.get("tool_calls") or []
 
+            # Whether this turn's own text was written before any observation
+            # this turn produced. A batch of calls is dispatched after the model
+            # has finished writing, so its text cannot state a result the batch
+            # returned; the answer recovery below has to know that.
+            dispatched_calls_this_turn = False
+
             # Execute ALL native tool calls in one batch (OpenAI/Cerebras can
             # return multiple tool_calls in a single response).
             if len(native_tool_calls) > 1 and self.tools:
@@ -371,6 +352,7 @@ class AgentReActMixin(
                 scratchpad += f"\n{NUDGE_CONTINUE}"
                 guards.note_batch_run()
                 parsed = {"thought": "", "action": None, "action_input": None, "final_answer": None}
+                dispatched_calls_this_turn = True
                 cur_observation = "\n".join(batch_observations)
                 logger.info(f"[Batch native tool calls] {len(native_tool_calls)} calls executed (batch run #{guards.batch_tool_runs})")
             elif native_tool_calls:
@@ -520,7 +502,15 @@ class AgentReActMixin(
                 return _build_response(final_answer)
 
             # Check if model is stating an answer without "Final Answer:" keyword
-            # This happens when model provides result after tool execution
+            # This happens when model provides result after tool execution.
+            #
+            # Only when the model has actually seen a result. A turn that
+            # dispatched its own calls wrote its text first and the observations
+            # came back after, so that text states a plan, not an answer — and
+            # accepting it throws away every result the turn just fetched. A
+            # model asked to reason step by step writes "3 * 60 = 180" while it
+            # calls the calculator, and the loop used to stop there and return
+            # the working as the answer.
             if tool_calls > 0 and not parsed.get("action"):
                 # No action and we've used tools - model might be stating the answer
                 response_text = response["text"].strip()

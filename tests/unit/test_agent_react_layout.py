@@ -174,6 +174,17 @@ def test_the_react_module_no_longer_defines_the_moved_members() -> None:
         assert f"    def {name}(" not in src, f"{name!r} is still defined in agent_react.py"
 
 
+def test_the_native_stream_no_longer_builds_its_own_prompt() -> None:
+    """The streamed native loop calls the shared builder instead of copying it.
+
+    The two assemblies were line-for-line copies, and a line added to one of
+    them reached only that path. Nothing prevents that drift while both exist.
+    """
+    assert _defining_class("_native_tool_prompt").__module__ == "effgen.core.agent_runtime"
+    assert "self._native_tool_prompt(" in inspect.getsource(agent_stream_native)
+    assert "self._native_tool_prompt(" in inspect.getsource(agent_react)
+
+
 def test_a_bare_react_subclass_keeps_the_moved_methods() -> None:
     class _Stub(AgentReActMixin):
         pass

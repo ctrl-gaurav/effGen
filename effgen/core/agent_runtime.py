@@ -185,13 +185,13 @@ NUDGE_NOT_USABLE = (
     "plain Final Answer."
 )
 
-# Closes the first prompt of a run whose tools reach the model only through a
-# local chat template. Such a template prints the definitions and stops there;
-# nothing tells the model it is expected to use them, and a small model will
-# often answer the question itself instead — returning a confident wrong number
-# rather than calling the tool that would have been right. One line naming the
-# expectation is enough. It is deliberately NOT sent to provider-side tool
-# calling, where it pushes models into calls they were right to skip.
+# The single line that used to close the first prompt of a run whose tools
+# reached the model through a local chat template, and only then. It is
+# superseded on every path by the category-selected contract in
+# :mod:`effgen.prompts.tool_contract`, which says what to do with the tools
+# rather than only that they exist, and which reaches provider-side tool calling
+# too. Kept defined at its published name so an importer of the 1.0.0 wording
+# still resolves it.
 TEMPLATE_TOOL_USE_INSTRUCTION = (
     "Use the tools you have been given when they apply to the task."
 )
@@ -676,6 +676,25 @@ def _strip_run_citation_markers(
 class AgentRuntimeMixin:
     """Pure/stateless helper methods mixed into :class:`Agent`."""
 
+    if TYPE_CHECKING:
+        # Contributed by :class:`~effgen.core.agent.Agent` and the ReAct mixin,
+        # which own the per-run state these helpers read. Declared for the type
+        # checker only — at run time they arrive through the MRO, and these
+        # statements do not execute.
+        config: Any
+        tools: dict[str, Any]
+
+        def _citation_prompt_state(self) -> tuple[bool, int]: ...
+        def _compose_closing(self, answer_shape: str, closing: str) -> str: ...
+        def _answer_shape_instruction(self) -> str: ...
+        def _continuation_instruction(
+            self,
+            previous_actions: list[tuple[str, str]],
+            *,
+            cite_sources: bool = False,
+            numbered_passages: int = 0,
+        ) -> str: ...
+
     @staticmethod
     def _resolve_guardrails(guardrails: Any):
         """Resolve guardrails config to a GuardrailChain or None."""
@@ -999,6 +1018,84 @@ class AgentRuntimeMixin:
         """
         persona = getattr(self, "_custom_persona", None)
         return f"{persona}\n\n" if persona else ""
+
+    def _tool_contract(self) -> str:
+        """What this agent tells the model about the tools it holds, or ``""``.
+
+        The text comes from the tools' declared categories
+        (:func:`effgen.prompts.tool_contract.select_tool_contract`), so a
+        calculator, a code executor and a search tool are each described for
+        what they are. An agent holding no tools gets ``""`` and its prompt is
+        unchanged.
+
+        ``AgentConfig.tool_contract`` overrides the selection: any text is
+        stated verbatim in the contract's position, and ``""`` states nothing at
+        all, which is the way to keep a prompt free of the framework's own
+        sentences without rebuilding the whole template.
+        """
+        declared = getattr(getattr(self, "config", None), "tool_contract", None)
+        if declared is not None:
+            if declared:
+                logger.info("tool contract: caller-supplied")
+            return str(declared)
+        from ..prompts.tool_contract import select_tool_contract
+        return select_tool_contract((getattr(self, "tools", None) or {}).values())
+
+    def _native_tool_prompt(
+        self, task: str, scratchpad: str, conversation_history: str,
+        previous_actions: list[tuple[str, str]],
+    ) -> str:
+        """Build one turn's prompt for the native/hybrid tool path.
+
+        Both the blocking loop and the streamed one call this, so the two ask
+        the same model the same question for the same agent instead of
+        assembling the prompt twice and drifting apart.
+
+        The tool definitions travel outside this string — through the provider's
+        tool-calling API or the chat template — so the prompt itself is the only
+        place the tools can be described. The contract goes on the opening turn,
+        where the model first sees them; later turns close with a continuation
+        or retrieval instruction of their own, which a second statement would
+        compete with.
+        """
+        cite_sources, numbered_passages = self._citation_prompt_state()
+        closing = self._compose_closing(
+            self._answer_shape_instruction(),
+            self._continuation_instruction(
+                previous_actions,
+                cite_sources=cite_sources,
+                numbered_passages=numbered_passages,
+            ) if scratchpad else "",
+        )
+        if scratchpad:
+            prompt = (
+                f"{task}\n\n"
+                f"Previous steps:\n{scratchpad}\n\n"
+                f"{closing}"
+            )
+        elif closing:
+            prompt = f"{task}\n\n{closing}"
+        else:
+            prompt = task
+        # Carry prior conversation turns into the native tool-calling prompt.
+        # Without this the model only sees the latest task and forgets earlier
+        # turns, so a multi-turn *session* loses its context the moment any tool
+        # is attached (the ReAct/template branches inject this history too).
+        if conversation_history:
+            prompt = f"{conversation_history}\n\n{prompt}"
+        # Steer the model with the user's custom persona. This path sends a bare
+        # user message (the chat template owns the system slot for tools), so
+        # prepend the persona — otherwise a custom persona is dropped the moment
+        # a tool is attached, even though the ReAct-text and Gemini-native paths
+        # honor it. The persona leads and the contract follows: the persona is
+        # who the model is, the contract describes machinery the framework
+        # attached.
+        prompt = f"{self._persona_prefix()}{prompt}"
+        if not scratchpad and self.tools:
+            contract = self._tool_contract()
+            if contract:
+                prompt = f"{prompt}\n\n{contract}"
+        return prompt
 
     def _direct_prompt(self, task: str, conversation_history: str = "") -> str:
         """Build the user prompt for the no-tool direct/streaming paths.

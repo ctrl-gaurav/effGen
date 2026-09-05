@@ -163,7 +163,10 @@ class TestDeclaredSchemaReachesTheLoop:
         model = _Scripted([SEARCH, JSON_ANSWER])
         _agent(model, [_retrieval_tool()]).run(TASK, output_schema=SCHEMA)
         last = model.prompts[-1]
-        assert last.index(SCHEMA_MARK) < last.index("source material")
+        # Anchor on the whole close, not on a phrase inside it: the opening
+        # contract for a retrieval tool says the same thing in the same words,
+        # so a substring of either matches both and would not tell them apart.
+        assert last.index(SCHEMA_MARK) < last.index(CONTEXT_ANSWER_INSTRUCTION)
 
     def test_a_schema_run_is_not_told_to_answer_before_it_may_call_a_tool(self):
         """The opening turn states the shape without demanding an answer now."""
@@ -227,6 +230,61 @@ class TestBlockingAndNativeStreamAgree:
         )
         assert SCHEMA_MARK in streamed
         assert streamed.index(SCHEMA_MARK) < streamed.index("source material")
+
+
+class TestBlockingAndTextStreamAgree:
+    """``run()`` and ``stream()`` build the same ReAct prompt, turn for turn.
+
+    The two are separate loops, so nothing but this makes them agree. Before,
+    the streamed one passed neither the retrieval close nor a declared schema,
+    and a caller who changed ``run`` to ``stream`` silently changed what the
+    model was asked.
+
+    ``run()`` has one stage ``stream()`` does not -- re-asking for an answer in
+    a declared shape after the loop is over -- so the comparison is over the
+    prompts the loop itself built, marked by where that stage begins.
+    """
+
+    @staticmethod
+    def _loop_prompts(tools, *, stream: bool, **cfg) -> list[str]:
+        model = _Scripted([SEARCH, JSON_ANSWER])
+        agent = _agent(model, tools, **cfg)
+        cut: list[int] = []
+        original = agent._apply_structured_output
+
+        def marked(*a, **kw):
+            cut.append(len(model.prompts))
+            return original(*a, **kw)
+
+        agent._apply_structured_output = marked
+        if stream:
+            "".join(agent.stream(TASK))
+        else:
+            agent.run(TASK)
+        return model.prompts[:cut[0]] if cut else model.prompts
+
+    @pytest.mark.parametrize("tools_factory", [
+        pytest.param(lambda: [_retrieval_tool()], id="retrieval"),
+        pytest.param(lambda: [Calculator()], id="calculator"),
+    ])
+    @pytest.mark.parametrize("cfg", [
+        pytest.param({}, id="no-schema"),
+        pytest.param({"output_schema": SCHEMA}, id="declared-schema"),
+    ])
+    def test_every_loop_turn_is_the_same_prompt(self, tools_factory, cfg):
+        blocking = self._loop_prompts(tools_factory(), stream=False, **cfg)
+        streamed = self._loop_prompts(tools_factory(), stream=True, **cfg)
+        assert len(blocking) == len(streamed) >= 2
+        assert blocking == streamed
+
+    def test_the_streamed_retrieval_turn_states_the_close(self):
+        streamed = self._loop_prompts([_retrieval_tool()], stream=True)
+        assert CONTEXT_ANSWER_INSTRUCTION in streamed[-1]
+
+    def test_the_streamed_turns_state_a_declared_schema(self):
+        streamed = self._loop_prompts(
+            [_retrieval_tool()], stream=True, output_schema=SCHEMA)
+        assert all(SCHEMA_MARK in p for p in streamed)
 
 
 class TestTheChangeReachesNoOtherShape:

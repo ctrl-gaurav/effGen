@@ -167,6 +167,7 @@ class ToolPromptGenerator:
         verbose: bool = True,
         closing_instruction: str = "",
         answer_shape: str = "",
+        tool_contract: str = "",
     ) -> str:
         """
         Generate a complete ReAct prompt with enhanced tool descriptions.
@@ -185,6 +186,11 @@ class ToolPromptGenerator:
                 ahead of *closing_instruction*. It carries no "answer now"
                 label of its own, so it can be stated on a turn where the model
                 may still call a tool. Empty leaves the prompt unchanged.
+            tool_contract: What to do with the tools listed above it — see
+                :mod:`effgen.prompts.tool_contract`. Placed with the tool list
+                so the two are read together, and repeated on every turn
+                because the whole scaffold is re-rendered every turn. Empty
+                leaves the prompt unchanged.
 
         Returns:
             Complete formatted ReAct prompt string.
@@ -198,6 +204,7 @@ class ToolPromptGenerator:
             tools_section=tools_section,
             task=task,
             scratchpad=scratchpad,
+            tool_contract=tool_contract,
         )
 
         if answer_shape:
@@ -231,6 +238,7 @@ class ToolPromptGenerator:
         tools_section: str,
         task: str,
         scratchpad: str,
+        tool_contract: str = "",
     ) -> str:
         """
         Apply model-family-specific prompt formatting.
@@ -254,33 +262,43 @@ class ToolPromptGenerator:
         if self._model_family == "qwen":
             return self._format_qwen(
                 system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad
+                react_instructions, task, scratchpad, tool_contract
             )
         elif self._model_family == "llama":
             return self._format_llama(
                 system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad
+                react_instructions, task, scratchpad, tool_contract
             )
         elif self._model_family == "phi":
             return self._format_phi(
                 system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad
+                react_instructions, task, scratchpad, tool_contract
             )
         else:
             return self._format_generic(
                 system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad
+                react_instructions, task, scratchpad, tool_contract
             )
+
+    @staticmethod
+    def _with_contract(tools_block: str, tool_contract: str) -> str:
+        """Return *tools_block* with the contract stated under it.
+
+        The contract is about the tools the block lists, so the two are read
+        together, ahead of the format instructions. An empty contract leaves the
+        block exactly as it was.
+        """
+        return f"{tools_block}\n\n{tool_contract}" if tool_contract else tools_block
 
     def _format_generic(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad
+        react_instructions, task, scratchpad, tool_contract=""
     ) -> str:
         """Default prompt format."""
         parts = [
             f"{system_prompt} You can reason step-by-step and use tools.",
             conversation_history,
-            f"Available tools:\n{tools_section}",
+            self._with_contract(f"Available tools:\n{tools_section}", tool_contract),
             "",
             "IMPORTANT: If there is previous conversation context above, use that information.",
             "",
@@ -295,14 +313,16 @@ class ToolPromptGenerator:
 
     def _format_qwen(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad
+        react_instructions, task, scratchpad, tool_contract=""
     ) -> str:
         # Qwen2.5 format: structured with clear section markers
         """Qwen-optimized prompt format with chat template hints."""
         parts = [
             f"{system_prompt} You can reason step-by-step and use tools.",
             conversation_history,
-            f"<|tools|>\nAvailable tools:\n{tools_section}\n<|/tools|>",
+            self._with_contract(
+                f"<|tools|>\nAvailable tools:\n{tools_section}\n<|/tools|>", tool_contract
+            ),
             "",
             "IMPORTANT: If there is previous conversation context above, use that information.",
             "",
@@ -317,7 +337,7 @@ class ToolPromptGenerator:
 
     def _format_llama(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad
+        react_instructions, task, scratchpad, tool_contract=""
     ) -> str:
         # Llama-3 format: system-style instructions
         """Llama-optimized prompt format."""
@@ -325,7 +345,7 @@ class ToolPromptGenerator:
             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>",
             f"{system_prompt} You can reason step-by-step and use tools.",
             conversation_history,
-            f"Available tools:\n{tools_section}",
+            self._with_contract(f"Available tools:\n{tools_section}", tool_contract),
             "",
             "IMPORTANT: If there is previous conversation context above, use that information.",
             "",
@@ -339,13 +359,13 @@ class ToolPromptGenerator:
 
     def _format_phi(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad
+        react_instructions, task, scratchpad, tool_contract=""
     ) -> str:
         """Phi-optimized prompt: more concise instructions."""
         parts = [
             f"{system_prompt} You can reason step-by-step and use tools.",
             conversation_history,
-            f"Tools:\n{tools_section}",
+            self._with_contract(f"Tools:\n{tools_section}", tool_contract),
             "",
             react_instructions,
             "",

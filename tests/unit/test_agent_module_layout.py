@@ -37,6 +37,11 @@ class _EmptyClassBody:
 #: as a name defined twice. The explicit names cover slots a class only carries
 #: when it does not inherit them.
 INTERPRETER_CLASS_ATTRIBUTES = frozenset(vars(_EmptyClassBody)) | {
+    # Stamped on any class whose body contains an annotation anywhere, including
+    # one inside a ``TYPE_CHECKING`` block the interpreter never runs. Two
+    # mixins that each declare what a sibling contributes would otherwise read
+    # as defining the same name twice.
+    "__annotations__",
     "__module__",
     "__doc__",
     "__dict__",
@@ -66,6 +71,9 @@ OWNERS = {
     "_format_conversation_history": "effgen.core.agent_prompting",
     "_get_anthropic_system": "effgen.core.agent_prompting",
     "_get_anthropic_tools": "effgen.core.agent_prompting",
+    # the native/hybrid turn prompt, shared by the blocking and streamed loops
+    "_native_tool_prompt": "effgen.core.agent_runtime",
+    "_tool_contract": "effgen.core.agent_runtime",
     # source mining, beside the methods that read it
     "_RETRIEVAL_TOOL_TAGS": "effgen.core.agent_citations",
     # result assembly

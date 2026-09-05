@@ -57,7 +57,6 @@ from .agent_runtime import (
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
     NUDGE_NOT_USABLE,
-    TEMPLATE_TOOL_USE_INSTRUCTION,
     find_written_tool_call,
     resolve_output_budget,
     sanitize_final_answer,
@@ -225,6 +224,11 @@ class AgentNativeStreamMixin:
 
         def _answer_shape_instruction(self) -> str: ...
 
+        def _native_tool_prompt(
+            self, task: str, scratchpad: str, conversation_history: str,
+            previous_actions: list[tuple[str, str]],
+        ) -> str: ...
+
         @staticmethod
         def _compose_closing(answer_shape: str, closing: str) -> str: ...
 
@@ -286,40 +290,6 @@ class AgentNativeStreamMixin:
         calls).
         """
         return getattr(self, "_last_stream_response", None)
-
-    # ------------------------------------------------------------------
-    # Prompt
-    # ------------------------------------------------------------------
-    def _native_tool_prompt(
-        self, task: str, scratchpad: str, conversation_history: str,
-        previous_actions: list[tuple[str, str]],
-    ) -> str:
-        """Build the turn's prompt, the same way the blocking loop builds it."""
-        cite_sources, numbered_passages = self._citation_prompt_state()
-        closing = self._compose_closing(
-            self._answer_shape_instruction(),
-            self._continuation_instruction(
-                previous_actions,
-                cite_sources=cite_sources,
-                numbered_passages=numbered_passages,
-            ) if scratchpad else "",
-        )
-        if scratchpad:
-            prompt = (
-                f"{task}\n\n"
-                f"Previous steps:\n{scratchpad}\n\n"
-                f"{closing}"
-            )
-        elif closing:
-            prompt = f"{task}\n\n{closing}"
-        else:
-            prompt = task
-        if conversation_history:
-            prompt = f"{conversation_history}\n\n{prompt}"
-        prompt = f"{self._persona_prefix()}{prompt}"
-        if not scratchpad and self.tools and self._model_tool_call_support() == "template":
-            prompt = f"{prompt}\n\n{TEMPLATE_TOOL_USE_INSTRUCTION}"
-        return prompt
 
     # ------------------------------------------------------------------
     # The loop
