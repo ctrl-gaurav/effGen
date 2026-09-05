@@ -375,7 +375,16 @@ class AgentReActMixin(
                             except Exception:
                                 logger.debug("Failed to set tool span status", exc_info=True)
                         tool_calls += 1
-                        guards.record_execution(_tname)
+                        # The record carries what the call returned, as it does
+                        # on the one-call-per-turn path: a batched call is a
+                        # call the run made, and a record with no result in it
+                        # cannot say what the run was holding when it answered.
+                        guards.record_execution(
+                            _tname,
+                            arguments=_targs,
+                            result=_obs,
+                            iteration=iterations,
+                        )
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
                         scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
                     else:
