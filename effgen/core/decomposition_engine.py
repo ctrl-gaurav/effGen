@@ -70,7 +70,7 @@ class DecompositionEngine:
 
     # Strategy-specific prompts
     PARALLEL_PROMPT_TEMPLATE = """You are a task decomposition expert. Break down this complex task into independent subtasks that can be executed in parallel.
-
+{language_note}
 Task: {task}
 
 Requirements:
@@ -99,7 +99,7 @@ Format your response as JSON:
 Respond with ONLY the JSON, no additional text."""
 
     SEQUENTIAL_PROMPT_TEMPLATE = """You are a task decomposition expert. Break down this complex task into dependent subtasks that must be executed in sequence.
-
+{language_note}
 Task: {task}
 
 Requirements:
@@ -129,7 +129,7 @@ Format your response as JSON:
 Respond with ONLY the JSON, no additional text."""
 
     HYBRID_PROMPT_TEMPLATE = """You are a task decomposition expert. Break down this complex task into a hybrid structure with both parallel and sequential subtasks.
-
+{language_note}
 Task: {task}
 
 Requirements:
@@ -283,16 +283,35 @@ Respond with ONLY the JSON, no additional text."""
         Returns:
             List of SubTask objects
         """
+        # Language note: the parallel/sequential/hybrid templates above are
+        # fixed English text, so without this the LLM decomposes into
+        # English subtask descriptions (e.g. "Synthesize the findings...")
+        # even when the root agent's system_prompt asks for another
+        # language — the language only survives by luck, at the final
+        # answer-synthesis step, not in the intermediate subtask prompts.
+        # A parent Agent threads its own system_prompt into context (see
+        # AgentOrchestrationMixin._run) precisely so this note can be built;
+        # a bare DecompositionEngine/SubAgentRouter with no context set
+        # keeps producing English subtasks, unchanged from before.
+        language_note = ""
+        parent_system_prompt = (context or {}).get("system_prompt")
+        if parent_system_prompt:
+            language_note = (
+                "\nWrite every \"description\" and \"expected_output\" field "
+                "in the same language as this instruction (do not switch to "
+                f"English): \"{parent_system_prompt[:200]}\"\n"
+            )
+
         # Select appropriate prompt template
         if strategy == "parallel_sub_agents":
-            prompt = self.PARALLEL_PROMPT_TEMPLATE.format(task=task)
+            prompt = self.PARALLEL_PROMPT_TEMPLATE.format(task=task, language_note=language_note)
         elif strategy == "sequential_sub_agents":
-            prompt = self.SEQUENTIAL_PROMPT_TEMPLATE.format(task=task)
+            prompt = self.SEQUENTIAL_PROMPT_TEMPLATE.format(task=task, language_note=language_note)
         elif strategy in ["hybrid", "hierarchical"]:
-            prompt = self.HYBRID_PROMPT_TEMPLATE.format(task=task)
+            prompt = self.HYBRID_PROMPT_TEMPLATE.format(task=task, language_note=language_note)
         else:
             # Default to parallel
-            prompt = self.PARALLEL_PROMPT_TEMPLATE.format(task=task)
+            prompt = self.PARALLEL_PROMPT_TEMPLATE.format(task=task, language_note=language_note)
 
         try:
             # Generate decomposition using LLM

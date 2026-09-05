@@ -318,10 +318,24 @@ class AgentOrchestrationMixin:
                     kwargs["_debug"] = True
                     kwargs["_run_id"] = run_id
 
-                # Determine execution mode
+                # Determine execution mode.
+                #
+                # routing_context carries this agent's own system_prompt down
+                # into DecompositionEngine._llm_decompose (via
+                # SubAgentRouter.route -> decompose), so subtask descriptions
+                # generated for AUTO/SUB_AGENTS mode are written in the
+                # language/register the root agent was configured for,
+                # instead of the decomposition templates' hardcoded English.
+                # Only added when a system_prompt is actually set, so a
+                # caller inspecting `context` downstream sees no new key on
+                # the common path where there is nothing to add.
+                routing_context = context
+                if self.config.system_prompt:
+                    routing_context = {**(context or {}), "system_prompt": self.config.system_prompt}
+
                 if mode == AgentMode.AUTO and self.config.enable_sub_agents:
                     # Use router to decide
-                    routing_decision = self.router.route(task, context)
+                    routing_decision = self.router.route(task, routing_context)
 
                     if routing_decision.use_sub_agents:
                         response = self._run_with_sub_agents(task, routing_decision, context, **kwargs)
@@ -329,7 +343,7 @@ class AgentOrchestrationMixin:
                         response = self._run_single_agent(task, context, **kwargs)
                 elif mode == AgentMode.SUB_AGENTS and self.config.enable_sub_agents:
                     # Force sub-agent mode
-                    routing_decision = self.router.route(task, context)
+                    routing_decision = self.router.route(task, routing_context)
                     response = self._run_with_sub_agents(task, routing_decision, context, **kwargs)
                 else:
                     # Single agent mode
