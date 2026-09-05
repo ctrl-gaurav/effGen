@@ -49,6 +49,10 @@
       "type": "boolean",
       "description": "Ask the model for inline [1], [2] markers when it answers from retrieved passages. Off by default; the markers become part of the answer text."
     },
+    "tool_contract": {
+      "type": "string",
+      "description": "What the model is told about the tools attached to it. Omit to select the text from the tools' declared categories; give a string to state that text instead; give an empty string to state nothing."
+    },
     "memory": {
       "type": "object",
       "description": "Memory configuration",

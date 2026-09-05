@@ -224,6 +224,16 @@ class AgentConfig:
     # off, an answer that ends in a bracketed number after a retrieval tool ran
     # is read as a marker and removed.
     cite_sources: bool = False
+    # What the framework tells the model about the tools it attached. ``None``
+    # selects the text from the tools' declared categories — a tool that checks
+    # the model's work, one that does work the model cannot do, and one that
+    # brings back material to answer from are each described for what they are
+    # (``effgen.prompts.tool_contract``). Any string is stated verbatim in the
+    # same position instead, and ``""`` states nothing at all — which is how to
+    # keep the framework's own sentences out of a prompt without rebuilding the
+    # whole scaffold through ``system_prompt_template``. A ``system_prompt``
+    # persona is unaffected either way: it still leads the prompt.
+    tool_contract: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:

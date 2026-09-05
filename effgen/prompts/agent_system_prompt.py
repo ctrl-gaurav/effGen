@@ -15,26 +15,24 @@ from ..tools.base_tool import BaseTool, ToolCategory
 logger = logging.getLogger(__name__)
 
 
-# Tool-category-specific instructions
+# Operational hints per tool category — what to watch out for while using a
+# tool of that kind. Whether and how to reach for the tool at all is stated by
+# :mod:`effgen.prompts.tool_contract`, which every tool-calling path carries;
+# saying it twice, in two different wordings, produced a prompt that told a
+# model both to work a calculation out itself and never to compute in its head.
+# A category with nothing operational to add has no entry, and
+# ``_build_category_tips`` leaves it out.
 CATEGORY_INSTRUCTIONS: dict[ToolCategory, str] = {
-    ToolCategory.COMPUTATION: (
-        "- For calculations and math, always use the calculator or code execution tools first.\n"
-        "- Do NOT try to compute numbers in your head — use tools for accuracy."
-    ),
     ToolCategory.INFORMATION_RETRIEVAL: (
-        "- For factual questions, search or retrieve information before answering.\n"
         "- If your first search returns no results, try rephrasing with different keywords."
     ),
     ToolCategory.CODE_EXECUTION: (
-        "- For coding tasks, write and execute code using the available tools.\n"
         "- Always check the output/return value of executed code."
     ),
     ToolCategory.FILE_OPERATIONS: (
-        "- For file operations, use the file tools to read, write, and manipulate files.\n"
         "- Check that files exist before trying to read them."
     ),
     ToolCategory.SYSTEM: (
-        "- For system commands, use the bash/shell tool.\n"
         "- Be careful with system operations — only run safe commands."
     ),
     ToolCategory.EXTERNAL_API: (
@@ -42,7 +40,6 @@ CATEGORY_INSTRUCTIONS: dict[ToolCategory, str] = {
         "- If an API call fails, inform the user and try an alternative approach."
     ),
     ToolCategory.DATA_PROCESSING: (
-        "- For data processing tasks (JSON, text, etc.), use the appropriate data tools.\n"
         "- Break complex data transformations into steps."
     ),
 }
@@ -124,11 +121,18 @@ class AgentSystemPromptBuilder:
         )
 
     def _get_tool_categories(self, tools: list[BaseTool]) -> set[ToolCategory]:
-        """Get unique tool categories from the tool list."""
+        """Get unique tool categories from the tool list.
+
+        A tool whose category is missing or is not a
+        :class:`~effgen.tools.base_tool.ToolCategory` — one built from a plain
+        string, or from ``None`` — contributes nothing rather than reaching the
+        sort below, which orders on ``.value``.
+        """
         categories = set()
         for tool in tools:
-            if hasattr(tool, 'category'):
-                categories.add(tool.category)
+            category = getattr(tool, 'category', None)
+            if isinstance(category, ToolCategory):
+                categories.add(category)
         return categories
 
     def _build_category_tips(self, categories: set[ToolCategory]) -> str:
