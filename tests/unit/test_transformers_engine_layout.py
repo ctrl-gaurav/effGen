@@ -188,6 +188,10 @@ ENGINE_MEMBERS = (
     "load",
     "reset_cost",
     "streams_tool_calls",
+    # Inherited from BaseModel, which answers False: the local engine has no
+    # request layer that could enforce a tool choice, so it advertises that it
+    # cannot require a call rather than sending one the runtime would ignore.
+    "supports_forced_tool_call",
     "supports_tool_calling",
     "tool_call_support",
     "unload",
