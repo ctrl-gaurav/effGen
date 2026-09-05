@@ -237,7 +237,12 @@ Three tiers:
 - `TemplateManager`: Prompt template management
 - `ChainManager`: Prompt chaining
 - `PromptOptimizer`: SLM-specific prompt optimization
-- `AgentSystemPromptBuilder`: Auto-generates system prompts from tools
+- `AgentSystemPromptBuilder`: Auto-generates system prompts from tools —
+  the role, the operational hints for the categories held, and the common
+  mistakes list
+- `tool_contract`: what a model is told to do with the tools attached to it,
+  selected from their declared `ToolCategory` and stated by every tool-calling
+  path
 
 ### Domains (`effgen/domains/`)
 

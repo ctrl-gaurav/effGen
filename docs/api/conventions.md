@@ -342,6 +342,42 @@ yields the model's tokens as they arrive and does not validate or parse them, so
 a stream gives you the declared shape as text; the parsed value and the
 `structured_output_*` metadata come from `run()`.
 
+### What effGen tells a model about your tools
+
+Tool definitions do not travel in the prompt. They go through the provider's
+tool-calling API, or through a local chat template, and the model is left to
+work out what they are for. So effGen states it, once, on the turn the model
+first sees them — the same sentences whether the run blocks or streams, and
+whether the tools reach the model through an API or a template.
+
+Which sentences depends on what the tools *are*, read from each tool's declared
+`ToolCategory`:
+
+| the tools you attached | what the model is told |
+|---|---|
+| `COMPUTATION` | work the task out first, then use the tools to check the steps you are least sure of |
+| `CODE_EXECUTION`, `SYSTEM` | use the tools to do the task rather than working it out in your head, and read the answer off what they return |
+| `INFORMATION_RETRIEVAL`, `EXTERNAL_API` | what comes back is source material, not the answer |
+| anything else, **or a set that mixes the above** | work through the task one step at a time, one step per call |
+
+A mixed set gets the general text on purpose. Each of the other three asserts
+something about every tool the model is holding, and on a mixed set that
+assertion is false of some of them — telling a model that owns a code executor
+to work the answer out itself is how it stops calling the executor at all.
+
+Your own configuration comes first:
+
+- **`system_prompt`** — your persona still leads the prompt, and the contract is
+  still stated. They are not in competition: the persona is who the model is,
+  the contract describes machinery effGen attached.
+- **`tool_contract="…"`** — that text is stated instead, in the same position.
+- **`tool_contract=""`** — nothing is stated. Use this rather than
+  `system_prompt_template`, which makes you rebuild the whole scaffold.
+- **`system_prompt_template`** — you own the entire prompt, `{tools_description}`
+  included, and effGen adds nothing to it.
+
+An agent with no tools is unaffected: there is nothing to state a contract about.
+
 ## Tools
 
 The recommended way to author a tool is the `@tool` decorator (it wraps the full

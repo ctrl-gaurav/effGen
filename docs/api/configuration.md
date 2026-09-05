@@ -19,6 +19,7 @@
 | `fallback_chain` | `Dict \| None` | `None` | Tool fallback mapping |
 | `enable_fallback` | `bool` | `True` | Enable fallback chains |
 | `cite_sources` | `bool` | `False` | Ask for inline `[1]` citation markers when answering from retrieved passages |
+| `tool_contract` | `str \| None` | `None` | What the model is told about the attached tools. `None` selects it from the tools' declared categories; a string is stated verbatim; `""` states nothing |
 
 ## Memory Config
 

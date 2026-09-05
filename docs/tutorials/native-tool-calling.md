@@ -95,10 +95,14 @@ producing a prompt byte-identical to one built with no tools at all. Those
 report `False`, so `"auto"` sends them down the ReAct path, where the tools are
 described in the prompt text and the model can actually reach them.
 
-Because a chat template says nothing about *using* the tools it printed, the
-first turn of a `"template"` model's run closes with one line asking it to use
-them when they apply. Provider-side tool calling does not get that line; it
-makes the call decision itself.
+Neither mechanism carries the definitions in the prompt text, so neither says
+anything about *using* them. effGen states that itself, on the first turn of the
+run and identically for `"api"` and `"template"`: what the tools are for, chosen
+from their declared `ToolCategory`. A calculator is described as something to
+check reasoning with, a code executor as something to run the work on, a search
+tool as something that brings back material to answer from. The full table, and
+how to replace or silence it with `AgentConfig.tool_contract`, is in
+[Conventions](../api/conventions.md#what-effgen-tells-a-model-about-your-tools).
 
 ## How It Works
 
