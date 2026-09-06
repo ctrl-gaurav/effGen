@@ -29,6 +29,7 @@ from ..observability.tracing import (
     start_model_call,
     start_tool_call,
 )
+from ..prompts.tool_contract import ToolUsePolicy
 from ..tools.base_tool import ToolCategory
 from ..utils.prometheus_metrics import metrics as prom_metrics
 from ..utils.structured_logging import (
@@ -96,6 +97,8 @@ class AgentReActMixin(
         # Contributed by :class:`~effgen.core.agent_runtime.AgentRuntimeMixin`,
         # which holds the prompt assembly both tool loops share.
         def _tool_contract(self) -> str: ...
+
+        def _declared_tool_use(self) -> ToolUsePolicy | None: ...
 
         def _native_tool_prompt(
             self, task: str, scratchpad: str, conversation_history: str,
@@ -175,7 +178,11 @@ class AgentReActMixin(
         # results have already come back, when to stop offering tools and when a
         # written-out call has been seen once too often — live in the loop policy
         # the streaming loop shares, so both reach the same decisions.
-        guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
+        guards = NativeToolLoop(
+            self.tools,
+            nudge_cap=self.config.max_iterations,
+            tool_use=self._declared_tool_use(),
+        )
 
         def _requery(answer: str) -> bool:
             """Send this run back for one more search, or leave the answer alone.

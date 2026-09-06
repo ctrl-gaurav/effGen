@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Any
 
 from ..models.base import BaseModel
+from ..prompts.tool_contract import ToolUsePolicy, coerce_tool_use_policy
 from ..tools.base_tool import BaseTool
 
 
@@ -234,10 +235,24 @@ class AgentConfig:
     # whole scaffold through ``system_prompt_template``. A ``system_prompt``
     # persona is unaffected either way: it still leads the prompt.
     tool_contract: str | None = None
+    # Whether a run holding these tools has to call one. ``None`` reads it from
+    # the tools' declared categories, which is what the framework did before the
+    # policy had a name: a code executor or a system tool must actually run, and
+    # nothing else is pushed either way. ``"required"`` makes any held tool one
+    # the run may not answer without, on the paths where that can be required;
+    # ``"auto"`` asks the framework to say nothing at all; ``"sparing"`` adds
+    # that a run which already has the answer should give it without calling.
+    # A ``ToolUsePolicy`` member or its name; independent of ``tool_contract``,
+    # which chooses the words rather than the policy.
+    tool_use: ToolUsePolicy | str | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
             self.name = self.model if isinstance(self.model, str) else "agent"
+        # A policy that names nothing is refused here rather than at the first
+        # run, so a typo is a construction error naming the three values and not
+        # a run that quietly went out on a policy nobody chose.
+        coerce_tool_use_policy(self.tool_use)
 
 
 # Model-loading options belong to the engine (load_model), not the agent. Passing

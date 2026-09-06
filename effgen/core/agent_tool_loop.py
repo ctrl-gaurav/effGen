@@ -21,7 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..prompts.tool_contract import is_execution_tool
+from ..prompts.tool_contract import ToolUsePolicy, is_execution_tool
 from ..tools.base_tool import ToolCategory
 from .agent_runtime import (
     NUDGE_HAVE_ANSWER,
@@ -112,10 +112,16 @@ class NativeToolLoop:
             dispatches against.
         nudge_cap: The configured iteration cap, used to decide when a turn is
             close enough to the limit to ask for an answer outright.
+        tool_use: The policy this run is on, or ``None`` to read it from each
+            tool's declared category — which is what an agent whose caller
+            stated no policy does. It decides one thing here:
+            :meth:`execution_tools`, and through it whether an answer written
+            with no call is sent back.
     """
 
     tools: dict[str, Any]
     nudge_cap: int = 10
+    tool_use: ToolUsePolicy | None = None
 
     #: ``(action, normalized_input)`` for every call dispatched so far.
     previous_actions: list[tuple[str, str]] = field(default_factory=list)
@@ -155,6 +161,14 @@ class NativeToolLoop:
     #: :meth:`take_retrieval_requery`.
     retrieval_requeries: int = 0
 
+    def __post_init__(self) -> None:
+        """Say once which policy this run is on, so a log can be counted."""
+        logger.info(
+            "tool use policy: %s (%s)",
+            (self.tool_use.value if self.tool_use is not None else "from tools"),
+            ",".join(sorted(self.execution_tools())) or "none required",
+        )
+
     # ------------------------------------------------------------------
     # Offering tools
     # ------------------------------------------------------------------
@@ -175,12 +189,21 @@ class NativeToolLoop:
     # Requiring a call
     # ------------------------------------------------------------------
     def execution_tools(self) -> list[str]:
-        """The names of the held tools that do work the model cannot do itself.
+        """The names of the held tools this run may not answer without calling.
 
-        Read from each tool's declared category through
+        With no policy stated, each tool answers for itself through
         :func:`~effgen.prompts.tool_contract.is_execution_tool`, so the set is
-        whatever the tools say they are.
+        whatever the tools declare: a code executor is in it, a calculator is
+        not. A caller who stated a policy overrides that for the whole run —
+        :attr:`~effgen.prompts.tool_contract.ToolUsePolicy.REQUIRED` puts every
+        held tool in the set, which is how "always use this tool" is expressed
+        for a tool whose category does not ask for it, and the other two empty
+        it, which is how a caller stops the framework pushing for one it does.
         """
+        if self.tool_use is ToolUsePolicy.REQUIRED:
+            return list(self.tools)
+        if self.tool_use is not None:
+            return []
         return [
             name for name, tool in self.tools.items() if is_execution_tool(tool)
         ]
@@ -191,16 +214,20 @@ class NativeToolLoop:
         An agent holding a code executor and answering with no call has reported
         a result nothing produced — it described what the code would print. That
         answer is not accepted the first time: the turn goes back with a nudge
-        naming the tool, and the turn after it is sent requiring a call.
+        naming the tool, and the turn after it is sent requiring a call. A
+        caller who set :attr:`~effgen.prompts.tool_contract.ToolUsePolicy.REQUIRED`
+        gets the same treatment for whatever tools they attached, which is what
+        "this tool must actually be used" means for a tool that does not declare
+        it.
 
         **Only the first.** A model that declines twice will decline again, and
         the iteration budget buys more elsewhere; the second refusal is
         accepted, so a run cannot be spent circling on this.
 
         Returns:
-            The tool name to name in the nudge, or ``None`` when this run holds
-            no execution tool, has already dispatched a call, or has already
-            been sent back once.
+            The tool name to name in the nudge, or ``None`` when this run
+            requires no call, has already dispatched one, or has already been
+            sent back once.
         """
         if self.execution_refusals or self.calls:
             return None

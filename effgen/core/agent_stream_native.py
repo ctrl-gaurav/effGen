@@ -50,6 +50,7 @@ from ..models.base import (
     clear_stream_usage,
     get_stream_tool_calls,
 )
+from ..prompts.tool_contract import ToolUsePolicy
 from .agent_config import AgentMode
 from .agent_response import AgentResponse, PartialResult, StreamEvent
 from .agent_runtime import (
@@ -232,6 +233,8 @@ class AgentNativeStreamMixin:
 
         def _is_context_retrieval_tool(self, action: str) -> bool: ...
 
+        def _declared_tool_use(self) -> ToolUsePolicy | None: ...
+
         def _answer_shape_instruction(self) -> str: ...
 
         def _native_tool_prompt(
@@ -331,7 +334,11 @@ class AgentNativeStreamMixin:
             if _requested_iterations is None
             else int(_requested_iterations)
         )
-        guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
+        guards = NativeToolLoop(
+            self.tools,
+            nudge_cap=self.config.max_iterations,
+            tool_use=self._declared_tool_use(),
+        )
         answer = _AnswerStream()
         scratchpad = ""
         iterations = 0

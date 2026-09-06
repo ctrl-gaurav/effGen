@@ -22,6 +22,7 @@ from ..utils.structured_logging import (
 from .structured_output import _clean_json
 
 if TYPE_CHECKING:
+    from ..prompts.tool_contract import ToolUsePolicy
     from .messages import Message
 
 logger = logging.getLogger(__name__)
@@ -1091,14 +1092,64 @@ class AgentRuntimeMixin:
         stated verbatim in the contract's position, and ``""`` states nothing at
         all, which is the way to keep a prompt free of the framework's own
         sentences without rebuilding the whole template.
+
+        A run on :attr:`~effgen.prompts.tool_contract.ToolUsePolicy.SPARING`
+        adds one sentence after whichever text that leaves — the contract says
+        what the tools are for, the sentence says that holding them does not
+        oblige the model to use them. The other two policies add nothing, so an
+        agent that states no policy sends the prompt it sent before the policy
+        existed. ``tool_contract=""`` still states nothing whatever the policy
+        is: a caller who asked for silence gets silence.
         """
+        from ..prompts.tool_contract import (
+            TOOL_USE_SPARING_NOTE,
+            ToolUsePolicy,
+            select_tool_contract,
+        )
         declared = getattr(getattr(self, "config", None), "tool_contract", None)
         if declared is not None:
             if declared:
                 logger.info("tool contract: caller-supplied")
-            return str(declared)
-        from ..prompts.tool_contract import select_tool_contract
-        return select_tool_contract((getattr(self, "tools", None) or {}).values())
+            contract = str(declared)
+        else:
+            contract = select_tool_contract(
+                (getattr(self, "tools", None) or {}).values()
+            )
+        if contract and self._tool_use() is ToolUsePolicy.SPARING:
+            logger.info("tool use policy: sparing note stated")
+            return f"{contract} {TOOL_USE_SPARING_NOTE}"
+        return contract
+
+    def _declared_tool_use(self) -> ToolUsePolicy | None:
+        """The policy ``AgentConfig.tool_use`` states, or ``None`` for none.
+
+        ``None`` is not a policy, it is the absence of one: the tools' declared
+        categories answer instead, tool by tool, which is what the loop does
+        when nothing is passed to it.
+
+        Raises:
+            ValueError: If the configured value names no policy. A run that
+                cannot say what its policy is does not start.
+        """
+        from ..prompts.tool_contract import coerce_tool_use_policy
+        return coerce_tool_use_policy(
+            getattr(getattr(self, "config", None), "tool_use", None)
+        )
+
+    def _tool_use(self) -> ToolUsePolicy:
+        """The tool-use policy this run is on, resolved to one value.
+
+        ``AgentConfig.tool_use`` decides it when the caller set one; otherwise
+        the tools' declared categories do, and a mixed set takes the strictest
+        of them. An agent holding no tools answers ``AUTO``, the policy that
+        asks for nothing. This is the prompt's view of the policy; the loop
+        keeps the unresolved one so each tool can still answer for itself.
+        """
+        from ..prompts.tool_contract import select_tool_use_policy
+        declared = self._declared_tool_use()
+        if declared is not None:
+            return declared
+        return select_tool_use_policy((getattr(self, "tools", None) or {}).values())
 
     def _native_tool_prompt(
         self, task: str, scratchpad: str, conversation_history: str,
