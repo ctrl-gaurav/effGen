@@ -104,6 +104,12 @@ tool as something that brings back material to answer from. The full table, and
 how to replace or silence it with `AgentConfig.tool_contract`, is in
 [Conventions](../api/conventions.md#what-effgen-tells-a-model-about-your-tools).
 
+Whether the tool has to be used at all is the separate `AgentConfig.tool_use`
+setting, also read from the declared categories by default: a code executor must
+actually run, and nothing else is pushed either way. `tool_use="required"` makes
+any attached tool one the run may not answer without — including on this path's
+`"template"` mechanism, where there is no request parameter to constrain.
+
 ## How It Works
 
 1. Tools are converted to JSON Schema definitions via `tools_to_definitions()`

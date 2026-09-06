@@ -243,6 +243,11 @@ Three tiers:
 - `tool_contract`: what a model is told to do with the tools attached to it,
   selected from their declared `ToolCategory` and stated by every tool-calling
   path
+- `ToolUsePolicy`: whether a run holding those tools has to call one —
+  `REQUIRED` for the executing categories, `AUTO` for the rest, `SPARING` when
+  the caller wants a run that already has the answer to give it. Overridable per
+  run with `AgentConfig.tool_use`, and the same value decides which tools the
+  loop refuses an answer without
 
 ### Domains (`effgen/domains/`)
 

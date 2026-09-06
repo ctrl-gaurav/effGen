@@ -394,6 +394,45 @@ Your own configuration comes first:
 
 An agent with no tools is unaffected: there is nothing to state a contract about.
 
+### Whether the tool has to be used at all
+
+That is a separate question from what the tools are for, and `tool_use` answers
+it. The default is read from the same declared categories:
+
+| the tools you attached | the policy | what it means |
+|---|---|---|
+| `CODE_EXECUTION`, `SYSTEM` | `required` | an answer written with no call is sent back once naming the tool, and the turn after it is required to call where the provider enforces that |
+| everything else | `auto` | the tools are offered and the model decides; effGen says nothing either way |
+
+The asymmetry is the point. Answering without running a code executor reports a
+result nothing produced — the model described what the code would print. But
+answering without searching, or without reaching for a calculator, is sometimes
+simply the right answer arrived at faster, and a framework that insists on the
+call is making the model worse at the questions it already knew.
+
+Set `tool_use` to override it for the whole run:
+
+- **`"required"`** — every tool you attached is one the run may not answer
+  without. This is how "use the calculator every time" is expressed for a tool
+  whose category does not ask for it, and unlike `run(tool_choice="required")`
+  it also works on the ReAct-text and chat-template paths, where there is no
+  request parameter to constrain.
+- **`"auto"`** — effGen states nothing and requires nothing, whatever the tools
+  declare. This is how to stop the executor push on a run where describing the
+  code is an acceptable answer.
+- **`"sparing"`** — one further sentence is added after the contract: calling a
+  tool is optional, and a run that already knows the answer should give it. This
+  is the only policy that changes a prompt.
+
+A set that mixes categories takes the strictest policy present, for the same
+reason a mixed set takes the general contract: the looser answer would be false
+of a tool the model is holding, and telling a model it may skip the executor it
+also holds is the expensive half of that mistake.
+
+`tool_use` and `tool_contract` are independent — the first chooses the policy,
+the second chooses the words — with one interaction: `tool_contract=""` states
+nothing under any policy, because a caller who asked for silence gets silence.
+
 ## Tools
 
 The recommended way to author a tool is the `@tool` decorator (it wraps the full
