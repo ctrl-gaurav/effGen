@@ -31,7 +31,7 @@ Removing `next/font/google` therefore changes nothing a visitor sees and drops t
 page. The landing site keeps rendering exactly as it does today, and no `@font-face` was added to it.
 A visitor who has Inter installed locally still gets Inter, as they always did.
 
-If a later phase decides the landing site should render in Inter after all, that is a design decision
+Should the landing site ever render in Inter after all, that is a design decision
 rather than a build one: add an `@font-face` set to `app/globals.css` pointing at these same files,
 with a relative path so webpack fingerprints them.
 

@@ -33,7 +33,7 @@ strips combining marks. Keyword lists stay spelled correctly in the source and
 are folded once at import by `fold_keywords`. English is ASCII, so folding it
 is exactly `str.lower` and nothing about English behaviour changes.
 
-**If you add a keyword, write it properly, with its accents.** Do not
+**If you add a keyword, write it with its accents.** Do not
 pre-fold it by hand.
 
 ## Verb forms depend on how the module matches
