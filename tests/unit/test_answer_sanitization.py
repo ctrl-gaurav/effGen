@@ -11,7 +11,7 @@ import pytest
 
 from effgen.core.agent import sanitize_final_answer as sanitize
 
-# --- Real leaked strings from the audit ------------------------------------
+# --- Real leaked strings captured from live runs ---------------------------
 
 @pytest.mark.parametrize(
     "leaked, expected",

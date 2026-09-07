@@ -1,7 +1,7 @@
 """
 Tests for OpenAI prompt caching support.
 
-Unit tests check that cached_input_tokens is properly extracted from API responses.
+Unit tests check that cached_input_tokens is extracted from API responses.
 Live integration tests require OPENAI_API_KEY and are skipped when absent.
 """
 

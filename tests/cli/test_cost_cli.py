@@ -311,7 +311,7 @@ class TestCostReportCLI:
 # ---------------------------------------------------------------------------
 
 class TestBudgetExceededIntegration:
-    """Tests that BudgetExceededError is properly classified by retry policy."""
+    """Tests how the retry policy classifies BudgetExceededError."""
 
     def test_budget_exceeded_error_is_retriable(self):
         from effgen.models.errors import BudgetExceededError

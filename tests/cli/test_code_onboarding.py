@@ -5,8 +5,7 @@ backend, git), the guided run's coding step and the flags that select it, and
 the bare-command landing action. The readiness checks run against real
 directories and the real git installation — they read the machine, so nothing
 about them is simulated. The guided coding step is driven with a stub agent so
-the step's own reporting is what is under test, not a model's wording; the live
-end-to-end proof across model families lives in the phase evidence.
+the step's own reporting is what is under test, not a model's wording.
 """
 
 from __future__ import annotations

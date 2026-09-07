@@ -90,7 +90,7 @@ class _ScriptedModel(BaseModel):
         return False
 
     def supports_tool_calling(self) -> bool:
-        # Force the text ReAct loop (the path the audit exercised).
+        # Force the text ReAct loop, which is the path these cases measure.
         return False
 
 
