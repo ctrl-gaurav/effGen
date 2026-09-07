@@ -516,7 +516,7 @@ class ComplexityAnalyzer:
             tools = score.breakdown.get('tools_needed', [])
             recommendations.append(
                 f"Requires {len(tools)} different tool types - "
-                "ensure all necessary tools are available and properly configured"
+                "ensure all necessary tools are available and configured"
             )
 
         # Reasoning depth recommendations

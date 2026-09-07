@@ -278,7 +278,7 @@ class AgentToolExecutionMixin:
                     output = result.output
                     if isinstance(output, dict):
                         # Try common result keys: result, output, data, message
-                        # BUG-012 fix: PythonREPL returns {result: None, stdout: "..."}
+                        # PythonREPL returns {result: None, stdout: "..."}
                         # when code uses print(). Prefer stdout over a None result.
                         if 'result' in output and output['result'] is not None:
                             result_str = str(output['result'])
