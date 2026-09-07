@@ -161,17 +161,26 @@ _EDITORIALIZING_EXEMPT_FILES = {
 
 # ── forbidden patterns: (a) internal process jargon ───────────────────────────
 PATTERNS: dict[str, re.Pattern[str]] = {
-    # internal tracking IDs from the build/audit process
+    # internal tracking IDs from the build/audit process. ``BUG-12``/``ISSUE-7``
+    # are the same shape from the same process — an internal finding number that
+    # means nothing to a reader outside the tracker it was filed in.
     "internal-tracking-id": re.compile(
-        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+)\b|Audit-2 #"
+        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+|BUG-\d+|ISSUE-\d+)\b"
+        r"|Audit-2 #"
     ),
     # internal milestone / planning references. The separator between "Phase"
     # and the number may be a space, hyphen, or underscore ("Phase 7",
     # "Phase-7", "Phase_7") — an earlier hyphenated breadcrumb slipped past the
     # space-only form. The plural is matched too: a comment citing a range or a
     # list ("Phases 16/21/23") is the same breadcrumb.
+    # An ordinal development phase is the same breadcrumb with the number left
+    # off ("a later phase", "previous phases"), so the ordinal forms are matched
+    # too. Only the ordinals that place a phase on a build timeline are gated —
+    # "every phase shown" and "a phased rollout" stay ordinary English.
     "milestone-reference": re.compile(
-        r"\bPhases?[ _-]?\d+\b|\bbuild[ _-]?plan\b|stabilization sprint", re.IGNORECASE
+        r"\bPhases?[ _-]?\d+\b|\bbuild[ _-]?plan\b|stabilization sprint"
+        r"|\b(?:later|earlier|previous|next|future) phases?\b",
+        re.IGNORECASE,
     ),
     # author/process breadcrumbs. The role words (builder/verifier/explorer)
     # are only flagged next to a process verb — "the verifier" is also the
@@ -187,6 +196,7 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     # built, never what it does, so there is no legitimate shipped use.
     "planning-artifact": re.compile(
         r"\bfindings? report\b|\bphase brief\b|\bexplorer report\b|"
+        r"\bphase evidence\b|"
         r"\bzero[ -]ignore\b|\bask[ -]before[ -]commit\b|AUDIT_REPORT",
         re.IGNORECASE,
     ),
@@ -294,6 +304,11 @@ ALLOWLIST: list[tuple[str, str]] = [
     ("CONTRIBUTING.md", "without a tracking issue"),
     # Historical release-notes entry (changelog is human narrative, not source).
     ("CHANGELOG.md", "ACP TODO"),
+    # The dated release narrative cites the tracker ids the entries closed. The
+    # changelog is append-only, so rewriting those lines would falsify the
+    # record; new source is still held to the pattern.
+    ("CHANGELOG.md", "BUG-0"),
+    ("CHANGELOG.md", "ISSUE-0"),
     # A @font-face Unicode subset descriptor, not a tracking id. Splitting
     # identifiers on the CamelCase hump turns "U+1E00-1E9F" into "U+1 E00-1 E9F",
     # and "E00-1" then matches the E<n>-<n> form. The two lines are the Latin and
@@ -463,6 +478,7 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "fixes Audit-2 #42",
         "GA4 covered the catalog refresh",
         "RA-N3 and SEC1 and FN-2 all landed",
+        "closes BUG-012 and ISSUE-7",
     ],
     "milestone-reference": [
         "see Phase 7 of the build plan",
@@ -470,6 +486,8 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "the Phase_18 guard",
         "additive aliases (Phases 16/21/23)",
         "carried over from the stabilization sprint",
+        "a later phase will revisit this",
+        "regression tests for previous phases",
     ],
     "process-breadcrumb": [
         "as per audit, this phase reworked it",
@@ -485,6 +503,7 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "the zero-ignore policy applies here",
         "held until the ask-before-commit gate",
         "recorded in AUDIT_REPORT_6",
+        "the live proof lives in the phase evidence",
     ],
     "planning-path": [
         "the wider seam is followups/mixin_attr_defined_seam.md",
@@ -607,6 +626,45 @@ def test_detector_catches_gated_words_inside_identifiers():
     # A word that merely *contains* a gated stem is not split, so it stays clean.
     for ok in ("dishonest_input = True", "class Blazer:", "the production environment"):
         assert not find_editorializing("some/source.py", ok), ok
+
+
+def test_gated_terms_match_only_on_a_word_boundary():
+    """Every pattern is anchored, so a gated term inside a longer word is not a hit.
+
+    This is the property that keeps the gate usable: without it ``dishonest``,
+    ``Blazer``, ``polishing`` and ``metaphases`` would all be violations, and the
+    allowlist would have to carry every ordinary English word that happens to
+    contain a gated stem. Asserted in both directions — the bare term fires, the
+    term with a letter glued to either side does not.
+    """
+    boundary_cases = [
+        # (fires on its own, does not fire when it is part of a longer word)
+        # ``dishonest`` stays unsplit (no separator), so it stays unmatched;
+        # ``honesty_check`` is deliberately the other way — the underscore is a
+        # separator, so the identifier is split and the gated word does fire.
+        ("honest", ("dishonest",)),
+        ("blazing", ("trailblazing",)),
+        ("polished", ("unpolished",)),
+        ("intuitive", ("counterintuitively",)),
+        ("elegant", ("inelegant",)),
+    ]
+    for term, glued in boundary_cases:
+        assert find_editorializing("s.py", f"a {term} result"), term
+        for word in glued:
+            assert not find_editorializing("s.py", f"a {word} result"), word
+
+    jargon_boundary = [
+        ("Phase 7", ("Phased 7", "Metaphase 7")),
+        ("BUG-12", ("DEBUG-12", "BUG-12a")),
+        ("a later phase", ("a later phased rollout",)),
+        # ``aTODO`` is deliberately absent: the CamelCase hump splits it into
+        # "a TODO", which is the identifier-splitting rule doing its job.
+        ("TODO", ("TODOLIST",)),
+    ]
+    for term, glued in jargon_boundary:
+        assert find_violations("s.py", f"# {term} note"), term
+        for word in glued:
+            assert not find_violations("s.py", f"# {word} note"), word
 
 
 def test_allowlist_matches_the_line_as_written():
@@ -794,7 +852,9 @@ def test_gated_vocabulary_covers_the_house_style_list():
         # process jargon
         "see Phase 12", "Phases 3-5 landed", "the build plan says", "build_plan/",
         "this phase reworked it", "as per the report", "fixed in phase 4",
+        "a later phase will revisit it", "regression tests for previous phases",
         "the builder added a fallback", "finding E3-2", "E4-1 regression",
+        "closes BUG-012", "closes ISSUE-7", "see the phase evidence",
         "TODO", "FIXME", "XXX", "HACK", "breakpoint()", "pdb.set_trace()",
         # self-praise
         "fails honestly", "an honest error", "the honesty of it",
