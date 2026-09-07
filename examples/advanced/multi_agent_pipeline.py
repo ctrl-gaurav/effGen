@@ -803,34 +803,34 @@ def test_hard_sub_agents(model):
 
 # ── Regression Tests ─────────────────────────────────────────────────────
 
-def run_regression(model, phases=None):
-    """Run regression tests for previous phases."""
-    if phases is None:
-        phases = [1, 5, 7, 9]
+def run_regression(model, checks=None):
+    """Re-run the single-agent behaviours the pipeline is built on."""
+    if checks is None:
+        checks = ["qa", "coding", "error_recovery", "streaming"]
 
     print_header("Regression Testing")
     results = {}
 
     # Q&A
-    if 1 in phases:
+    if "qa" in checks:
         print(f"{CYAN}Q&A Regression{RESET}")
         agent = create_agent("minimal", model)
         resp = agent.run("What is the capital of France?")
-        p1_ok = resp.success and "paris" in resp.output.lower()
-        print_result("P1-Reg", p1_ok, f"'{resp.output[:60]}...'")
-        results["P1"] = p1_ok
+        qa_ok = resp.success and "paris" in resp.output.lower()
+        print_result("QA-Reg", qa_ok, f"'{resp.output[:60]}...'")
+        results["QA"] = qa_ok
 
     # Coding
-    if 5 in phases:
+    if "coding" in checks:
         print(f"\n{CYAN}Coding Regression{RESET}")
         agent = create_agent("coding", model)
         resp = agent.run("Use python_repl to calculate the sum of the first 10 natural numbers. Print the result.")
-        p5_ok = resp.success and "55" in resp.output
-        print_result("P5-Reg", p5_ok, f"'{resp.output[:60]}...'")
-        results["P5"] = p5_ok
+        coding_ok = resp.success and "55" in resp.output
+        print_result("Coding-Reg", coding_ok, f"'{resp.output[:60]}...'")
+        results["Coding"] = coding_ok
 
     # Error Recovery
-    if 7 in phases:
+    if "error_recovery" in checks:
         print(f"\n{CYAN}Error Recovery Regression{RESET}")
         agent = Agent(AgentConfig(
             name="ErrorRecovery",
@@ -842,12 +842,12 @@ def run_regression(model, phases=None):
             enable_memory=False,
         ))
         resp = agent.run("What is 7 * 8?")
-        p7_ok = resp.success and "56" in resp.output
-        print_result("P7-Reg", p7_ok, f"'{resp.output[:60]}...'")
-        results["P7"] = p7_ok
+        recovery_ok = resp.success and "56" in resp.output
+        print_result("Recovery-Reg", recovery_ok, f"'{resp.output[:60]}...'")
+        results["Recovery"] = recovery_ok
 
     # Streaming
-    if 9 in phases:
+    if "streaming" in checks:
         print(f"\n{CYAN}Streaming Regression{RESET}")
         agent = Agent(AgentConfig(
             name="StreamTest",
@@ -865,9 +865,9 @@ def run_regression(model, phases=None):
         for token in stream_gen:
             tokens.append(token)
             full_output += token
-        p9_ok = len(tokens) > 0 and "42" in full_output
-        print_result("P9-Reg", p9_ok, f"tokens={len(tokens)}, '{full_output[:60]}...'")
-        results["P9"] = p9_ok
+        stream_ok = len(tokens) > 0 and "42" in full_output
+        print_result("Streaming-Reg", stream_ok, f"tokens={len(tokens)}, '{full_output[:60]}...'")
+        results["Streaming"] = stream_ok
 
     passed = sum(1 for v in results.values() if v)
     total = len(results)
@@ -961,7 +961,7 @@ def main():
                              f"Hard 3-agent sub-agent — {r['time']:.1f}s")
 
             elif test == "REGRESSION":
-                reg = run_regression(model, phases=[1, 5, 7, 9])
+                reg = run_regression(model)
                 for k, v in reg.items():
                     all_results[f"Reg-{k}"] = v
 

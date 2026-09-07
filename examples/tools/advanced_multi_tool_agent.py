@@ -203,7 +203,7 @@ def run_all_tests(agent, model_name="unknown"):
         print("  Calculator failed, fallback should have triggered")
         # Fallback may not trigger if python_repl also can't handle "import math" as expression
         # The chain exists, just the fallback input might also fail
-        fb_pass = has_fb  # Chain is properly configured even if both fail on this input
+        fb_pass = has_fb  # Chain is configured even if both fail on this input
     print(f"  Result: {'PASS' if fb_pass else 'FAIL'}")
     results.append({
         "test_id": "T6",
