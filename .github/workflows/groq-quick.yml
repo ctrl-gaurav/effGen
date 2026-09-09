@@ -2,7 +2,7 @@ name: Groq Quick Check
 
 # Lightweight push-time verification that GroqAdapter still talks to the real
 # API. Primary model is openai/gpt-oss-20b; if it fails (rate-limited, capacity,
-# or model deprecated) we fall back to llama-3.1-8b-instant so a transient
+# or model deprecated) we fall back to openai/gpt-oss-120b so a transient
 # upstream issue on a single model does not block a push.
 
 on:
@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   groq-quick-check:
-    name: Groq Quick Check (gpt-oss-20b + llama-3.1-8b-instant fallback)
+    name: Groq Quick Check (gpt-oss-20b + gpt-oss-120b fallback)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,10 +76,10 @@ jobs:
           fi
           echo "PRESENT, length=${#K}, first4=${K:0:4}"
 
-      - name: Generation + streaming + tool-calling smoke (gpt-oss-20b -> llama-3.1-8b-instant fallback)
+      - name: Generation + streaming + tool-calling smoke (gpt-oss-20b -> gpt-oss-120b fallback)
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GROQ_QUICK_MODELS: "openai/gpt-oss-20b,llama-3.1-8b-instant"
+          GROQ_QUICK_MODELS: "openai/gpt-oss-20b,openai/gpt-oss-120b"
         run: |
           python - <<'PY'
           import os, random, sys, time
