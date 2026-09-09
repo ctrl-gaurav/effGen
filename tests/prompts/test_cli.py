@@ -182,7 +182,7 @@ class TestPromptsRunFlags:
         }))
         result = run_cli(
             "prompts", "run", "business.elevator_pitch.v1",
-            "--input", str(inp), "-m", "groq:llama-3.1-8b-instant",
+            "--input", str(inp), "-m", "groq:openai/gpt-oss-20b",
         )
         assert result.returncode != 0
         assert "unknown input key" in (result.stdout + result.stderr)

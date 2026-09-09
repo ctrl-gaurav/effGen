@@ -148,7 +148,7 @@ def test_provider_runtime_error_redacts_secret(noise: str) -> None:
 
 
 def test_provider_runtime_error_context_attached() -> None:
-    err = provider_runtime_error("groq", "llama-3.1-8b-instant", "chat", ValueError("boom"))
+    err = provider_runtime_error("groq", "openai/gpt-oss-20b", "chat", ValueError("boom"))
     ctx = err.error_context  # type: ignore[attr-defined]
     assert ctx["provider"] == "groq"
     assert ctx["request_type"] == "chat"

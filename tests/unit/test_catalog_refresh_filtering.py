@@ -82,7 +82,7 @@ _CHAT_SAMPLES = [
     "gemini-3.5-flash",
     "gemini-flash-lite-latest",
     "claude-sonnet-4-6",
-    "llama-3.1-8b-instant",
+    "openai/gpt-oss-20b",
     "Qwen/Qwen3-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
     "mistralai/Mixtral-8x7B-v0.1",

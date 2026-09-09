@@ -76,7 +76,7 @@ def test_normalize_openai_pricing_keys():
 def test_normalize_groq_pricing_keys():
     r = C.normalize_record(
         "groq",
-        "llama-3.1-8b-instant",
+        "openai/gpt-oss-20b",
         {"context": 131072, "pricing_per_1m_input": 0.05, "pricing_per_1m_output": 0.08},
     )
     assert r.price_in_per_1m == 0.05 and r.price_out_per_1m == 0.08

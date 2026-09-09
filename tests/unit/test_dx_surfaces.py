@@ -145,7 +145,7 @@ class TestDebugExitCodes:
         from effgen.cli._main import create_parser
 
         args = create_parser().parse_args(
-            ["debug", "do x", "-m", "llama-3.1-8b-instant", "--provider", "groq"]
+            ["debug", "do x", "-m", "openai/gpt-oss-20b", "--provider", "groq"]
         )
         assert args.command == "debug"
         assert args.provider == "groq"
@@ -156,7 +156,7 @@ class TestDebugExitCodes:
         from effgen.debug.inspector import _build_debug_config
 
         cfg = _build_debug_config(
-            preset=None, model="llama-3.1-8b-instant", provider="groq"
+            preset=None, model="openai/gpt-oss-20b", provider="groq"
         )
         assert cfg is not None
         assert cfg.provider == "groq"

@@ -187,6 +187,6 @@ class TestAdapterSelfRegistration:
 
     def test_groq_prefix_lookup(self):
         ProviderRegistry.register_builtins()
-        prov, cls, info = lookup("groq:llama-3.3-70b-versatile")
+        prov, cls, info = lookup("groq:openai/gpt-oss-120b")
         assert prov == "groq"
         assert "context" in info

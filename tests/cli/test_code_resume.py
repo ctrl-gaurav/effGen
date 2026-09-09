@@ -220,10 +220,10 @@ def test_the_stored_model_is_used_when_none_was_named(tmp_path):
 
 def test_a_named_model_wins_over_the_stored_one(tmp_path):
     _write_state("r8", workspace=str(tmp_path), model="gpt-5-nano", provider="openai")
-    repl = _repl(tmp_path, session_id="r8", model="groq:llama-3.1-8b-instant", quiet=False)
+    repl = _repl(tmp_path, session_id="r8", model="groq:openai/gpt-oss-20b", quiet=False)
     repl._adopt_session_state("r8")
 
-    assert repl.model_id == "groq:llama-3.1-8b-instant"
+    assert repl.model_id == "groq:openai/gpt-oss-20b"
 
 
 def test_an_unknown_id_starts_a_new_session(tmp_path):

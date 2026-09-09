@@ -97,9 +97,9 @@ class TestStaticFiles:
         from effgen.tools import get_registry
 
         with pytest.raises(TypeError):
-            Agent(AgentConfig(model="groq:llama-3.1-8b-instant", tools=["calculator"]))
+            Agent(AgentConfig(model="groq:openai/gpt-oss-20b", tools=["calculator"]))
         tool = get_registry().get_tool_sync("calculator")
-        cfg = AgentConfig(model="groq:llama-3.1-8b-instant", tools=[tool])
+        cfg = AgentConfig(model="groq:openai/gpt-oss-20b", tools=[tool])
         assert cfg.tools and cfg.tools[0] is tool
 
 
@@ -378,7 +378,7 @@ class TestToolTrace:
         resp = client.post(
             "/v1/chat/completions",
             json={
-                "model": "groq:llama-3.1-8b-instant",
+                "model": "groq:openai/gpt-oss-20b",
                 "messages": [{"role": "user", "content": "8347*219?"}],
                 "tools": [{"type": "function", "function": {"name": "calculator"}}],
             },

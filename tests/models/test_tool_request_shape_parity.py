@@ -28,7 +28,7 @@ TOOLS = [{
 }]
 
 CASES = [
-    ("groq", "effgen.models.groq_adapter", "GroqAdapter", "llama-3.1-8b-instant"),
+    ("groq", "effgen.models.groq_adapter", "GroqAdapter", "openai/gpt-oss-20b"),
     ("together", "effgen.models.together_adapter", "TogetherAdapter",
      "Qwen/Qwen2.5-7B-Instruct-Turbo"),
     ("fireworks", "effgen.models.fireworks_adapter", "FireworksAdapter",

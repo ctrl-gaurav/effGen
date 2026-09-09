@@ -47,7 +47,7 @@ def test_node_agent_field_resolves_to_named_model_live(tmp_path):
         "      agent: openai:gpt-5-nano\n"
         "      task: 'Reply with exactly one word: hello'\n"
         "    - id: step2\n"
-        "      agent: groq:llama-3.1-8b-instant\n"
+        "      agent: groq:openai/gpt-oss-20b\n"
         "      depends_on: [step1]\n"
         "      task: 'Reply with exactly one word: world'\n"
     )

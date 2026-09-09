@@ -151,15 +151,15 @@ def test_restore_puts_the_catalog_back_where_the_adapter_reads_it():
     snapshot = ProviderRegistry.snapshot()
     catalog = ProviderRegistry.get_provider_info("groq")["models"]
     assert catalog is GROQ_MODELS
-    catalog.pop("llama-3.1-8b-instant")
+    catalog.pop("openai/gpt-oss-20b")
     catalog["fake-isolation-model"] = {"context": 8}
-    GROQ_MODELS["llama-3.3-70b-versatile"]["context"] = 1
+    GROQ_MODELS["openai/gpt-oss-120b"]["context"] = 1
 
     ProviderRegistry.restore(snapshot)
 
-    assert "llama-3.1-8b-instant" in GROQ_MODELS
+    assert "openai/gpt-oss-20b" in GROQ_MODELS
     assert "fake-isolation-model" not in GROQ_MODELS
-    assert GROQ_MODELS["llama-3.3-70b-versatile"]["context"] > 1
+    assert GROQ_MODELS["openai/gpt-oss-120b"]["context"] > 1
     assert ProviderRegistry.get_provider_info("groq")["models"] is GROQ_MODELS
 
 

@@ -346,7 +346,7 @@ def test_runs_and_sessions_subcommands_are_registered():
 
 
 def test_runs_show_card_writes_a_labeled_summary_card(tmp_path, capsys):
-    run_log.record_run(model="llama-3.1-8b-instant", provider="groq", run_id="r-card",
+    run_log.record_run(model="openai/gpt-oss-20b", provider="groq", run_id="r-card",
                        task="Reply with exactly: OK", output="OK",
                        input_tokens=313, output_tokens=2, duration_s=0.27,
                        cost_usd=1.6e-05)
@@ -358,7 +358,7 @@ def test_runs_show_card_writes_a_labeled_summary_card(tmp_path, capsys):
 
     html = out.read_text(encoding="utf-8")
     assert html.startswith("<!DOCTYPE html>")
-    assert "Reply with exactly: OK" in html and "llama-3.1-8b-instant" in html
+    assert "Reply with exactly: OK" in html and "openai/gpt-oss-20b" in html
     # The card states the limits of what stored history holds.
     assert "truncated answer and no step trace" in html
     # Self-contained: nothing is fetched when the file is opened.

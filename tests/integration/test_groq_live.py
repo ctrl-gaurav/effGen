@@ -28,10 +28,42 @@ def _skip_rate_limit(exc: Exception) -> None:
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: GROQ_API_KEY not set")
 class TestGroqLive:
-    def test_generate_llama31_8b(self):
+    def test_the_default_model_answers(self):
+        """A GroqAdapter built with no arguments reaches a model Groq serves.
+
+        This is the first call most users make, and the shipped default is the
+        one id nobody passes explicitly — so nothing else catches it going
+        stale. The budget is deliberately generous: the default is a reasoning
+        family that spends output tokens on a hidden chain before it emits any
+        answer, and a budget that only covers the chain returns empty text with
+        ``finish_reason="length"`` rather than an error.
+        """
+        from effgen.models.groq_adapter import GroqAdapter
+        from effgen.models.groq_models import GROQ_DEFAULT_MODEL
+
+        adapter = GroqAdapter()
+        assert adapter.model_name == GROQ_DEFAULT_MODEL
+        adapter.load()
+        try:
+            try:
+                result = adapter.generate(
+                    "What is 2 + 2? Answer with just the number.",
+                    max_tokens=512,
+                )
+            except Exception as exc:
+                _skip_rate_limit(exc)
+            assert result.text.strip(), (
+                f"default model {adapter.model_name!r} returned no text"
+            )
+            assert "4" in result.text
+            assert result.metadata["provider"] == "groq"
+        finally:
+            adapter.unload()
+
+    def test_generate_small_chat_model(self):
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.1-8b-instant")
+        adapter = GroqAdapter("openai/gpt-oss-20b")
         adapter.load()
         try:
             try:
@@ -44,10 +76,10 @@ class TestGroqLive:
         finally:
             adapter.unload()
 
-    def test_generate_llama33_70b(self):
+    def test_generate_large_chat_model(self):
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.3-70b-versatile")
+        adapter = GroqAdapter("openai/gpt-oss-120b")
         adapter.load()
         try:
             try:
@@ -61,7 +93,7 @@ class TestGroqLive:
     def test_load_model_via_provider(self):
         from effgen.models import load_model
 
-        model = load_model("llama-3.1-8b-instant", provider="groq")
+        model = load_model("openai/gpt-oss-20b", provider="groq")
         try:
             try:
                 result = model.generate("Say hello in one word")
@@ -74,7 +106,7 @@ class TestGroqLive:
     def test_generate_stream_yields_chunks(self):
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.1-8b-instant")
+        adapter = GroqAdapter("openai/gpt-oss-20b")
         adapter.load()
         try:
             try:
@@ -90,7 +122,7 @@ class TestGroqLive:
     def test_native_tool_calling(self):
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.3-70b-versatile")
+        adapter = GroqAdapter("openai/gpt-oss-120b")
         adapter.load()
         tools = [{
             "type": "function",
@@ -126,7 +158,7 @@ class TestGroqLive:
     def test_usage_populated(self):
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.1-8b-instant")
+        adapter = GroqAdapter("openai/gpt-oss-20b")
         adapter.load()
         try:
             try:

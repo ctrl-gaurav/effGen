@@ -101,7 +101,7 @@ needs_three_families = pytest.mark.skipif(
 )
 
 OPENAI_MODEL = "openai:gpt-5-nano"
-GROQ_MODEL = "groq:llama-3.1-8b-instant"
+GROQ_MODEL = "groq:openai/gpt-oss-20b"
 GEMINI_MODEL = "gemini:gemini-3.1-flash-lite"
 
 #: A budget every contender in a race can answer within.
@@ -112,8 +112,8 @@ GEMINI_MODEL = "gemini:gemini-3.1-flash-lite"
 #: 64 reasoning tokens and no answer — the empty column then reads as a
 #: contender that failed rather than as a budget that was too small. Above that,
 #: a free-tier per-minute token allowance is the ceiling: Groq counts what a
-#: request *asks for*, so 8192 on ``llama-3.1-8b-instant`` is refused outright
-#: against a 6000-token-per-minute limit however short the answer would be.
+#: request *asks for*, so 8192 on ``openai/gpt-oss-20b`` is refused outright
+#: against an 8000-token-per-minute limit however short the answer would be.
 #:
 #: effGen already computes each model's floor, so asking it keeps this right
 #: when the model list changes, and keeps it under every contender's ceiling.
@@ -639,7 +639,7 @@ const CATALOG = {
   data: [
     { provider: "openai", id: "gpt-5-nano", is_priced: true, price_in_per_1m: 0.05,
       price_out_per_1m: 0.4, context_window: 400000, verified_on: "2026-07-01" },
-    { provider: "groq", id: "llama-3.1-8b-instant", is_priced: true,
+    { provider: "groq", id: "openai/gpt-oss-20b", is_priced: true,
       price_in_per_1m: 0.05, price_out_per_1m: 0.08 },
     { provider: "openai", id: "broken-model", is_priced: true, price_in_per_1m: 1 },
   ],
@@ -710,7 +710,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Race three contenders, one of which fails.
   for (const o of picker.options) {
-    o.selected = ["openai:gpt-5-nano", "groq:llama-3.1-8b-instant",
+    o.selected = ["openai:gpt-5-nano", "groq:openai/gpt-oss-20b",
                   "openai:broken-model"].indexOf(o.value) >= 0;
   }
   doc.getElementById("run-btn").click();
@@ -750,7 +750,7 @@ class TestPlaygroundBattleBehavior:
     def test_contenders_come_from_the_catalog(self, result):
         """The picker offers real catalog ids, not the served-alias list."""
         assert "openai:gpt-5-nano" in result["contenderOptions"]
-        assert "groq:llama-3.1-8b-instant" in result["contenderOptions"]
+        assert "groq:openai/gpt-oss-20b" in result["contenderOptions"]
 
     def test_battle_mode_swaps_the_controls(self, result):
         assert result["singleHidden"] is True
@@ -764,28 +764,28 @@ class TestPlaygroundBattleBehavior:
         # A multi-select carries no selection order, so the columns follow the
         # picker's own order — stable across runs rather than click-dependent.
         models = [c["model"] for c in result["columns"]]
-        assert models == ["groq:llama-3.1-8b-instant", "openai:gpt-5-nano",
+        assert models == ["groq:openai/gpt-oss-20b", "openai:gpt-5-nano",
                           "openai:broken-model"]
         by_model = {c["model"]: c for c in result["columns"]}
         assert by_model["openai:gpt-5-nano"]["answer"] == "a longer answer here"
-        assert by_model["groq:llama-3.1-8b-instant"]["answer"] == "fast answer"
+        assert by_model["groq:openai/gpt-oss-20b"]["answer"] == "fast answer"
 
     def test_a_failed_contender_is_marked_and_the_others_finish(self, result):
         by_model = {c["model"]: c for c in result["columns"]}
         assert by_model["openai:broken-model"]["state"] == "failed"
         assert "model not found" in by_model["openai:broken-model"]["answer"]
-        assert by_model["groq:llama-3.1-8b-instant"]["state"] == "done"
+        assert by_model["groq:openai/gpt-oss-20b"]["state"] == "done"
 
     def test_the_tally_reads_cost_from_the_server(self, result):
         """The cost shown is the server's number, not one derived in the page."""
         by_model = {c["model"]: c for c in result["columns"]}
-        assert "$0.000002" in by_model["groq:llama-3.1-8b-instant"]["foot"]
-        assert "15 tok" in by_model["groq:llama-3.1-8b-instant"]["foot"]
+        assert "$0.000002" in by_model["groq:openai/gpt-oss-20b"]["foot"]
+        assert "15 tok" in by_model["groq:openai/gpt-oss-20b"]["foot"]
 
     def test_verdict_names_the_winners_and_excludes_the_failure(self, result):
         assert result["verdictShown"] is True
         verdict = result["verdict"]
-        assert "Cheapest" in verdict and "groq:llama-3.1-8b-instant" in verdict
+        assert "Cheapest" in verdict and "groq:openai/gpt-oss-20b" in verdict
         assert "Longest" in verdict and "openai:gpt-5-nano" in verdict
         assert "Did not answer" in verdict and "openai:broken-model" in verdict
         assert "2/3 answered" in verdict

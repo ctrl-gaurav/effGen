@@ -59,7 +59,7 @@ class TestCloudAttributionIsUnchanged:
             ("gpt-4o-mini", "openai"),
             ("claude-opus-4-7", "anthropic"),
             ("gemini-2.5-flash", "google"),
-            ("llama-3.1-8b-instant", "cerebras"),
+            ("llama3.1-8b", "cerebras"),
             ("mixtral-8x7b", "groq"),
         ],
     )

@@ -557,7 +557,7 @@ def scenario_run_history_appends() -> ContentionReport:
                 for n in range(per_worker):
                     run_log.record_run(
                         task=f"task-{index}-{n}" * 20,
-                        model="groq:llama-3.1-8b-instant",
+                        model="groq:openai/gpt-oss-20b",
                         output=f"answer-{index}-{n}" * 20,
                         run_id=f"{tag}-{index}-{n}",
                     )

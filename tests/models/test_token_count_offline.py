@@ -112,7 +112,7 @@ def _groq(monkeypatch):
     from effgen.models.groq_adapter import GroqAdapter
 
     monkeypatch.setenv("GROQ_API_KEY", "test-key-not-used")
-    return GroqAdapter(model_name="llama-3.1-8b-instant")
+    return GroqAdapter(model_name="openai/gpt-oss-20b")
 
 
 def _together(monkeypatch):

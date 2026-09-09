@@ -97,8 +97,8 @@ def test_an_empty_failure_is_not_a_provider_problem():
 
 REFUSALS = {
     "groq-tokens-per-day": (
-        "RuntimeError: Groq rate limit hit for llama-3.1-8b-instant: Error code: 429 - "
-        "{'error': {'message': 'Rate limit reached for model `llama-3.1-8b-instant` in "
+        "RuntimeError: Groq rate limit hit for openai/gpt-oss-20b: Error code: 429 - "
+        "{'error': {'message': 'Rate limit reached for model `openai/gpt-oss-20b` in "
         "organization `org_x` service tier `on_demand` on tokens per day (TPD)'}}"
     ),
     "groq-tokens-per-minute-as-413": (
@@ -109,7 +109,7 @@ REFUSALS = {
         "AssertionError: assert False is True\n"
         " +  where False = WorkflowResult(success=False, node_results=[{'id': 'src', "
         "'status': 'failed', 'error': \"RateLimitExceeded: Groq rate limit hit for "
-        "llama-3.1-8b-instant: Error code: 429\"}]).success"
+        "openai/gpt-oss-20b: Error code: 429\"}]).success"
     ),
     "gemini-quota": (
         "RuntimeError: Gemini generation failed [rate_limited]: 429 RESOURCE_EXHAUSTED. "

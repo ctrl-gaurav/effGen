@@ -415,7 +415,7 @@ def payload_file(tmp_path_factory):
     payloads["/dashboard/history.json"] = {
         "runs": [
             {"run_id": "r-0001", "task": "Summarize the incident report",
-             "model": "llama-3.1-8b-instant", "status": "ok", "cost_usd": 1.2e-05},
+             "model": "openai/gpt-oss-20b", "status": "ok", "cost_usd": 1.2e-05},
             {"run_id": "r-0002", "task": "Name one benefit of vector databases",
              "model": "gpt-5-nano", "status": "ok", "cost_usd": 9e-06},
         ],
@@ -429,7 +429,7 @@ def payload_file(tmp_path_factory):
                 {"id": "manager", "label": "manager", "type": "agent",
                  "status": "ok", "model": "gpt-5-nano", "role": "manager"},
                 {"id": "editor", "label": "editor", "type": "agent",
-                 "status": "ok", "model": "llama-3.1-8b-instant", "role": "collab"},
+                 "status": "ok", "model": "openai/gpt-oss-20b", "role": "collab"},
             ],
             "edges": [{"source": "manager", "target": "editor", "kind": "delegation"}],
         }],
@@ -614,7 +614,7 @@ class TestPlaygroundBehavior:
           await settle(250);
           w.__streams = {
             "openai:gpt-5-nano": JSON.parse(process.env.EFF_STREAM_A),
-            "groq:llama-3.1-8b-instant": JSON.parse(process.env.EFF_STREAM_B),
+            "groq:openai/gpt-oss-20b": JSON.parse(process.env.EFF_STREAM_B),
           };
           $("mode-battle").checked = true;
           $("mode-battle").dispatchEvent(new w.Event("change", { bubbles: true }));

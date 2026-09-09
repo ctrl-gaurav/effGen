@@ -549,7 +549,7 @@ def _groq_provider(url: str) -> Any:
 
     os.environ["GROQ_BASE_URL"] = url
     adapter = GroqAdapter(
-        model_name="llama-3.1-8b-instant", api_key=SENTINEL_CREDENTIAL,
+        model_name="openai/gpt-oss-20b", api_key=SENTINEL_CREDENTIAL,
         timeout=int(CLIENT_TIMEOUT_S), max_retries=0, enable_rate_limiting=False,
     )
     adapter.load()
@@ -669,7 +669,7 @@ PROVIDERS: list[ProviderSpec] = [
     ProviderSpec(
         "groq", "openai", ("GROQ_API_KEY",), _groq_provider,
         _plain("effgen.models.groq_adapter.GroqAdapter",
-               model_name="llama-3.1-8b-instant", enable_rate_limiting=False),
+               model_name="openai/gpt-oss-20b", enable_rate_limiting=False),
         "GROQ_API_KEY", "groq",
     ),
     ProviderSpec(

@@ -77,7 +77,7 @@ class TestSQLiteCostStore:
         now = time.time()
         self.store.insert("openai", "gpt-4o-mini", 100, 50, 0.00005, now)
         self.store.insert("openai", "gpt-4o-mini", 200, 80, 0.0001, now)
-        self.store.insert("groq", "llama-3.1-8b-instant", 30, 15, 0.0, now)
+        self.store.insert("groq", "openai/gpt-oss-20b", 30, 15, 0.0, now)
         rows = self.store.query_today()
         assert len(rows) == 3
         total = sum(r.cost_usd for r in rows)
@@ -87,7 +87,7 @@ class TestSQLiteCostStore:
         old_ts = time.time() - 8 * 86400  # 8 days ago
         recent_ts = time.time() - 2 * 86400  # 2 days ago
         self.store.insert("openai", "gpt-4o", 100, 50, 0.01, old_ts)
-        self.store.insert("groq", "llama-3.1-8b-instant", 30, 15, 0.0, recent_ts)
+        self.store.insert("groq", "openai/gpt-oss-20b", 30, 15, 0.0, recent_ts)
         week_rows = self.store.query_week()
         assert len(week_rows) == 1
         assert week_rows[0].provider == "groq"
@@ -96,7 +96,7 @@ class TestSQLiteCostStore:
         old_ts = time.time() - 31 * 86400
         recent_ts = time.time() - 20 * 86400
         self.store.insert("openai", "gpt-4o", 100, 50, 0.01, old_ts)
-        self.store.insert("groq", "llama-3.1-8b-instant", 30, 15, 0.0, recent_ts)
+        self.store.insert("groq", "openai/gpt-oss-20b", 30, 15, 0.0, recent_ts)
         month_rows = self.store.query_month()
         assert len(month_rows) == 1
         assert month_rows[0].provider == "groq"
@@ -105,7 +105,7 @@ class TestSQLiteCostStore:
         old_ts = time.time() - 100 * 86400
         now = time.time()
         self.store.insert("openai", "gpt-4o", 100, 50, 0.01, old_ts)
-        self.store.insert("groq", "llama-3.1-8b-instant", 30, 15, 0.0, now)
+        self.store.insert("groq", "openai/gpt-oss-20b", 30, 15, 0.0, now)
         all_rows = self.store.query_all()
         assert len(all_rows) == 2
 
@@ -113,7 +113,7 @@ class TestSQLiteCostStore:
         old_ts = time.time() - 200 * 86400
         now = time.time()
         self.store.insert("openai", "gpt-4o", 100, 50, 0.01, old_ts)
-        self.store.insert("groq", "llama-3.1-8b-instant", 30, 15, 0.0, now)
+        self.store.insert("groq", "openai/gpt-oss-20b", 30, 15, 0.0, now)
         deleted = self.store.cleanup(max_age_seconds=86400)  # keep only last 1 day
         assert deleted == 1
         remaining = self.store.query_all()
@@ -162,11 +162,11 @@ class TestCostTrackerWithStorage:
         self.tracker = CostTracker(storage=self.store)
 
     def test_record_writes_to_db(self):
-        self.tracker.record("groq", "llama-3.1-8b-instant", 50, 20)
+        self.tracker.record("groq", "openai/gpt-oss-20b", 50, 20)
         rows = self.store.query_today()
         assert len(rows) == 1
         assert rows[0].provider == "groq"
-        assert rows[0].model == "llama-3.1-8b-instant"
+        assert rows[0].model == "openai/gpt-oss-20b"
 
     def test_record_cost_zero_for_free_tier(self):
         cost = self.tracker.record("cerebras", "llama3.1-8b", 100, 50)
@@ -181,8 +181,8 @@ class TestCostTrackerWithStorage:
         assert rows[0].cost_usd > 0
 
     def test_memory_summary_consistent_with_db(self):
-        self.tracker.record("groq", "llama-3.1-8b-instant", 50, 20)
-        self.tracker.record("groq", "llama-3.1-8b-instant", 30, 10)
+        self.tracker.record("groq", "openai/gpt-oss-20b", 50, 20)
+        self.tracker.record("groq", "openai/gpt-oss-20b", 30, 10)
         summary = self.tracker.summary()
         assert len(summary) == 1
         assert summary[0]["requests"] == 2

@@ -56,7 +56,7 @@ LIVE_PROVIDERS: dict[str, tuple[str, str, str, int]] = {
         "effgen.models.openai_adapter.OpenAIAdapter", 1,
     ),
     "groq": (
-        "GROQ_API_KEY", "llama-3.1-8b-instant",
+        "GROQ_API_KEY", "openai/gpt-oss-20b",
         "effgen.models.groq_adapter.GroqAdapter", 1,
     ),
     "gemini": (

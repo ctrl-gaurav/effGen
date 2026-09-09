@@ -67,7 +67,7 @@ class TestOutputSchemaNormalization:
 # ── Agent(...) constructor validates its config ───────────────────────────────
 
 class TestAgentConstructorGuard:
-    @pytest.mark.parametrize("bad", ["groq:llama-3.1-8b-instant", None, 123, ["x"]])
+    @pytest.mark.parametrize("bad", ["groq:openai/gpt-oss-20b", None, 123, ["x"]])
     def test_non_agentconfig_raises_typeerror(self, bad):
         with pytest.raises(TypeError) as exc:
             Agent(bad)

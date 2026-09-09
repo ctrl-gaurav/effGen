@@ -127,7 +127,7 @@ def test_free_tier_beats_paid_at_equal_cost(monkeypatch):
 def test_free_tier_provider_routes_at_zero_effective_cost(monkeypatch):
     """Groq-style free tiers route at zero while retaining paid list prices."""
     _reg("groq", {
-        "llama-3.1-8b-instant": {
+        "openai/gpt-oss-20b": {
             "pricing_per_1m_input": 0.05,
             "pricing_per_1m_output": 0.08,
         }
@@ -141,7 +141,7 @@ def test_free_tier_provider_routes_at_zero_effective_cost(monkeypatch):
         user_budget_usd=0.0,
         required_capabilities={Capability.chat},
     )
-    decision = policy.select([ProviderModelPair("groq", "llama-3.1-8b-instant")], ctx)
+    decision = policy.select([ProviderModelPair("groq", "openai/gpt-oss-20b")], ctx)
     assert decision.chosen.provider == "groq"
     assert decision.score == pytest.approx(0.0)
 

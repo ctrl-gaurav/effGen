@@ -88,7 +88,7 @@ class TestIsTransientError:
 
         exc = Exception(
             "Error code: 413 - {'error': {'message': 'Request too large for model "
-            "`llama-3.1-8b-instant` in organization `org_x` service tier `on_demand` "
+            "`openai/gpt-oss-20b` in organization `org_x` service tier `on_demand` "
             "on tokens per minute (TPM): Limit 6000, Requested 8212, please reduce "
             "your message size and try again.', 'type': 'tokens', "
             "'code': 'rate_limit_exceeded'}}"
@@ -103,7 +103,7 @@ class TestIsTransientError:
         from effgen.models._adapter_utils import provider_runtime_error
 
         wrapped = provider_runtime_error(
-            "groq", "llama-3.1-8b-instant", "generate", exc
+            "groq", "openai/gpt-oss-20b", "generate", exc
         )
         assert is_transient_error(wrapped)
         assert classify_provider_error(wrapped).rate_limited is True
@@ -131,7 +131,7 @@ class TestIsTransientError:
         class _FakeSDKError(Exception):
             status_code = 429
 
-        wrapped = provider_runtime_error("groq", "llama-3.1-8b-instant", "chat", _FakeSDKError("rate limited"))
+        wrapped = provider_runtime_error("groq", "openai/gpt-oss-20b", "chat", _FakeSDKError("rate limited"))
         assert is_transient_error(wrapped)
 
     def test_wrapped_5xx_is_retryable(self):
@@ -171,7 +171,7 @@ class TestIsTransientError:
     def test_typed_model_auth_error_not_retryable(self):
         from effgen.models.errors import ModelAuthError
 
-        assert not is_transient_error(ModelAuthError("groq", "llama-3.1-8b-instant", "bad key"))
+        assert not is_transient_error(ModelAuthError("groq", "openai/gpt-oss-20b", "bad key"))
 
     def test_typed_provider_transient_error_retryable(self):
         from effgen.models.errors import ProviderTransientError
@@ -186,7 +186,7 @@ class TestIsTransientError:
     def test_rate_limit_exceeded_is_retryable(self):
         from effgen.models._rate_limit import RateLimitExceeded
 
-        exc = RateLimitExceeded("Daily request budget exhausted for groq/llama-3.1-8b-instant.")
+        exc = RateLimitExceeded("Daily request budget exhausted for groq/openai/gpt-oss-20b.")
         assert is_transient_error(exc)
 
     def test_rate_limit_exceeded_carries_error_context(self):

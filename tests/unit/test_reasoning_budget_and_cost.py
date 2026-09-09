@@ -114,7 +114,7 @@ def test_needs_reasoning_headroom_by_name():
     assert needs_reasoning_headroom(_BudgetModel(name="gpt-5-mini")) is True
     assert needs_reasoning_headroom(_BudgetModel(name="o3-mini")) is True
     assert needs_reasoning_headroom(_BudgetModel(name="gpt-4o-mini")) is False
-    assert needs_reasoning_headroom(_BudgetModel(name="llama-3.1-8b-instant")) is False
+    assert needs_reasoning_headroom(_BudgetModel(name="openai/gpt-oss-20b")) is False
     # A "provider:" prefix is tolerated.
     assert needs_reasoning_headroom(_BudgetModel(name="openai:gpt-5")) is True
 

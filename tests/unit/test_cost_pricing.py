@@ -31,14 +31,14 @@ def _reset_tracker():
 class TestCatalogDrivenRates:
     def test_groq_is_priced_not_free(self):
         """A priced Groq model must report a real per-token rate, not $0."""
-        rin, rout = _rate("groq", "llama-3.1-8b-instant")
+        rin, rout = _rate("groq", "openai/gpt-oss-20b")
         assert rin > 0 and rout > 0
-        assert pricing_status("groq", "llama-3.1-8b-instant") == "priced"
+        assert pricing_status("groq", "openai/gpt-oss-20b") == "priced"
 
     def test_rate_matches_catalog(self):
         """The tracker rate must equal the catalog price (no placeholder drift)."""
         for prov, model in [
-            ("groq", "llama-3.1-8b-instant"),
+            ("groq", "openai/gpt-oss-20b"),
             ("openai", "gpt-5-nano"),
             ("gemini", "gemini-3.1-flash-lite"),
         ]:
@@ -99,7 +99,7 @@ class TestPricingStatus:
 
     def test_summary_carries_pricing(self):
         t = CostTracker(storage=None)
-        t.record("groq", "llama-3.1-8b-instant", 100, 50)
+        t.record("groq", "openai/gpt-oss-20b", 100, 50)
         row = t.summary()[0]
         assert row["pricing"] == "priced"
         assert row["cost_usd"] > 0

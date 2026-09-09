@@ -156,7 +156,7 @@ const actions = [
   {id: "model:gpt-5-nano", group: "Models", label: "gpt-5-nano",
    keywords: "openai tools vision"},
   {id: "run:abc123", group: "Runs", label: "Summarize the incident report",
-   keywords: "groq llama-3.1-8b-instant abc123 ok"},
+   keywords: "groq openai/gpt-oss-20b abc123 ok"},
   {id: "action:theme", group: "Actions", label: "Switch color theme",
    keywords: "dark light appearance"},
 ];
@@ -171,7 +171,7 @@ class TestPaletteBehavior:
         out = _run_node(ACTION_FIXTURE + """
         const s = webui.createPaletteState(actions, {});
         const seen = {};
-        ["catalog", "nano", "llama", "theme", "go to"].forEach((q) => {
+        ["catalog", "nano", "gpt-oss", "theme", "go to"].forEach((q) => {
           s.setQuery(q);
           seen[q] = s.results().map((a) => a.id);
         });
@@ -180,7 +180,7 @@ class TestPaletteBehavior:
         assert out["catalog"] == ["nav:catalog"]
         assert out["nano"] == ["model:gpt-5-nano"]
         # A run is findable by the model that produced it, not only by its text.
-        assert out["llama"] == ["run:abc123"]
+        assert out["gpt-oss"] == ["run:abc123"]
         assert out["theme"] == ["action:theme"]
         assert out["go to"] == ["nav:catalog", "nav:history"]
 
@@ -560,7 +560,7 @@ def payload_file(tmp_path_factory):
     payloads["/dashboard/history.json"] = {
         "runs": [
             {"run_id": "r-0001", "task": "Summarize the incident report",
-             "model": "llama-3.1-8b-instant", "status": "ok", "cost_usd": 1.2e-05,
+             "model": "openai/gpt-oss-20b", "status": "ok", "cost_usd": 1.2e-05,
              "output": "A brief summary.", "started": "2026-07-18T12:00:00"},
             {"run_id": "r-0002", "task": "Name one benefit of vector databases",
              "model": "gpt-5-nano", "status": "ok", "cost_usd": 9e-06,
@@ -576,7 +576,7 @@ def payload_file(tmp_path_factory):
                 {"id": "manager", "label": "manager", "type": "agent",
                  "status": "ok", "model": "gpt-5-nano", "role": "manager"},
                 {"id": "editor", "label": "editor", "type": "agent",
-                 "status": "ok", "model": "llama-3.1-8b-instant", "role": "collab"},
+                 "status": "ok", "model": "openai/gpt-oss-20b", "role": "collab"},
             ],
             "edges": [{"source": "manager", "target": "editor", "kind": "delegation"}],
         }],

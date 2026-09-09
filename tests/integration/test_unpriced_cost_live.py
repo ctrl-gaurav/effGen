@@ -3,7 +3,7 @@ Live integration test: a run reports a price only when one is published.
 
 Three real calls, one per pricing status:
 
-* ``groq:llama-3.1-8b-instant`` — the catalog publishes a rate, so the call
+* ``groq:openai/gpt-oss-20b`` — the catalog publishes a rate, so the call
   reports a real ``cost_usd``.
 * ``cerebras:gpt-oss-120b`` — a genuine free tier, so ``cost_usd`` is ``0.0``.
 * ``groq:allam-2-7b`` — the catalog carries no rate, so ``cost_usd`` is
@@ -39,7 +39,7 @@ skip_no_cerebras = pytest.mark.skipif(
     not CEREBRAS_API_KEY, reason="CEREBRAS_API_KEY not set — live pricing test skipped"
 )
 
-PRICED_MODEL = "groq:llama-3.1-8b-instant"
+PRICED_MODEL = "groq:openai/gpt-oss-20b"
 FREE_MODEL = "cerebras:gpt-oss-120b"
 UNPRICED_MODEL = "groq:allam-2-7b"
 

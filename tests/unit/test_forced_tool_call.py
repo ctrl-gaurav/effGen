@@ -425,7 +425,7 @@ OPENAI_SHAPED = [
     ("openai", "effgen.models.openai_adapter", "OpenAIAdapter", "gpt-4o-mini"),
     ("openai_compatible", "effgen.models.openai_compatible_adapter",
      "OpenAICompatibleAdapter", "Qwen/Qwen2.5-1.5B-Instruct"),
-    ("groq", "effgen.models.groq_adapter", "GroqAdapter", "llama-3.1-8b-instant"),
+    ("groq", "effgen.models.groq_adapter", "GroqAdapter", "openai/gpt-oss-20b"),
     ("together", "effgen.models.together_adapter", "TogetherAdapter",
      "Qwen/Qwen2.5-7B-Instruct-Turbo"),
     ("fireworks", "effgen.models.fireworks_adapter", "FireworksAdapter",

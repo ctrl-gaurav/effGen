@@ -25,7 +25,7 @@ from effgen.models._cost import (
 from effgen.models._usage import cost_label, usage_metadata
 
 # Ids chosen so each pricing status is represented by a real catalog entry.
-PRICED = ("groq", "llama-3.1-8b-instant")
+PRICED = ("groq", "openai/gpt-oss-20b")
 FREE = ("cerebras", "gpt-oss-120b")
 UNPRICED = ("groq", "allam-2-7b")
 

@@ -537,7 +537,7 @@ class TestRouterEvents:
 class TestAllCandidatesExhaustedError:
     def test_error_message_contains_failures(self):
         failures = [
-            ("groq", "llama-3.1-8b-instant", RateLimitExceeded("x")),
+            ("groq", "openai/gpt-oss-20b", RateLimitExceeded("x")),
             ("cerebras", "llama3.1-8b", ProviderTransientError("cerebras", status_code=503)),
         ]
         err = AllCandidatesExhaustedError(failures, hop_limit=3)

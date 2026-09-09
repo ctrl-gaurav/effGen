@@ -56,7 +56,7 @@ def _report(**overrides) -> LoadReport:
         "mean_latency": 2.88,
         "stdev_latency": 8.46,
         "provider": "groq",
-        "model": "llama-3.1-8b-instant",
+        "model": "openai/gpt-oss-20b",
         "requested_duration": 10.0,
         "error_breakdown": {},
     }

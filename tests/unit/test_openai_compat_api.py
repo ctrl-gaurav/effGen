@@ -132,12 +132,12 @@ class TestDefaultModelAlias:
         assert meta["alias_applied"] is True
 
     def test_default_honors_env(self, monkeypatch):
-        monkeypatch.setenv("EFFGEN_DEFAULT_MODEL", "groq:llama-3.1-8b-instant")
+        monkeypatch.setenv("EFFGEN_DEFAULT_MODEL", "groq:openai/gpt-oss-20b")
         c = _client(api_key="k", runner=_ok_runner)
         r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
                    json={"model": "default",
                          "messages": [{"role": "user", "content": "hi"}]})
-        assert r.json()["effgen"]["resolved_model"] == "groq:llama-3.1-8b-instant"
+        assert r.json()["effgen"]["resolved_model"] == "groq:openai/gpt-oss-20b"
 
     def test_default_names_listed(self):
         c = _client(api_key="k", runner=_ok_runner)
@@ -214,7 +214,7 @@ class TestModelsListDiscoverability:
 
         from effgen.server.app import create_app
 
-        served = ["openai:gpt-5-nano", "groq:llama-3.1-8b-instant"]
+        served = ["openai:gpt-5-nano", "groq:openai/gpt-oss-20b"]
         c = TestClient(create_app(
             api_key="k", runner=_ok_runner, extra_models=lambda: served,
         ))
@@ -222,7 +222,7 @@ class TestModelsListDiscoverability:
         ids = {m["id"] for m in r.json()["data"]}
         # Real served ids are present without displacing the legacy aliases.
         assert "openai:gpt-5-nano" in ids
-        assert "groq:llama-3.1-8b-instant" in ids
+        assert "groq:openai/gpt-oss-20b" in ids
         assert "gpt-4" in ids
 
     def test_extra_models_failure_does_not_break_listing(self):
@@ -270,12 +270,12 @@ class TestServedModelTracking:
         with _app._SERVED_MODEL_LOCK:
             _app._SERVED_MODEL_IDS.clear()
         _app._record_served_model("openai:gpt-5-nano")
-        _app._record_served_model("groq:llama-3.1-8b-instant")
+        _app._record_served_model("groq:openai/gpt-oss-20b")
         _app._record_served_model("openai:gpt-5-nano")  # duplicate
         _app._record_served_model("")  # ignored
         served = _app._served_model_ids()
         assert served.count("openai:gpt-5-nano") == 1
-        assert "groq:llama-3.1-8b-instant" in served
+        assert "groq:openai/gpt-oss-20b" in served
         assert "" not in served
 
     def test_bounded(self):
@@ -425,7 +425,7 @@ class TestStructuredErrors:
 
         c = _client(api_key="k", runner=no_upstream_key)
         r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
-                   json={"model": "groq:llama-3.1-8b-instant",
+                   json={"model": "groq:openai/gpt-oss-20b",
                          "messages": [{"role": "user", "content": "hi"}]})
         assert r.status_code == 503, r.status_code
         assert r.json()["error"]["type"] == "upstream_unavailable"
@@ -440,7 +440,7 @@ class TestStructuredErrors:
 
         c = _client(api_key="k", runner=rejected_upstream)
         r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
-                   json={"model": "groq:llama-3.1-8b-instant",
+                   json={"model": "groq:openai/gpt-oss-20b",
                          "messages": [{"role": "user", "content": "hi"}]})
         assert r.status_code == 502, r.status_code
 

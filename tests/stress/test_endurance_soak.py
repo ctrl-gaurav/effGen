@@ -179,9 +179,9 @@ class LiveFamily:
 
 #: A family whose key is absent skips rather than failing.
 LIVE_FAMILIES: list[LiveFamily] = [
-    LiveFamily("groq:llama-3.1-8b-instant", "GROQ_API_KEY", max_tokens=16),
     # A reasoning model: a 16-token budget is spent entirely on hidden
     # reasoning and returns no answer at all.
+    LiveFamily("groq:openai/gpt-oss-20b", "GROQ_API_KEY", max_tokens=4096),
     LiveFamily("openai:gpt-5-nano", "OPENAI_API_KEY", max_tokens=4096),
     # The free tier allows 15 requests per minute for this model.
     LiveFamily("gemini:gemini-3.1-flash-lite", "GOOGLE_API_KEY",

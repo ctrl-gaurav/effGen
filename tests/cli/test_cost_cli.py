@@ -222,7 +222,7 @@ class TestCostReportCLI:
         events = [
             CostEvent("openai", "gpt-4o-mini", 10, 5, 0.001, time.time()),
             CostEvent("openai", "gpt-4o", 20, 5, 0.002, time.time()),
-            CostEvent("groq", "llama-3.1-8b-instant", 5, 5, 0.0, time.time()),
+            CostEvent("groq", "openai/gpt-oss-20b", 5, 5, 0.0, time.time()),
         ]
         with patch("effgen.models._cost_store.SQLiteCostStore.query_all", return_value=events):
             code = _handle_cost_command(args, cli)
@@ -239,7 +239,7 @@ class TestCostReportCLI:
         cli = _make_cli()
         # Use real in-memory store and patch the constructor in the handler
         store = SQLiteCostStore(":memory:")
-        store.insert("groq", "llama-3.1-8b-instant", 100, 50, 0.0, time.time())
+        store.insert("groq", "openai/gpt-oss-20b", 100, 50, 0.0, time.time())
         store.insert("openai", "gpt-4o-mini", 200, 80, 0.00005, time.time())
         args = _args(cost_command="today")
         with patch("effgen.models._cost_store.SQLiteCostStore") as mock_cls:

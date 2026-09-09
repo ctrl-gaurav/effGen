@@ -34,7 +34,7 @@ class TestGroqModelsRegistry:
         assert set(tool_capable_models()).issubset(set(chat_models()))
 
     def test_model_info_known(self):
-        info = model_info("llama-3.1-8b-instant")
+        info = model_info("openai/gpt-oss-20b")
         assert info["context"] == 131_072
         assert info["supports_native_tools"] is True
 
@@ -54,8 +54,8 @@ class TestGroqModelsRegistry:
 
     def test_known_tool_capable_models(self):
         capable = tool_capable_models()
-        assert "llama-3.3-70b-versatile" in capable
-        assert "llama-3.1-8b-instant" in capable
+        assert "openai/gpt-oss-120b" in capable
+        assert "openai/gpt-oss-20b" in capable
         assert "qwen/qwen3.6-27b" in capable
 
     def test_guard_models_no_tools(self):
@@ -76,7 +76,7 @@ class TestGroqModelsRegistry:
             "openai/gpt-oss-safeguard-20b",
         ):
             assert GROQ_MODELS[model_id].get("reasoning") is True, model_id
-        assert not GROQ_MODELS["llama-3.1-8b-instant"].get("reasoning")
+        assert not GROQ_MODELS["groq/compound-mini"].get("reasoning")
 
     def test_only_one_vision_model(self):
         vision = [k for k, v in GROQ_MODELS.items() if v.get("supports_vision")]
@@ -102,21 +102,21 @@ class TestGroqAdapterInit:
         assert adapter.model_name == GROQ_DEFAULT_MODEL
 
     def test_rate_limiter_wired_by_default(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant")
+        adapter = GroqAdapter("openai/gpt-oss-20b")
         assert adapter._rate_limiter is not None
 
     def test_rate_limiter_disabled(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", enable_rate_limiting=False)
+        adapter = GroqAdapter("openai/gpt-oss-20b", enable_rate_limiting=False)
         assert adapter._rate_limiter is None
 
     def test_context_length_before_load(self):
-        adapter = GroqAdapter("llama-3.3-70b-versatile")
+        adapter = GroqAdapter("openai/gpt-oss-120b")
         assert adapter.get_context_length() == 131_072
 
 
 class TestGroqAdapterLoad:
     def test_load_no_key_raises(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key=None)
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key=None)
         # Stub SDK so the no-key path is reached even when groq isn't installed
         stub = MagicMock()
         stub.Groq = MagicMock()
@@ -131,19 +131,19 @@ class TestGroqAdapterLoad:
         with patch("effgen.models.groq_adapter.os.getenv", return_value="fake-key"):
             with patch("effgen.models.groq_adapter.GroqAdapter.load") as mock_load:
                 mock_load.return_value = None
-                adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key")
+                adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key")
                 # Manually set state as load() is mocked
                 adapter._is_loaded = True
                 assert adapter._is_loaded
 
     def test_import_error_on_missing_groq(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key")
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key")
         with patch("builtins.__import__", side_effect=ImportError("No module named 'groq'")):
             with pytest.raises((ImportError, RuntimeError)):
                 adapter.load()
 
     def test_unload_clears_client(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key")
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key")
         adapter._client = MagicMock()
         adapter._is_loaded = True
         adapter.unload()
@@ -169,14 +169,14 @@ class TestGroqAdapterGenerate:
         mock_response.usage = mock_usage
         return mock_response
 
-    def _loaded_adapter(self, model="llama-3.1-8b-instant"):
+    def _loaded_adapter(self, model="openai/gpt-oss-20b"):
         adapter = GroqAdapter(model, api_key="fake-key", enable_rate_limiting=False, enable_cost_tracking=False)
         adapter._client = MagicMock()
         adapter._is_loaded = True
         return adapter
 
     def test_generate_not_loaded_raises(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key")
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key")
         with pytest.raises(RuntimeError, match="not loaded"):
             adapter.generate("Hello")
 
@@ -185,7 +185,7 @@ class TestGroqAdapterGenerate:
         adapter._client.chat.completions.create.return_value = self._make_mock_response("Bonjour!")
         result = adapter.generate("Say hello in French")
         assert result.text == "Bonjour!"
-        assert result.model_name == "llama-3.1-8b-instant"
+        assert result.model_name == "openai/gpt-oss-20b"
 
     def test_generate_usage_populated(self):
         adapter = self._loaded_adapter()
@@ -200,7 +200,7 @@ class TestGroqAdapterGenerate:
         # Groq returns an all-zero usage object on some tool-call responses
         # even though the call was billed. The adapter estimates token counts
         # from the request and output instead of reporting a misleading zero.
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         tc = MagicMock()
         tc.id = "tc1"
         tc.type = "function"
@@ -283,7 +283,7 @@ class TestGroqAdapterGenerate:
 
     def test_non_reasoning_model_is_not_sent_reasoning_format(self):
         """Groq rejects the parameter on families that do not reason."""
-        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter = self._loaded_adapter("groq/compound-mini")
         adapter._client.chat.completions.create.return_value = self._make_mock_response("Hi")
         adapter.generate("Hi")
         call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
@@ -298,7 +298,7 @@ class TestGroqAdapterGenerate:
         assert call_kwargs["reasoning_format"] == "raw"
 
     def test_generate_with_tools_calls_api(self):
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         tc = MagicMock()
         tc.id = "tc1"
         tc.type = "function"
@@ -313,7 +313,7 @@ class TestGroqAdapterGenerate:
         assert result.metadata["tool_calls"][0]["function"]["name"] == "calculator"
 
     def test_generate_with_tools_recovers_failed_generation_tool_call(self):
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
             "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
@@ -341,7 +341,7 @@ class TestGroqAdapterGenerate:
         output doesn't carry a stray WARNING line."""
         import logging
 
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
             "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
@@ -368,7 +368,7 @@ class TestGroqAdapterGenerate:
         assert not any(r.levelno >= logging.WARNING for r in recovery_records)
 
     def test_generate_with_tools_recovers_failed_generation_with_closing_bracket(self):
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
             "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
@@ -398,7 +398,7 @@ class TestGroqAdapterGenerate:
         `</function>` tag at all, or two calls run together with no
         separator — the first call is still recovered rather than the
         whole turn failing with a raw provider error."""
-        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter = self._loaded_adapter("openai/gpt-oss-20b")
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 400 - {'error': {'message': \"Failed to call a function. "
             "Please adjust your prompt.\", 'type': 'invalid_request_error', "
@@ -440,7 +440,7 @@ class TestGroqAdapterGenerate:
 
     def test_generate_with_tools_recovers_failed_generation_no_tag_no_trailer(self):
         """No closing tag and nothing trailing (end of string) also recovers."""
-        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter = self._loaded_adapter("openai/gpt-oss-20b")
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
             "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
@@ -468,23 +468,23 @@ class TestGroqAdapterGenerate:
         assert tc.count > 0
 
     def test_supports_native_tools_property(self):
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         assert adapter.supports_native_tools is True
         adapter2 = self._loaded_adapter("allam-2-7b")
         assert adapter2.supports_native_tools is False
 
     def test_rate_limit_status_disabled(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key", enable_rate_limiting=False)
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key", enable_rate_limiting=False)
         status = adapter.rate_limit_status()
         assert status["enabled"] is False
 
     def test_rate_limit_status_enabled(self):
-        adapter = GroqAdapter("llama-3.1-8b-instant", api_key="fake-key", enable_rate_limiting=True)
+        adapter = GroqAdapter("openai/gpt-oss-20b", api_key="fake-key", enable_rate_limiting=True)
         status = adapter.rate_limit_status()
         assert status["enabled"] is True
 
     def test_supports_tool_calling_method(self):
-        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter = self._loaded_adapter("openai/gpt-oss-120b")
         assert adapter.supports_tool_calling() is True
         assert adapter.supports_function_calling() is True
         adapter2 = self._loaded_adapter("allam-2-7b")
@@ -511,7 +511,7 @@ class TestGroqAdapterGenerate:
         adapter = self._loaded_adapter()
         adapter._client.chat.completions.create.side_effect = Exception(
             "Error code: 413 - {'error': {'message': 'Request too large for "
-            "model `llama-3.1-8b-instant` in organization `org_secret123` on "
+            "model `openai/gpt-oss-20b` in organization `org_secret123` on "
             "tokens per minute (TPM): Limit 6000, Requested 9288, please "
             "reduce your message size and try again.', 'type': 'tokens', "
             "'code': 'rate_limit_exceeded'}}"
@@ -556,7 +556,7 @@ class _StreamChunk:
 
 
 class TestGroqAdapterStream:
-    def _loaded_adapter(self, model="llama-3.1-8b-instant", enable_cost_tracking=True):
+    def _loaded_adapter(self, model="openai/gpt-oss-20b", enable_cost_tracking=True):
         adapter = GroqAdapter(
             model, api_key="fake-key", enable_rate_limiting=False,
             enable_cost_tracking=enable_cost_tracking,

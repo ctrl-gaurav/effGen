@@ -85,9 +85,9 @@ PARITY_PARAMS = [
         id="cerebras/gpt-oss-120b",
     ),
     pytest.param(
-        "groq", "llama-3.3-70b-versatile",
+        "groq", "qwen/qwen3.8-27b",
         marks=pytest.mark.skipif(not _has("GROQ_API_KEY"), reason="SKIPPED: GROQ_API_KEY not set"),
-        id="groq/llama-3.3-70b-versatile",
+        id="groq/qwen3.8-27b",
     ),
     pytest.param(
         "together", "Qwen/Qwen2.5-7B-Instruct-Turbo",
@@ -227,9 +227,9 @@ NATIVE_PARAMS = [
         id="cerebras/gpt-oss-120b/native",
     ),
     pytest.param(
-        "groq", "llama-3.3-70b-versatile",
+        "groq", "qwen/qwen3.8-27b",
         marks=pytest.mark.skipif(not _has("GROQ_API_KEY"), reason="SKIPPED: GROQ_API_KEY not set"),
-        id="groq/llama-3.3-70b-versatile/native",
+        id="groq/qwen3.8-27b/native",
     ),
     pytest.param(
         "fireworks", "accounts/fireworks/models/kimi-k2p6",

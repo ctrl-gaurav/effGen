@@ -36,7 +36,7 @@ COMPARISON_DOC = {
             "avg_tool_accuracy": 0.0, "error": None,
         },
         {
-            "model": "groq:llama-3.1-8b-instant", "suite": "math", "accuracy": 1.0,
+            "model": "groq:openai/gpt-oss-20b", "suite": "math", "accuracy": 1.0,
             "avg_latency": 0.27, "total_tokens": 214, "avg_cost_usd": 5e-06,
             "avg_tool_accuracy": 0.0, "error": None,
         },
@@ -51,7 +51,7 @@ COMPARISON_DOC = {
             "avg_tool_accuracy": 0.0, "error": "model not found",
         },
     ],
-    "recommendations": {"math": "groq:llama-3.1-8b-instant"},
+    "recommendations": {"math": "groq:openai/gpt-oss-20b"},
     "recommendation_rationale": {
         "math": "cheapest at 100% accuracy — $0.000005/run vs $0.000041/run for openai:gpt-5-nano",
     },
@@ -90,7 +90,7 @@ COST_DOC = {
         {"provider": "openai", "model": "gpt-5-nano", "requests": 80,
          "prompt_tokens": 9000, "completion_tokens": 4000, "cost_usd": 1.2,
          "cost_label": "$1.200000"},
-        {"provider": "groq", "model": "llama-3.1-8b-instant", "requests": 30,
+        {"provider": "groq", "model": "openai/gpt-oss-20b", "requests": 30,
          "prompt_tokens": 2000, "completion_tokens": 800, "cost_usd": 0.3985,
          "cost_label": "$0.398500"},
         {"provider": "transformers", "model": "Qwen/Qwen2.5-1.5B-Instruct",
@@ -114,7 +114,7 @@ LOADTEST_DOC = {
 #: multi-tool run with a failed step it recovered from, sources and citations.
 RUN_DOC = {
     "task": "What is 18723 * 4409? Use the calculator tool.",
-    "model": "llama-3.1-8b-instant",
+    "model": "openai/gpt-oss-20b",
     "provider": "groq",
     "started_at": "2026-07-19T06:24:54+00:00",
     "output": "82549707",
@@ -207,9 +207,9 @@ HISTORY_RECORD = {
     "ts": "2026-07-19T06:30:00+00:00",
     "run_id": "ac0699e7b382",
     "status": "ok",
-    "model": "llama-3.1-8b-instant",
+    "model": "openai/gpt-oss-20b",
     "provider": "groq",
-    "agent": "llama-3.1-8b-instant",
+    "agent": "openai/gpt-oss-20b",
     "task": "Reply with exactly: OK",
     "output": "OK",
     "input_tokens": 313,
@@ -228,7 +228,7 @@ BATTLE_DOC = {
     "generated_at": "2026-07-19T07:15:00+00:00",
     "contenders": [
         {
-            "model": "groq:llama-3.1-8b-instant",
+            "model": "groq:openai/gpt-oss-20b",
             "answer": "A bloom filter tests set membership with false positives but no "
                       "false negatives.",
             "error": None, "state": "done", "load_s": 0.31, "ttft_s": 0.41,
@@ -253,12 +253,12 @@ BATTLE_DOC = {
     "verdict": {
         "fastest": {"model": "transformers:Qwen/Qwen2.5-1.5B-Instruct",
                     "detail": "answered in 1.23s"},
-        "cheapest": {"model": "groq:llama-3.1-8b-instant",
+        "cheapest": {"model": "groq:openai/gpt-oss-20b",
                      "detail": "$0.000010 for this run; 1 model(s) publish no price "
                                "and were not ranked"},
-        "longest": {"model": "groq:llama-3.1-8b-instant", "detail": "79 characters"},
+        "longest": {"model": "groq:openai/gpt-oss-20b", "detail": "79 characters"},
         "judge": {"judge_model": "gemini:gemini-3.1-flash-lite",
-                  "winner": "groq:llama-3.1-8b-instant",
+                  "winner": "groq:openai/gpt-oss-20b",
                   "reasoning": "It states both error directions."},
     },
 }
@@ -428,7 +428,7 @@ def test_report_is_theme_aware(kind):
 
 def test_comparison_report_shows_verdict_rationale_and_unpriced():
     html = build_html_report(COMPARISON_DOC, kind="comparison")
-    assert "groq:llama-3.1-8b-instant" in html
+    assert "groq:openai/gpt-oss-20b" in html
     assert "cheapest at 100% accuracy" in html
     # A local model with no published price is labeled, never rendered as $0.
     assert "unpriced" in html
@@ -837,7 +837,7 @@ def test_run_card_carries_the_run_identity_and_metrics():
     html_text = build_html_report(RUN_DOC, kind="run")
     text = " ".join(_parse(html_text).text)
     assert "What is 18723 * 4409?" in text
-    assert "llama-3.1-8b-instant" in text and "groq" in text
+    assert "openai/gpt-oss-20b" in text and "groq" in text
     assert "succeeded" in text
     assert "afcc20ce819a" in text
     assert "82549707" in text
@@ -893,7 +893,7 @@ def test_a_run_that_never_billed_a_call_is_not_called_unpriced():
     # about whether the model publishes a rate. Labelling it "no published rate"
     # states something untrue about a priced model.
     doc = json.loads(json.dumps(LOCAL_RUN_DOC))
-    doc["model"] = "llama-3.1-8b-instant"
+    doc["model"] = "openai/gpt-oss-20b"
     doc["provider"] = "groq"
     doc["success"] = False
     for key in ("tokens_used", "total_tokens", "prompt_tokens", "completion_tokens"):

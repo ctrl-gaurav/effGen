@@ -158,7 +158,7 @@ def test_classify_trusts_wrapped_error_context_over_reclassification():
     assert raw_class.category == "invalid_request"
     assert raw_class.should_retry is False
 
-    wrapped = provider_runtime_error("groq", "llama-3.1-8b-instant", "generate", raw)
+    wrapped = provider_runtime_error("groq", "openai/gpt-oss-20b", "generate", raw)
     wrapped_class = classify_provider_error(wrapped)
     assert wrapped_class.category == raw_class.category
     assert wrapped_class.should_retry == raw_class.should_retry
@@ -166,7 +166,7 @@ def test_classify_trusts_wrapped_error_context_over_reclassification():
 
 def test_simplify_embedded_provider_error_extracts_inner_message():
     raw = (
-        "request too large for llama-3.1-8b-instant: Error code: 413 - "
+        "request too large for openai/gpt-oss-20b: Error code: 413 - "
         "{'error': {'message': 'Limit 6000, Requested 9294.', "
         "'type': 'tokens', 'code': 'rate_limit_exceeded'}} "
         "— reduce the request (fewer/smaller tools or shorter input) or use a "
@@ -176,7 +176,7 @@ def test_simplify_embedded_provider_error_extracts_inner_message():
     assert "Error code" not in out
     assert "{" not in out
     assert out == (
-        "request too large for llama-3.1-8b-instant: Limit 6000, Requested 9294. "
+        "request too large for openai/gpt-oss-20b: Limit 6000, Requested 9294. "
         "— reduce the request (fewer/smaller tools or shorter input) or use a "
         "larger-context model."
     )
@@ -431,15 +431,15 @@ def test_embedded_sdk_error_body_collapsed_in_response_output():
     ('Error code: 413 - {...}') must surface as prose in response.output,
     not as a dumped Python dict."""
     raw_body = (
-        "request too large for llama-3.1-8b-instant: Error code: 413 - "
-        "{'error': {'message': 'Request too large for model `llama-3.1-8b-instant` "
+        "request too large for openai/gpt-oss-20b: Error code: 413 - "
+        "{'error': {'message': 'Request too large for model `openai/gpt-oss-20b` "
         "on tokens per minute (TPM): Limit 6000, Requested 9294.', "
         "'type': 'tokens', 'code': 'rate_limit_exceeded'}} "
         "— reduce the request (fewer/smaller tools or shorter input) or use a "
         "larger-context model."
     )
     r = _agent(
-        _FakeModel(exc=InvalidRequestError("groq", "llama-3.1-8b-instant", raw_body))
+        _FakeModel(exc=InvalidRequestError("groq", "openai/gpt-oss-20b", raw_body))
     ).run("hi")
     assert not r.success
     assert "Error code" not in r.output

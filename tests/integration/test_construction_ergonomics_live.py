@@ -37,7 +37,7 @@ def test_output_schema_pydantic_class_live_groq():
     from effgen import create_agent
     from effgen.models._rate_limit import RateLimitExceeded
 
-    agent = create_agent("minimal", "groq:llama-3.1-8b-instant")
+    agent = create_agent("minimal", "groq:openai/gpt-oss-20b")
     try:
         result = agent.run("What is the capital of France?", output_schema=Capital)
     except RateLimitExceeded as exc:
@@ -49,7 +49,12 @@ def test_output_schema_pydantic_class_live_groq():
     assert result.success, f"expected success, got: {result.output!r}"
     parsed = json.loads(result.output)  # must be valid JSON matching the schema
     assert parsed["capital"].lower() == "paris"
-    assert result.metadata.get("structured_output_attempts", 0) >= 1
+    # ``structured_output_attempts`` counts *repair* calls, so a model whose
+    # own answer already validates records 0. What matters is that the schema
+    # was satisfied and the route that satisfied it is recorded.
+    assert result.metadata.get("structured_output") is True
+    assert result.metadata.get("structured_output_method")
+    assert result.metadata.get("structured_output_attempts") is not None
     agent.close()
 
 

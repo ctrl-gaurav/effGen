@@ -199,8 +199,8 @@ def test_the_written_model_id_names_its_provider(state, tmp_path):
     ("suggested", "expected"),
     [
         (("gpt-5-nano", "openai", "openai key detected"), "openai:gpt-5-nano"),
-        (("groq:llama-3.1-8b-instant", "groq", "groq key detected"),
-         "groq:llama-3.1-8b-instant"),
+        (("groq:openai/gpt-oss-20b", "groq", "groq key detected"),
+         "groq:openai/gpt-oss-20b"),
         (("transformers:Qwen/Qwen2.5-1.5B-Instruct", None, "no cloud key found"),
          "transformers:Qwen/Qwen2.5-1.5B-Instruct"),
     ],
@@ -354,7 +354,7 @@ def test_an_ordinary_model_keeps_the_ordinary_budget(state, tmp_path):
     import yaml
 
     project = tmp_path / "proj"
-    _init("--init", str(project), "-m", "groq:llama-3.1-8b-instant")
+    _init("--init", str(project), "-m", "groq:openai/gpt-oss-20b")
     document = yaml.safe_load(
         (project / _scaffold.PROJECT_CONFIG_NAME).read_text(encoding="utf-8")
     )
@@ -369,7 +369,7 @@ def test_the_example_and_the_config_agree_on_the_budget(state, tmp_path):
 
     import yaml
 
-    for model in ("openai:gpt-5-nano", "groq:llama-3.1-8b-instant"):
+    for model in ("openai:gpt-5-nano", "groq:openai/gpt-oss-20b"):
         project = tmp_path / model.replace(":", "-").replace("/", "-")
         _init("--init", str(project), "-m", model)
         document = yaml.safe_load(
@@ -456,7 +456,7 @@ def test_run_takes_the_model_from_the_config_file(state, tmp_path, monkeypatch):
 
     monkeypatch.setattr(_main, "Agent", _StubAgent)
     project = tmp_path / "proj"
-    _init("--init", str(project), "-m", "groq:llama-3.1-8b-instant")
+    _init("--init", str(project), "-m", "groq:openai/gpt-oss-20b")
 
     args = _main.create_parser().parse_args(
         ["run", "what is 25*17?", "-c", str(project / _scaffold.PROJECT_CONFIG_NAME)]
@@ -467,7 +467,7 @@ def test_run_takes_the_model_from_the_config_file(state, tmp_path, monkeypatch):
 
     assert code in (0, None)
     assert len(built) == 1
-    assert built[0].model == "groq:llama-3.1-8b-instant"
+    assert built[0].model == "groq:openai/gpt-oss-20b"
     assert "from" in out.getvalue()
 
 
@@ -513,7 +513,7 @@ def test_an_explicit_model_flag_still_wins_over_the_config(state, tmp_path, monk
 
     monkeypatch.setattr(_main, "Agent", _StubAgent)
     project = tmp_path / "proj"
-    _init("--init", str(project), "-m", "groq:llama-3.1-8b-instant")
+    _init("--init", str(project), "-m", "groq:openai/gpt-oss-20b")
 
     args = _main.create_parser().parse_args([
         "run", "hi",

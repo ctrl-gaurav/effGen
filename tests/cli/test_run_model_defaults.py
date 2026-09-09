@@ -59,11 +59,11 @@ def test_preflight_silent_for_local_hub_ids(capsys):
 def test_no_model_default_prefers_cloud_when_keyed(monkeypatch):
     monkeypatch.setattr(
         _main, "_quickstart_suggest_model",
-        lambda: ("llama-3.1-8b-instant", "groq", "groq key detected"),
+        lambda: ("groq:openai/gpt-oss-20b", "groq", "groq key detected"),
         raising=True,
     )
     model_id, provider, reason = _main._quickstart_suggest_model()
-    assert model_id == "llama-3.1-8b-instant"
+    assert model_id == "groq:openai/gpt-oss-20b"
     assert provider == "groq"
     assert "groq" in reason
 

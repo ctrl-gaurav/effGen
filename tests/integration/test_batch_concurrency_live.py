@@ -25,7 +25,7 @@ from tests._harness.provider_unavailable import assert_cli_succeeded
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 def _has_groq() -> bool:

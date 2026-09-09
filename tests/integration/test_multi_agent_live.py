@@ -1,7 +1,7 @@
 """Live integration tests for multi-agent orchestration & workflows.
 
 Real model calls (no mocks). Cloud patterns run on Groq's cheap
-``llama-3.1-8b-instant`` when ``GROQ_API_KEY`` is set; otherwise skipped.
+``openai/gpt-oss-20b`` when ``GROQ_API_KEY`` is set; otherwise skipped.
 
 Proves the machinery end-to-end:
 - sequential / parallel / hierarchical team patterns succeed,
@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
-CLOUD_MODEL = "llama-3.1-8b-instant"
+CLOUD_MODEL = "groq:openai/gpt-oss-20b"
 
 
 def _has_groq() -> bool:

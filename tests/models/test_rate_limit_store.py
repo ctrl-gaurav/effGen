@@ -218,7 +218,7 @@ def test_coordinator_cleanup_noop_for_memory():
 
 def test_groq_adapter_accepts_sqlite_rate_limit_storage(store):
     adapter = GroqAdapter(
-        "llama-3.1-8b-instant",
+        "openai/gpt-oss-20b",
         api_key="fake-key",
         rate_limit_storage=store,
     )

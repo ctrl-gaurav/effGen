@@ -142,7 +142,7 @@ class TestGroqAdapterImageTranslation:
         from effgen.models.groq_adapter import GroqAdapter
 
         adapter = GroqAdapter.__new__(GroqAdapter)
-        adapter.model_name = "llama-3.1-8b-instant"
+        adapter.model_name = "openai/gpt-oss-20b"
         adapter._is_loaded = True
         adapter._client = MagicMock()
         adapter._rate_limiter = None
@@ -156,7 +156,7 @@ class TestGroqAdapterImageTranslation:
         from effgen.models.groq_adapter import GroqAdapter
 
         adapter = GroqAdapter.__new__(GroqAdapter)
-        adapter.model_name = "llama-3.1-8b-instant"
+        adapter.model_name = "openai/gpt-oss-20b"
         adapter._is_loaded = True
         adapter._client = MagicMock()
 

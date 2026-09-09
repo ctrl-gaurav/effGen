@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
-MODEL = "llama-3.1-8b-instant"
+MODEL = "openai/gpt-oss-20b"
 PROVIDER = "groq"
 
 pytestmark = pytest.mark.skipif(

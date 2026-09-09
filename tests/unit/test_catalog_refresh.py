@@ -54,7 +54,18 @@ def test_cerebras_snapshot_count_is_two():
 def test_providers_for_bare_cloud_slug():
     assert C.providers_for("gpt-oss-120b") == ["cerebras"]
     assert C.providers_for("zai-glm-4.7") == ["cerebras"]
-    assert C.providers_for("llama-3.3-70b-versatile") == ["groq"]
+    assert C.providers_for("qwen/qwen3.6-27b") == ["groq"]
+
+
+def test_a_slug_several_providers_serve_names_them_all():
+    """An id more than one provider hosts is not routable on its own.
+
+    Callers naming such a model have to say which provider they mean, so the
+    routing input has to report every host rather than picking one.
+    """
+    assert C.providers_for("openai/gpt-oss-20b") == [
+        "groq", "together", "replicate", "hf",
+    ]
 
 
 def test_providers_for_unknown_is_empty():

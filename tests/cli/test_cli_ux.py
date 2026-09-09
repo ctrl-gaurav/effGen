@@ -998,7 +998,7 @@ def test_compare_provider_flag_applies_only_to_bare_ids(monkeypatch, tmp_path, c
     monkeypatch.setattr("effgen.models.load_model", _fake_load_model)
     suite_file = _write_suite(tmp_path, expected="right answer")
     args = SimpleNamespace(
-        models="groq:llama-3.1-8b-instant,gpt-5-nano", suite=str(suite_file),
+        models="groq:openai/gpt-oss-20b,gpt-5-nano", suite=str(suite_file),
         scoring="contains", threshold=0.5, temperature=None, preset=None,
         difficulty=None, max_cases=None, optimize="accuracy", output_json=False,
         output=None, provider="openai", quiet=True, no_animation=True,
@@ -1006,7 +1006,7 @@ def test_compare_provider_flag_applies_only_to_bare_ids(monkeypatch, tmp_path, c
     code = _main._handle_compare_command(args, _cli())
     capsys.readouterr()
     assert code == 0
-    assert ("groq:llama-3.1-8b-instant", None) in seen
+    assert ("groq:openai/gpt-oss-20b", None) in seen
     assert ("gpt-5-nano", "openai") in seen
 
 

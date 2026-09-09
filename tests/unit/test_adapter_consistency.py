@@ -270,7 +270,7 @@ def _adapter_cases():
     key = "unit-test-key"
     return [
         ("openai", OpenAIAdapter, {"model_name": "gpt-5-nano", "api_key": key}),
-        ("groq", GroqAdapter, {"model_name": "llama-3.1-8b-instant", "api_key": key}),
+        ("groq", GroqAdapter, {"model_name": "openai/gpt-oss-20b", "api_key": key}),
         ("gemini", GeminiAdapter, {"model_name": "gemini-3.1-flash-lite", "api_key": key}),
         ("cerebras", CerebrasAdapter, {"model_name": "gpt-oss-120b", "api_key": key}),
         ("together", TogetherAdapter,

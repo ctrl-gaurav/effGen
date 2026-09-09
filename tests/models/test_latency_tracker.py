@@ -35,9 +35,9 @@ def test_p50_single_record():
 def test_p50_multiple_records():
     t = LatencyTracker()
     for ms in [100.0, 200.0, 300.0, 400.0, 500.0]:
-        t.record("groq", "llama-3.1-8b-instant", ms)
+        t.record("groq", "openai/gpt-oss-20b", ms)
     # median of [100,200,300,400,500] = 300
-    assert t.p50("groq", "llama-3.1-8b-instant") == 300.0
+    assert t.p50("groq", "openai/gpt-oss-20b") == 300.0
 
 
 def test_p50_separate_providers_independent():
@@ -138,11 +138,11 @@ def test_timed_call_records_total():
 
 def test_timed_call_marks_first_token():
     t = LatencyTracker()
-    with timed_call("groq", "llama-3.1-8b-instant", tracker=t) as tc:
+    with timed_call("groq", "openai/gpt-oss-20b", tracker=t) as tc:
         time.sleep(0.02)
         tc.mark_first_token()
         time.sleep(0.05)
-    assert t.p50_ttft("groq", "llama-3.1-8b-instant") is not None
+    assert t.p50_ttft("groq", "openai/gpt-oss-20b") is not None
 
 
 # ---------------------------------------------------------------------------

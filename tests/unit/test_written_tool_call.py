@@ -8,7 +8,7 @@ loop reports when it fires, and the tool-calling path every tool-loop result
 names.
 
 The fixtures are the strings small models actually produced (groq
-``llama-3.1-8b-instant`` driving the coding agent). The loop is driven by an
+``openai/gpt-oss-20b`` driving the coding agent). The loop is driven by an
 in-process scripted model so the checks are deterministic and offline — live
 behavior is proven separately against real providers.
 """
@@ -374,7 +374,7 @@ def test_iteration_cap_names_the_tool_calling_path():
 # A tagged call whose body is a query string, not JSON
 # ---------------------------------------------------------------------------
 #
-# Measured live on groq:llama-3.1-8b-instant driving `effgen code`: one run in
+# Measured live on groq:openai/gpt-oss-20b driving `effgen code`: one run in
 # two produced
 #
 #   <file_operations>operation=write&path=greet.py&content=greet(name)=print(&quot;…

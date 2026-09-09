@@ -627,7 +627,7 @@ class TestRunFailClosed:
         from effgen.prompts.library.eval import RunOutput
 
         self._stub(monkeypatch, RunOutput(text="   ", finish_reason="stop"))
-        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:llama-3.1-8b-instant")
+        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:openai/gpt-oss-20b")
         assert rc == 1
 
     def test_nonempty_result_prints_footer(self, monkeypatch, capsys):
@@ -645,7 +645,7 @@ class TestRunFailClosed:
                 latency_ms=321.0,
             ),
         )
-        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:llama-3.1-8b-instant")
+        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:openai/gpt-oss-20b")
         assert rc == 0
         out = capsys.readouterr().out
         assert "a real answer" in out
@@ -665,7 +665,7 @@ class TestRunFailClosed:
                 max_tokens=16,
             ),
         )
-        rc = cmd_run("coding.code_review.v1", {}, "groq:llama-3.1-8b-instant")
+        rc = cmd_run("coding.code_review.v1", {}, "groq:openai/gpt-oss-20b")
         assert rc == 1
         out = capsys.readouterr().out
         # The partial answer is still shown, alongside a named reason.
@@ -682,7 +682,7 @@ class TestRunFailClosed:
             monkeypatch,
             RunOutput(text='{"issues": []}', finish_reason="stop"),
         )
-        rc = cmd_run("coding.code_review.v1", {}, "groq:llama-3.1-8b-instant")
+        rc = cmd_run("coding.code_review.v1", {}, "groq:openai/gpt-oss-20b")
         assert rc == 0
         out = capsys.readouterr().out
         assert "expected_shape" in out
@@ -694,7 +694,7 @@ class TestBracketedTextIsPrintedVerbatim:
     def test_output_with_closing_tag_does_not_abort(self, capsys):
         from effgen.cli.playground import _print_output
 
-        _print_output("See [ref] and [/close] markers.", "groq:llama-3.1-8b-instant")
+        _print_output("See [ref] and [/close] markers.", "groq:openai/gpt-oss-20b")
         out = capsys.readouterr().out
         assert "[ref]" in out
         assert "[/close]" in out

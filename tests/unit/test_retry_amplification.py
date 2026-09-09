@@ -75,7 +75,7 @@ def test_the_agent_still_retries_a_transient_failure():
     "provider,module,cls,sdk_module,sdk_name,model",
     [
         ("groq", "effgen.models.groq_adapter", "GroqAdapter",
-         "groq", "Groq", "llama-3.1-8b-instant"),
+         "groq", "Groq", "openai/gpt-oss-20b"),
         ("together", "effgen.models.together_adapter", "TogetherAdapter",
          "together", "Together", "Qwen/Qwen2.5-7B-Instruct-Turbo"),
         ("cerebras", "effgen.models.cerebras_adapter", "CerebrasAdapter",

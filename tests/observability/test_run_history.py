@@ -65,10 +65,10 @@ def test_failed_run_is_recorded_with_error_status(history_dir):
 def test_filters_by_model_session_and_search(history_dir):
     run_log.record_run(model="gpt-5-nano", run_id="r1", task="refund policy",
                        session_id="s-1")
-    run_log.record_run(model="llama-3.1-8b-instant", run_id="r2", task="escalation",
+    run_log.record_run(model="openai/gpt-oss-20b", run_id="r2", task="escalation",
                        session_id="s-2")
 
-    assert [r["run_id"] for r in run_log.read_runs(model="llama")] == ["r2"]
+    assert [r["run_id"] for r in run_log.read_runs(model="gpt-oss")] == ["r2"]
     assert [r["run_id"] for r in run_log.read_runs(session_id="s-1")] == ["r1"]
     assert [r["run_id"] for r in run_log.read_runs(search="refund")] == ["r1"]
     assert [r["run_id"] for r in run_log.read_runs(search="r2")] == ["r2"]
@@ -190,7 +190,7 @@ def test_provider_is_taken_from_the_serving_adapter(history_dir):
         def get_metadata(self):
             return {**super().get_metadata(), "provider": "groq"}
 
-    agent = _agent_with(ServedModel(["ok"], model_name="llama-3.1-8b-instant"))
+    agent = _agent_with(ServedModel(["ok"], model_name="openai/gpt-oss-20b"))
     agent.run("hello")
 
     record = run_log.read_runs()[0]

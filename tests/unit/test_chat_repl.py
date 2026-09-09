@@ -555,16 +555,16 @@ def test_banner_shows_session_resume_count(tmp_path, monkeypatch):
 
 def test_resolve_swap_target_known_provider_prefix_pins_provider():
     repl, _ = _make_repl(provider="openai", _provider="openai")
-    provider, model_id = repl._resolve_swap_target("groq:llama-3.1-8b-instant")
+    provider, model_id = repl._resolve_swap_target("groq:openai/gpt-oss-20b")
     assert provider == "groq"
-    assert model_id == "llama-3.1-8b-instant"
+    assert model_id == "openai/gpt-oss-20b"
 
 
 def test_resolve_swap_target_bare_id_clears_sticky_provider():
     repl, _ = _make_repl(provider="openai", _provider="openai")
-    provider, model_id = repl._resolve_swap_target("llama-3.1-8b-instant")
+    provider, model_id = repl._resolve_swap_target("openai/gpt-oss-20b")
     assert provider is None
-    assert model_id == "llama-3.1-8b-instant"
+    assert model_id == "openai/gpt-oss-20b"
 
 
 def test_resolve_swap_target_unknown_prefix_clears_provider_id_unchanged():
@@ -585,11 +585,11 @@ def test_cmd_model_swap_updates_provider_and_does_not_stick():
         calls.append((repl.model_id, repl.provider))
 
     repl._rebuild = _fake_rebuild
-    repl._cmd_model("groq:llama-3.1-8b-instant")
+    repl._cmd_model("groq:openai/gpt-oss-20b")
 
     assert repl.provider == "groq"
-    assert repl.model_id == "llama-3.1-8b-instant"
-    assert calls == [("llama-3.1-8b-instant", "groq")]
+    assert repl.model_id == "openai/gpt-oss-20b"
+    assert calls == [("openai/gpt-oss-20b", "groq")]
     assert any("Switched model" in m for m in cli.messages)
 
 
@@ -601,7 +601,7 @@ def test_cmd_model_failed_swap_restores_old_model_and_provider():
 
     repl._rebuild = _fake_rebuild_fails
     repl._teach_model_error = lambda e: None
-    repl._cmd_model("grok:llama-3.1-8b-instant")
+    repl._cmd_model("grok:openai/gpt-oss-20b")
 
     # Never claims success for a swap that can't be resolved.
     assert repl.model_id == "gpt-5-nano"
@@ -617,14 +617,14 @@ def test_cmd_model_failed_swap_suppresses_library_error_log_by_default(caplog):
 
     def _fake_rebuild_fails():
         logging.getLogger("effgen.core.agent").error(
-            "Failed to load model 'grok:llama-3.1-8b-instant': boom"
+            "Failed to load model 'grok:openai/gpt-oss-20b': boom"
         )
         raise RuntimeError("Unknown provider or engine prefix 'grok'")
 
     repl._rebuild = _fake_rebuild_fails
     repl._teach_model_error = lambda e: None
     with caplog.at_level(logging.ERROR, logger="effgen"):
-        repl._cmd_model("grok:llama-3.1-8b-instant")
+        repl._cmd_model("grok:openai/gpt-oss-20b")
 
     # The REPL's own styled failure message is shown ...
     assert any("Could not switch" in m for m in cli.messages)
@@ -640,14 +640,14 @@ def test_cmd_model_failed_swap_verbose_still_shows_library_error_log(caplog):
 
     def _fake_rebuild_fails():
         logging.getLogger("effgen.core.agent").error(
-            "Failed to load model 'grok:llama-3.1-8b-instant': boom"
+            "Failed to load model 'grok:openai/gpt-oss-20b': boom"
         )
         raise RuntimeError("Unknown provider or engine prefix 'grok'")
 
     repl._rebuild = _fake_rebuild_fails
     repl._teach_model_error = lambda e: None
     with caplog.at_level(logging.ERROR, logger="effgen"):
-        repl._cmd_model("grok:llama-3.1-8b-instant")
+        repl._cmd_model("grok:openai/gpt-oss-20b")
 
     assert any("Could not switch" in m for m in cli.messages)
     assert any(r.levelno == logging.ERROR for r in caplog.records)
@@ -844,11 +844,11 @@ def test_banner_first_run_note_when_model_defaulted():
     repl._banner()
     joined = "\n".join(cli.messages)
     assert "first run downloads" in joined
-    assert "groq:llama-3.1-8b-instant" in joined
+    assert "groq:openai/gpt-oss-20b" in joined
 
 
 def test_banner_no_first_run_note_when_model_given():
-    repl, cli = _make_repl(model="groq:llama-3.1-8b-instant")
+    repl, cli = _make_repl(model="groq:openai/gpt-oss-20b")
     repl._banner()
     assert not any("first run downloads" in m for m in cli.messages)
 
@@ -860,7 +860,7 @@ def test_tool_turn_uses_the_agents_configured_mode():
     which answers from a synthesis step instead of the tool result. ``effgen
     run`` leaves the mode to the agent's own config; chat does the same.
     """
-    repl, _ = _make_repl(model="groq:llama-3.1-8b-instant")
+    repl, _ = _make_repl(model="groq:openai/gpt-oss-20b")
     seen: dict[str, Any] = {}
 
     def _run(task, **kwargs):

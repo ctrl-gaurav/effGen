@@ -119,7 +119,7 @@ def test_strips_tool_call_syntax(leaked, expected):
 @pytest.mark.parametrize(
     "leaked, expected",
     [
-        # Groq llama-3.1-8b-instant: a bare "tool_name {json}" prefix, no
+        # Groq openai/gpt-oss-20b: a bare "tool_name {json}" prefix, no
         # <function=.../<tool_call> wrapper, before the real prose answer.
         (
             (
@@ -138,7 +138,7 @@ def test_strips_tool_call_syntax(leaked, expected):
         # Empty argument object, still a tool-call echo.
         ("issue_refund{}\nRefund issued.", "Refund issued."),
         # A model that begins a tag and abandons it leaves a stray "<" on the
-        # same shape. Groq llama-3.1-8b-instant returned this as a whole answer.
+        # same shape. Groq openai/gpt-oss-20b returned this as a whole answer.
         (
             '<wikipedia {"operation": "search", "query": "Eiffel Tower"}',
             "",
