@@ -202,6 +202,11 @@ NUDGE_ALREADY_COMPUTED = (
     "using 'Final Answer:' now."
 )
 NUDGE_NO_TOOLS = "No tools available. Please provide your answer directly using 'Final Answer:'."
+# Written where a turn's action would go when the turn named none. It stands in
+# the transcript as the framework's own line, so the next turn reads a complete
+# step rather than a thought with nothing after it. Unlike the nudges above it
+# is not stripped from an answer: it is not a sentence a model would repeat.
+CONTINUE_REASONING_LINE = "Action: (continue reasoning)"
 # Closing sentence of the unknown-tool observation (built by
 # ``unknown_tool_observation`` below). Kept as its own constant so the text and
 # the pattern that strips it cannot drift apart.
