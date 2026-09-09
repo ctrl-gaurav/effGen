@@ -238,6 +238,11 @@ class AgentNativeStreamMixin:
 
         def _answer_shape_instruction(self) -> str: ...
 
+        def _resolve_prompt_protocol(
+            self, *, tools_travel_as_parameter: bool,
+            carried_by_this_loop: bool = True,
+        ) -> str: ...
+
         def _native_tool_prompt(
             self, task: str, scratchpad: str, conversation_history: str,
             previous_actions: list[tuple[str, str]],
@@ -399,6 +404,12 @@ class AgentNativeStreamMixin:
             held: list[str] = []
             prompt = self._native_tool_prompt(
                 task, scratchpad, conversation_history, guards.previous_actions
+            )
+            # This loop still carries its conversation as a string. A caller who
+            # asked for the message protocol gets the flat transcript here and a
+            # line saying so, rather than a run that quietly ignored the ask.
+            self._resolve_prompt_protocol(
+                tools_travel_as_parameter=True, carried_by_this_loop=False,
             )
             gen_kwargs: dict[str, Any] = {}
             # Once the guards stop offering tools the prompt stays the native

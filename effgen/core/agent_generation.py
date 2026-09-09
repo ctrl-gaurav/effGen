@@ -1192,7 +1192,14 @@ class AgentGenerationMixin:
                 iterations=1,
                 tool_calls=ToolCallList(),
                 tokens_used=tokens_used,
-                metadata={"reason": "final_answer", "multimodal_inputs": inputs is not None},
+                metadata={
+                    "reason": "final_answer",
+                    "multimodal_inputs": inputs is not None,
+                    # A run with no tools has no tool call to express, so it
+                    # goes out as one string whatever the caller configured.
+                    # Saying so here means every run carries the key.
+                    "prompt_protocol": "flat",
+                },
             )
 
         except Exception as e:
@@ -1205,5 +1212,9 @@ class AgentGenerationMixin:
                 iterations=1,
                 tool_calls=ToolCallList(),
                 tokens_used=0,
-                metadata={"reason": "generation_failed", "error": detail},
+                metadata={
+                    "reason": "generation_failed",
+                    "error": detail,
+                    "prompt_protocol": "flat",
+                },
             )

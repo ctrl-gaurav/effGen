@@ -73,6 +73,9 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
     NUDGE_SEARCH_AGAIN,
+    PROTOCOL_REFUSED,
+    PROTOCOL_SPLIT,
+    _count_tool_parts,
     _infer_provider_from_model,
     find_written_tool_call,
     model_can_require_tool_call,
@@ -114,6 +117,23 @@ class AgentReActMixin(
             self, task: str, scratchpad: str, conversation_history: str,
             previous_actions: list[tuple[str, str]],
         ) -> str: ...
+
+        def _resolve_prompt_protocol(
+            self, *, tools_travel_as_parameter: bool,
+            carried_by_this_loop: bool = True,
+        ) -> str: ...
+
+        def _native_tool_messages(
+            self, task: str, thread: Any, conversation_history: str,
+            previous_actions: list[tuple[str, str]], *,
+            split_reasoning: bool = False,
+        ) -> list[Any]: ...
+
+        def _message_protocol_probe(self) -> str | None: ...
+
+        def _record_message_protocol_probe(self, outcome: str) -> None: ...
+
+        def _generate(self, prompt: Any, **kwargs: Any) -> dict[str, Any]: ...
 
     def _run_single_agent(self,
                          task: str,
@@ -166,6 +186,20 @@ class AgentReActMixin(
         # receives a string — ``thread.to_text()`` renders it — so a caller
         # with a custom template sees exactly the text it saw before.
         thread = AgentThread()
+        # Which protocol the run's turns went out on. Stamped here so every
+        # response carries the key whatever ended the run, and raised to
+        # "messages" by the first turn the model took that way.
+        thread.metadata["prompt_protocol"] = "flat"
+        # Whether the run has already said, once, that it is sending messages.
+        resolved_to_messages = False
+        # This turn's protocol and the flat rendering it falls back to. Set at
+        # the prompt site every iteration; declared here so a loop that never
+        # reaches the native branch still has them.
+        turn_protocol = "flat"
+        flat_prompt = ""
+        # One turn's prompt: a string on the flat rendering, a message list on
+        # the other. Annotated, not assigned, so nothing about the run moves.
+        prompt: Any
         # An explicit ``max_iterations=None`` — what an optional flag forwards when
         # the user did not set it — must fall back to the configured cap rather
         # than reach the loop comparison as None.
@@ -303,7 +337,37 @@ class AgentReActMixin(
                 )
                 if isinstance(tool_defs, list):
                     gen_kwargs["tools"] = tool_defs
+                # The same turn, said as the conversation it was, when the
+                # caller asked for that and the model declares it carries the
+                # shape. The flat prompt above stays built either way: it is
+                # what a refusal falls back to, and building it keeps the two
+                # renderings assembled from the same state.
+                flat_prompt = prompt
+                turn_protocol = self._resolve_prompt_protocol(
+                    tools_travel_as_parameter="tools" in gen_kwargs,
+                )
+                if turn_protocol == "messages":
+                    if not resolved_to_messages:
+                        resolved_to_messages = True
+                        logger.info(
+                            "[protocol] the run sends the conversation as messages"
+                        )
+                    prompt = self._native_tool_messages(
+                        task, thread, conversation_history, guards.previous_actions,
+                        split_reasoning=(
+                            self._message_protocol_probe() == PROTOCOL_SPLIT
+                        ),
+                    )
+                    logger.info(
+                        "[protocol] messages turn: %d messages, %d tool calls, "
+                        "%d tool results",
+                        len(prompt),
+                        *_count_tool_parts(prompt),
+                    )
             elif self.config.system_prompt_template:
+                turn_protocol = self._resolve_prompt_protocol(
+                    tools_travel_as_parameter=False,
+                )
                 # User-provided custom template
                 tools_description = self._get_tools_description()
                 prompt = self.config.system_prompt_template.format(
@@ -313,6 +377,9 @@ class AgentReActMixin(
                     scratchpad=transcript
                 )
             else:
+                turn_protocol = self._resolve_prompt_protocol(
+                    tools_travel_as_parameter=False,
+                )
                 # ReAct mode: use enhanced ToolPromptGenerator
                 prompt = self._tool_prompt_generator.generate_react_prompt(
                     task=task,
@@ -375,6 +442,38 @@ class AgentReActMixin(
                 provider = _infer_provider_from_model(self.model, model_name)
                 with start_model_call(provider=provider, model=model_name) as _mspan:
                     response = self._generate(prompt, **gen_kwargs)
+                    # A model whose template will not take an assistant turn
+                    # carrying both text and a call says so by rejecting the
+                    # request. That is the probe: it costs nothing on a model
+                    # that takes the shape, and what it learns is remembered
+                    # for the rest of the process rather than re-learned every
+                    # run. Both the retry and the fall-back are real calls and
+                    # are counted as such.
+                    if turn_protocol == "messages" and _is_request_shape_refusal(
+                        response
+                    ):
+                        if self._message_protocol_probe() is None:
+                            logger.info(
+                                "[protocol] the model refused an assistant turn "
+                                "carrying both text and a tool call; retrying "
+                                "with the reasoning as its own turn"
+                            )
+                            self._record_message_protocol_probe(PROTOCOL_SPLIT)
+                            response = self._generate(
+                                self._native_tool_messages(
+                                    task, thread, conversation_history,
+                                    guards.previous_actions, split_reasoning=True,
+                                ),
+                                **gen_kwargs,
+                            )
+                        if _is_request_shape_refusal(response):
+                            logger.warning(
+                                "[protocol] the model refused the message "
+                                "protocol; the run sends the flat transcript"
+                            )
+                            self._record_message_protocol_probe(PROTOCOL_REFUSED)
+                            turn_protocol = "flat"
+                            response = self._generate(flat_prompt, **gen_kwargs)
                     # Annotate span with token counts from response
                     _meta = response.get("metadata") or {}
                     _in_tok = _meta.get("prompt_tokens", 0) or 0
@@ -389,6 +488,11 @@ class AgentReActMixin(
                         _stamp_call_cost(_mspan, _meta)
                     except Exception:
                         logger.debug("Failed to set model span attributes", exc_info=True)
+                # The protocol this run's turns actually went out on. A turn
+                # that fell back does not un-send the ones that did not, so the
+                # first turn the model took as messages settles it.
+                if turn_protocol == "messages":
+                    thread.metadata["prompt_protocol"] = "messages"
                 iter_tokens = response.get("tokens_used", 0)
                 tokens_used += iter_tokens
 
@@ -404,6 +508,7 @@ class AgentReActMixin(
                     debug_trace=debug_trace,
                 )
                 failure.metadata["thread"] = thread
+                failure.metadata["prompt_protocol"] = _protocol_of(thread)
                 return failure
 
             # Debug: Log the raw response
@@ -425,6 +530,10 @@ class AgentReActMixin(
             # return multiple tool_calls in a single response).
             if len(native_tool_calls) > 1 and self.tools:
                 batch_observations: list[str] = []
+                # What the model said while asking for the batch. It explains
+                # the whole batch, so it goes on the first call of it — the
+                # turn the model was speaking on.
+                _batch_reasoning = str(response.get("text") or "")
                 for _tc in native_tool_calls:
                     _fn = _tc.get("function", _tc)
                     _tname = _fn.get("name", "")
@@ -460,8 +569,10 @@ class AgentReActMixin(
                                 arguments=dict(_targs) if isinstance(_targs, dict) else {},
                                 raw=json.dumps(_targs),
                                 call_id=_call_id,
+                                reasoning=_batch_reasoning,
                             )
                         )
+                        _batch_reasoning = ""
                         thread.append(ObservationStep(text=str(_obs), call_id=_call_id))
                     else:
                         batch_observations.append(f"[{_tname}] → Tool not found")
@@ -475,7 +586,9 @@ class AgentReActMixin(
                 cur_observation = "\n".join(batch_observations)
                 logger.info(f"[Batch native tool calls] {len(native_tool_calls)} calls executed (batch run #{guards.batch_tool_runs})")
             elif native_tool_calls:
-                strategy_result = self._parse_native_tool_calls(native_tool_calls)
+                strategy_result = self._parse_native_tool_calls(
+                    native_tool_calls, response.get("text") or "",
+                )
                 # Convert to legacy dict format for compatibility with rest of loop
                 parsed = self._tool_call_result_to_dict(strategy_result)
             else:
@@ -546,6 +659,7 @@ class AgentReActMixin(
                     "reason": "final_answer",
                     "tool_calling_strategy": self._tool_calling_strategy.name,
                     "thread": thread,
+                    "prompt_protocol": _protocol_of(thread),
                 }
                 meta.update(extra_meta)
                 if debug_trace is not None:
@@ -701,6 +815,12 @@ class AgentReActMixin(
             if parsed.get("action") and parsed.get("action_input"):
                 action = str(parsed["action"])
                 action_input = parsed["action_input"]
+                # The provider's own id for this call and the words the model
+                # said beside it. Both are empty on the ReAct-text path, where
+                # the thought is already its own step and no provider minted an
+                # id, so the transcript is unchanged there.
+                call_id = parsed.get("call_id") or None
+                reasoning = str(parsed.get("reasoning") or "")
 
                 # Repeat detection: the same call again, or the same tool
                 # enough times with drifting inputs that it reads as a loop.
@@ -726,8 +846,11 @@ class AgentReActMixin(
                         "replaying the recorded result instead of ending the run",
                         action,
                     )
-                    thread.append(ActionStep(tool=action, raw=str(action_input)))
-                    thread.append(ObservationStep(text=str(replay)))
+                    thread.append(ActionStep(
+                        tool=action, raw=str(action_input),
+                        call_id=call_id, reasoning=reasoning,
+                    ))
+                    thread.append(ObservationStep(text=str(replay), call_id=call_id))
                     cur_observation = replay
                     nudge = guards.post_tool_nudge(
                         iterations, action_call_count, replay
@@ -761,10 +884,14 @@ class AgentReActMixin(
                             action,
                         )
                         guards.force_text_answer = True
-                        thread.append(ActionStep(tool=action, raw=str(action_input)))
+                        thread.append(ActionStep(
+                            tool=action, raw=str(action_input),
+                            call_id=call_id, reasoning=reasoning,
+                        ))
                         thread.append(
                             ObservationStep(
-                                text=NUDGE_HAVE_RESULTS, declined="loop_detected"
+                                text=NUDGE_HAVE_RESULTS, declined="loop_detected",
+                                call_id=call_id,
                             )
                         )
                         continue
@@ -802,10 +929,14 @@ class AgentReActMixin(
                     # just told is already computed). Stop offering tools for
                     # the rest of this run so the model must respond in prose.
                     guards.force_text_answer = True
-                    thread.append(ActionStep(tool=action, raw=str(action_input)))
+                    thread.append(ActionStep(
+                        tool=action, raw=str(action_input),
+                        call_id=call_id, reasoning=reasoning,
+                    ))
                     thread.append(
                         ObservationStep(
-                            text=NUDGE_ALREADY_COMPUTED, declined="already_computed"
+                            text=NUDGE_ALREADY_COMPUTED, declined="already_computed",
+                            call_id=call_id,
                         )
                     )
                     continue
@@ -824,8 +955,11 @@ class AgentReActMixin(
                         if self.tools
                         else NUDGE_NO_TOOLS
                     )
-                    thread.append(ActionStep(tool=action, raw=str(action_input)))
-                    thread.append(ObservationStep(text=str(observation)))
+                    thread.append(ActionStep(
+                        tool=action, raw=str(action_input),
+                        call_id=call_id, reasoning=reasoning,
+                    ))
+                    thread.append(ObservationStep(text=str(observation), call_id=call_id))
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
@@ -857,8 +991,11 @@ class AgentReActMixin(
                     _obs_log.tool_event("executed", tool=action, latency_ms=round(tool_elapsed * 1000, 1))
 
                     # Record the call and what it returned
-                    thread.append(ActionStep(tool=action, raw=str(action_input)))
-                    thread.append(ObservationStep(text=str(tool_result)))
+                    thread.append(ActionStep(
+                        tool=action, raw=str(action_input),
+                        call_id=call_id, reasoning=reasoning,
+                    ))
+                    thread.append(ObservationStep(text=str(tool_result), call_id=call_id))
 
                     # Log the observation for debugging
                     logger.info(f"Tool result added to the thread: {tool_result[:100]}...")
@@ -1031,6 +1168,7 @@ class AgentReActMixin(
             "error": detail,
             "tool_calling_strategy": self._tool_calling_strategy.name,
             "thread": thread,
+            "prompt_protocol": _protocol_of(thread),
         }
         cap_partial = None
         if partial_answer:
@@ -1162,6 +1300,7 @@ class AgentReActMixin(
             "error": detail,
             "tool_calling_strategy": detail["tool_calling_strategy"],
             "thread": run,
+            "prompt_protocol": _protocol_of(run),
         }
         partial = None
         if calls:
@@ -1267,6 +1406,7 @@ class AgentReActMixin(
             "partial_output": text,
             "tool_calling_strategy": self._tool_calling_strategy.name,
             "thread": thread,
+            "prompt_protocol": _protocol_of(thread),
         }
         logger.info(
             "outcome stopped: stop_reason=%s tool=%s category=%s observations=%d",
@@ -1601,3 +1741,35 @@ class AgentReActMixin(
             )
         finally:
             self._current_depth -= 1
+
+
+def _protocol_of(thread: AgentThread) -> str:
+    """Which protocol a run's turns went out on.
+
+    Args:
+        thread: The run's conversation.
+
+    Returns:
+        ``"messages"`` when at least one turn reached the model as a message
+        list, ``"flat"`` otherwise.
+    """
+    return str(thread.metadata.get("prompt_protocol") or "flat")
+
+
+def _is_request_shape_refusal(response: dict[str, Any]) -> bool:
+    """Whether a failed turn failed because the provider refused the request.
+
+    An invalid-request failure is the one a differently shaped request could
+    fix. Auth, a missing model, a rate limit and a transport failure are not,
+    and retrying them in another shape only spends the budget again.
+
+    Args:
+        response: What the generation layer returned for the turn.
+
+    Returns:
+        True when the failure was the request itself being refused.
+    """
+    if response.get("finish_reason") != "error":
+        return False
+    detail = (response.get("metadata") or {}).get("error_detail") or {}
+    return str(detail.get("category", "")) == "invalid_request"

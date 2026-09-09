@@ -30,6 +30,12 @@ class AgentMode(Enum):
     AUTO = "auto"  # Automatically decide based on router
 
 
+#: The protocols :attr:`AgentConfig.prompt_protocol` accepts. ``"flat"`` is the
+#: string every release before this one sent; ``"messages"`` is the provider
+#: message list; ``"auto"`` picks per model from what the adapter declares.
+PROMPT_PROTOCOLS: frozenset[str] = frozenset({"flat", "messages", "auto"})
+
+
 @dataclass
 class AgentConfig:
     """
@@ -139,6 +145,21 @@ class AgentConfig:
             form of the answer to whoever knows the question: this schema first,
             then the task and ``system_prompt``. Nothing effGen appends asks for
             a shape of its own, so a task that asks for a letter gets a letter.
+        prompt_protocol: How a run's conversation reaches the model.
+            ``"flat"`` (the default) sends one string carrying the whole
+            transcript. ``"messages"`` sends the conversation as the
+            conversation it was — a system turn, the task, the model's own
+            reasoning beside the tool call it made, and each tool result
+            answering the call it belongs to. ``"auto"`` sends messages
+            wherever the model declares it can carry that shape
+            (:meth:`~effgen.models.base.BaseModel.supports_message_protocol`)
+            and falls back to the flat transcript everywhere else.
+
+            ``"messages"`` never fails a run that a ``"flat"`` run would have
+            answered: a model, a loop or a turn that cannot carry the shape
+            falls back to the flat transcript and says so in the log. The
+            protocol a run actually used comes back on
+            ``response.metadata["prompt_protocol"]``.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str
@@ -245,6 +266,12 @@ class AgentConfig:
     # A ``ToolUsePolicy`` member or its name; independent of ``tool_contract``,
     # which chooses the words rather than the policy.
     tool_use: ToolUsePolicy | str | None = None
+    # How the run's conversation reaches the model: "flat" (one string, the
+    # transcript inside it), "messages" (a system turn, the task, the model's
+    # reasoning beside its tool call, each result answering a call id), or
+    # "auto" (messages wherever the model declares it carries the shape). The
+    # default keeps every existing run on the string it already sent.
+    prompt_protocol: str = "flat"
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -253,6 +280,15 @@ class AgentConfig:
         # run, so a typo is a construction error naming the three values and not
         # a run that quietly went out on a policy nobody chose.
         coerce_tool_use_policy(self.tool_use)
+        # Same reason: a protocol nobody named is a construction error naming
+        # the three values, not a run that quietly went out on the wrong one.
+        if self.prompt_protocol not in PROMPT_PROTOCOLS:
+            raise ValueError(
+                f"{self.prompt_protocol!r} is not a prompt protocol. Pass "
+                f"'flat' to send the transcript as one string, 'messages' to "
+                f"send the conversation as messages, or 'auto' to send "
+                f"messages wherever the model declares it carries them."
+            )
 
 
 # Model-loading options belong to the engine (load_model), not the agent. Passing

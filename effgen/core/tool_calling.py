@@ -419,6 +419,14 @@ class ToolCallResult:
         thought: Extracted reasoning / chain-of-thought text.
         final_answer: If the model produced a final answer instead of a tool call.
         is_tool_call: True when a valid tool call was extracted.
+        call_id: The id the provider gave this call, when it gave one. A result
+            has to answer the call it belongs to, and only the provider's own id
+            says which that is.
+        reasoning: The model's own words that arrived beside a provider-native
+            call. Distinct from ``thought``, which is the reasoning a model
+            wrote as text for the framework to read back: this is text the
+            model addressed to nobody but itself, and it belongs on the same
+            turn as the call rather than on a turn of its own.
     """
     tool_name: str | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -426,6 +434,8 @@ class ToolCallResult:
     thought: str | None = None
     final_answer: str | None = None
     is_tool_call: bool = False
+    call_id: str | None = None
+    reasoning: str = ""
 
 
 @dataclass

@@ -44,6 +44,23 @@ IMAGE_GROUNDING_GUIDANCE = (
 # configuration, not on every agent built with the same preset.
 _tool_output_injection_gap_warned: set[tuple[str, ...]] = set()
 
+# Models already told, once, that they do not carry the message protocol. The
+# notice is about the model, so a run repeating it every turn says nothing new.
+_message_protocol_unavailable_warned: set[str] = set()
+
+# What the message protocol turned out to be worth on a model this process has
+# already tried it on: absent means "not tried yet", ``"split"`` means the
+# reasoning has to travel as its own turn, ``"refused"`` means the model would
+# not take the shape and the run sends the flat transcript. Learned from a real
+# request that failed, never from a probe billed on purpose.
+_MESSAGE_PROTOCOL_PROBE: dict[str, str] = {}
+
+#: What the probe writes when the model would not take the shape at all.
+PROTOCOL_REFUSED = "refused"
+#: What the probe writes when the model takes the shape only with the
+#: reasoning as its own assistant turn, ahead of the turn carrying the call.
+PROTOCOL_SPLIT = "split"
+
 
 _PROVIDER_BY_CLASS_PREFIX: dict[str, str] = {
     "OpenAI": "openai",
@@ -748,6 +765,7 @@ class AgentRuntimeMixin:
         # statements do not execute.
         config: Any
         tools: dict[str, Any]
+        model: Any
 
         def _citation_prompt_state(self) -> tuple[bool, int]: ...
         def _compose_closing(self, answer_shape: str, closing: str) -> str: ...
@@ -1212,6 +1230,199 @@ class AgentRuntimeMixin:
                 prompt = f"{prompt}\n\n{contract}"
         return prompt
 
+    # ------------------------------------------------------------------
+    # Which protocol a turn goes out on, and how it is rendered
+    # ------------------------------------------------------------------
+
+    def _model_protocol_key(self) -> str:
+        """How this run names the model the protocol cache is about.
+
+        The adapter's own model name and endpoint, which is configuration the
+        caller supplied — not a name the framework matched against a list.
+        """
+        model = getattr(self, "model", None)
+        return "|".join(
+            str(getattr(model, attr, "") or "") for attr in ("model_name", "base_url")
+        )
+
+    def _message_protocol_probe(self) -> str | None:
+        """What a real request already taught this process about this model.
+
+        Returns:
+            :data:`PROTOCOL_SPLIT`, :data:`PROTOCOL_REFUSED`, or ``None`` when
+            the message protocol has not failed on this model yet.
+        """
+        return _MESSAGE_PROTOCOL_PROBE.get(self._model_protocol_key())
+
+    def _record_message_protocol_probe(self, outcome: str) -> None:
+        """Remember what this model did with the message protocol.
+
+        Args:
+            outcome: :data:`PROTOCOL_SPLIT` or :data:`PROTOCOL_REFUSED`.
+        """
+        _MESSAGE_PROTOCOL_PROBE[self._model_protocol_key()] = outcome
+
+    def _resolve_prompt_protocol(
+        self,
+        *,
+        tools_travel_as_parameter: bool,
+        carried_by_this_loop: bool = True,
+    ) -> str:
+        """Whether this turn sends messages or the flat transcript.
+
+        Read in order, and every step that answers ``"flat"`` says why:
+
+        1. the caller asked for ``"flat"``;
+        2. this turn's tool definitions do not travel as a request parameter —
+           the ReAct-text branch, a caller's own template, a turn whose tools
+           the guards suppressed — so there is no protocol call to express;
+        3. this loop does not send messages yet;
+        4. the model does not declare
+           :meth:`~effgen.models.base.BaseModel.supports_message_protocol`;
+        5. a real request on this model already came back refusing the shape.
+
+        Nothing here reads a model id, a provider name or anything about the
+        task: steps 4 and 5 are a declared capability and a measured one.
+
+        Args:
+            tools_travel_as_parameter: Whether this turn's tool definitions go
+                to the provider as a request parameter rather than as prose.
+            carried_by_this_loop: Whether the loop asking can send messages at
+                all. The streamed loops cannot yet and pass ``False``.
+
+        Returns:
+            ``"flat"`` or ``"messages"``.
+        """
+        declared = str(
+            getattr(getattr(self, "config", None), "prompt_protocol", "flat") or "flat"
+        )
+        if declared == "flat":
+            return "flat"
+        # An explicit "messages" asked for something it may not get, so it is
+        # told at WARNING; "auto" asked the framework to decide, so INFO.
+        say = logger.warning if declared == "messages" else logger.info
+
+        if not tools_travel_as_parameter:
+            say(
+                "[protocol] this turn's tool definitions do not travel as a "
+                "request parameter; the turn sends the flat transcript"
+            )
+            return "flat"
+        if not carried_by_this_loop:
+            say(
+                "[protocol] this loop does not send the conversation as "
+                "messages; the run sends the flat transcript"
+            )
+            return "flat"
+
+        model = getattr(self, "model", None)
+        supports = getattr(model, "supports_message_protocol", None)
+        if not (callable(supports) and supports()):
+            name = str(getattr(model, "model_name", "") or "unknown")
+            if name not in _message_protocol_unavailable_warned:
+                _message_protocol_unavailable_warned.add(name)
+                say(
+                    "[protocol] messages is not available on this model; the "
+                    "run sends the flat transcript"
+                )
+            return "flat"
+        if _MESSAGE_PROTOCOL_PROBE.get(self._model_protocol_key()) == PROTOCOL_REFUSED:
+            say(
+                "[protocol] the model refused the message protocol; the run "
+                "sends the flat transcript"
+            )
+            return "flat"
+        return "messages"
+
+    def _native_tool_messages(
+        self, task: str, thread: Any, conversation_history: str,
+        previous_actions: list[tuple[str, str]], *, split_reasoning: bool = False,
+    ) -> list[Message]:
+        """One turn's conversation for the native tool path, as messages.
+
+        The same sentences :meth:`_native_tool_prompt` assembles, in the same
+        order, split across the roles they belong to: the persona and the tool
+        contract as one system turn, any earlier conversation and the task as
+        user turns, the run so far as the assistant/tool exchange it actually
+        was, and the closing instruction as its own user turn.
+
+        Two differences from the flat rendering are deliberate. The tool
+        contract is stated every turn rather than only on the first, which is
+        what makes the system turn identical turn to turn and therefore a
+        prefix a provider can cache. And a call the run never answered is given
+        a tool message saying so, because a conversation holding a call with no
+        result is rejected by the request schema.
+
+        Args:
+            task: The question this run is answering.
+            thread: The run's :class:`~effgen.core.thread.AgentThread`.
+            conversation_history: Earlier turns of a session, or ``""``.
+            previous_actions: What the run has called so far, for the
+                continuation instruction.
+            split_reasoning: Send the model's reasoning as its own assistant
+                turn ahead of the turn carrying the call, for a template that
+                refuses to take both on one message.
+
+        Returns:
+            The messages, in order.
+        """
+        from .messages import Message, Role, TextPart
+        from .thread import ObservationStep
+
+        transcript = thread.to_text()
+        cite_sources, numbered_passages = self._citation_prompt_state()
+        closing = self._compose_closing(
+            self._answer_shape_instruction(),
+            self._continuation_instruction(
+                previous_actions,
+                cite_sources=cite_sources,
+                numbered_passages=numbered_passages,
+            ) if transcript else "",
+        )
+
+        def _user(text: str) -> Message:
+            return Message(role=Role.USER, content=[TextPart(text=text)])
+
+        frame: list[str] = []
+        persona = self._persona_prefix().strip()
+        if persona:
+            frame.append(persona)
+        if self.tools:
+            contract = self._tool_contract()
+            if contract:
+                frame.append(contract)
+
+        messages: list[Message] = []
+        if frame:
+            messages.append(
+                Message(role=Role.SYSTEM, content=[TextPart(text="\n\n".join(frame))])
+            )
+        if conversation_history:
+            messages.append(_user(conversation_history))
+        messages.append(_user(task))
+
+        body = thread.to_messages()
+        if split_reasoning:
+            body = _split_reasoning_from_calls(body)
+        messages.extend(body)
+
+        # A call with no result is a conversation the provider will not accept.
+        # Say what happened rather than dropping the call: a turn the run could
+        # not answer is a fact about the run.
+        for call_id in thread.unanswered_call_ids():
+            logger.info(
+                "[protocol] a call had no result; sending it as an unrun call"
+            )
+            messages.extend(
+                ObservationStep(
+                    text="This call did not run.", call_id=call_id, is_error=True,
+                ).to_messages()
+            )
+
+        if closing:
+            messages.append(_user(closing))
+        return messages
+
     def _direct_prompt(self, task: str, conversation_history: str = "") -> str:
         """Build the user prompt for the no-tool direct/streaming paths.
 
@@ -1264,3 +1475,56 @@ class AgentRuntimeMixin:
         except Exception:
             logger.debug("Failed to extract task hint from prompt", exc_info=True)
         return str(prompt)[:500]
+
+
+def _split_reasoning_from_calls(messages: list[Message]) -> list[Message]:
+    """Move an assistant turn's reasoning onto a message of its own.
+
+    Some chat templates refuse an assistant turn that carries text *and* a tool
+    call. The conversation is the same one either way: the reasoning goes out
+    immediately before the call it explains, on its own assistant message, and
+    the message carrying the call carries nothing else.
+
+    Args:
+        messages: The rendering to split.
+
+    Returns:
+        A new list; the input is not modified.
+    """
+    from .messages import Message, TextPart, ToolCallPart
+
+    split: list[Message] = []
+    for message in messages:
+        calls = [part for part in message.content if isinstance(part, ToolCallPart)]
+        texts = [part for part in message.content if isinstance(part, TextPart)]
+        if not calls or not any(part.text for part in texts):
+            split.append(message)
+            continue
+        split.append(
+            Message(role=message.role, content=list(texts), metadata=dict(message.metadata))
+        )
+        split.append(
+            Message(role=message.role, content=list(calls), metadata=dict(message.metadata))
+        )
+    return split
+
+
+def _count_tool_parts(messages: list[Message]) -> tuple[int, int]:
+    """How many calls and how many results a rendering carries.
+
+    Args:
+        messages: The rendering to count.
+
+    Returns:
+        ``(tool calls, tool results)``.
+    """
+    from .messages import ToolCallPart, ToolResultPart
+
+    calls = results = 0
+    for message in messages:
+        for part in message.content:
+            if isinstance(part, ToolCallPart):
+                calls += 1
+            elif isinstance(part, ToolResultPart):
+                results += 1
+    return calls, results

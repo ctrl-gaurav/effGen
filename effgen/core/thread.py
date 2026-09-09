@@ -844,6 +844,34 @@ class AgentThread:
             if isinstance(step, ActionStep) and call_ids[index] not in answered
         ]
 
+    def unanswered_call_ids(self) -> list[str]:
+        """The call ids no observation in this thread answers.
+
+        The ids themselves rather than the steps, because a call the turn
+        carried no id for is answered by one minted from its position, which a
+        step on its own cannot say.
+
+        Returns:
+            The unanswered ids, in order, each appearing once.
+        """
+        ids = self._call_ids()
+        answered = {
+            ids[index]
+            for index, step in enumerate(self.steps)
+            if isinstance(step, ObservationStep)
+        }
+        seen: set[str] = set()
+        unanswered: list[str] = []
+        for index, step in enumerate(self.steps):
+            if not isinstance(step, ActionStep):
+                continue
+            call_id = ids[index]
+            if call_id in answered or call_id in seen:
+                continue
+            seen.add(call_id)
+            unanswered.append(call_id)
+        return unanswered
+
     def partial_answer(self) -> str | None:
         """What the run had reached when it stopped without answering.
 

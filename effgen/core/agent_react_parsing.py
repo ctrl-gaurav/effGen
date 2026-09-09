@@ -535,7 +535,9 @@ class AgentReActParsingMixin:
         return parsed
 
     @staticmethod
-    def _parse_native_tool_calls(native_tool_calls: list[dict[str, Any]]) -> ToolCallResult:
+    def _parse_native_tool_calls(
+        native_tool_calls: list[dict[str, Any]], text: str = "",
+    ) -> ToolCallResult:
         """Convert an adapter's reported tool_calls into a ToolCallResult.
 
         Adapters report::
@@ -546,8 +548,20 @@ class AgentReActParsingMixin:
         Flat keys and an already-parsed ``arguments`` are still accepted, so a
         list that reached here from somewhere other than an adapter — a hosted
         model's own output passed through verbatim, say — is read the same way.
+
+        A turn that made a native call often says why in the same response.
+        That text is the model's own account of the call and it is kept, along
+        with the id the provider gave the call, so a result can answer the call
+        it belongs to instead of one the framework numbered itself.
+
+        Args:
+            native_tool_calls: The calls as the adapter reported them.
+            text: The response text that arrived with them, if any.
+
+        Returns:
+            The call, its arguments, its id and the reasoning beside it.
         """
-        result = ToolCallResult(raw_text="")
+        result = ToolCallResult(raw_text=text or "", reasoning=text or "")
         if not native_tool_calls:
             return result
         tc = native_tool_calls[0]
@@ -565,6 +579,9 @@ class AgentReActParsingMixin:
             result.tool_name = tool_name
             result.arguments = arguments
             result.is_tool_call = True
+            call_id = tc.get("id")
+            if isinstance(call_id, str) and call_id:
+                result.call_id = call_id
         return result
 
     @staticmethod
@@ -579,6 +596,15 @@ class AgentReActParsingMixin:
             "action": None,
             "action_input": None,
             "final_answer": result.final_answer,
+            # The provider's own id for this call, or None when it gave none.
+            # An observation answers the call it carries, so the id has to
+            # reach the loop rather than stopping at the parser.
+            "call_id": result.call_id,
+            # What the model said beside its call. It goes on the call's own
+            # step, not on a thought of its own: the flat transcript is
+            # unchanged by it, and the message rendering sends it as the
+            # assistant's words on the turn that made the call.
+            "reasoning": result.reasoning,
         }
         if result.is_tool_call and result.tool_name:
             parsed["action"] = result.tool_name

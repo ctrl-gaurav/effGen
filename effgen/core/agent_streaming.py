@@ -85,6 +85,11 @@ class AgentStreamingMixin:
 
         def _is_context_retrieval_tool(self, action: str) -> bool: ...
 
+        def _resolve_prompt_protocol(
+            self, *, tools_travel_as_parameter: bool,
+            carried_by_this_loop: bool = True,
+        ) -> str: ...
+
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
     ) -> None:
@@ -432,7 +437,12 @@ class AgentStreamingMixin:
         while iterations < max_iterations:
             iterations += 1
 
-            # Build prompt
+            # Build prompt. This loop carries its conversation as a string
+            # and the tools as prose, so a caller who asked for the message
+            # protocol gets the flat transcript and a line saying why.
+            self._resolve_prompt_protocol(
+                tools_travel_as_parameter=False, carried_by_this_loop=False,
+            )
             tools_desc = self._get_tools_description()
             if self.config.system_prompt_template:
                 prompt = self.config.system_prompt_template.format(
