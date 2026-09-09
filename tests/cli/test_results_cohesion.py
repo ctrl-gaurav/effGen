@@ -166,7 +166,9 @@ def test_public_surface_anchor_unchanged():
 
     # 1.0.0 added 17 names: the OpenAI-compatible adapter and its
     # BackendUnreachableError, the middleware surface, the tool-call records,
-    # the compaction strategies, and the workflow checkpoint stores. Growing
-    # this number is a deliberate act — update it in the same commit that
-    # widens the surface, and say why.
-    assert len(effgen.__all__) == 225
+    # the compaction strategies, and the workflow checkpoint stores. 1.1.0
+    # added 9 more: AgentThread, the Step protocol, and the seven kinds of
+    # step a run's conversation is made of. Growing this number is a
+    # deliberate act — update it in the same commit that widens the surface,
+    # and say why.
+    assert len(effgen.__all__) == 234

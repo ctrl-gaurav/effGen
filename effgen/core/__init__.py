@@ -25,6 +25,19 @@ from .messages import (
 )
 from .multimodal import audio_from, image_from, video_from
 
+# A run's conversation as typed steps
+from .thread import (
+    ActionStep,
+    AgentThread,
+    AnswerStep,
+    NudgeStep,
+    ObservationStep,
+    Step,
+    SystemStep,
+    TaskStep,
+    ThoughtStep,
+)
+
 # Agent
 from .agent import Agent, AgentConfig, AgentMode, AgentResponse
 from .agent_response import PartialResult
@@ -126,6 +139,17 @@ from .workflow_checkpoint import (
 )
 
 __all__ = [
+    # A run's conversation as typed steps
+    "AgentThread",
+    "Step",
+    "SystemStep",
+    "TaskStep",
+    "ThoughtStep",
+    "ActionStep",
+    "ObservationStep",
+    "NudgeStep",
+    "AnswerStep",
+
     # Multimodal message schema
     "Role",
     "TextPart",
