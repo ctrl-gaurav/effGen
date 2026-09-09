@@ -78,7 +78,9 @@ violation of every pattern must be caught (see the ``test_detector_catches_*``
 tests).
 
 Scanning is by suffix (see ``_SOURCE_SUFFIXES``) and covers every file type
-effGen authors prose or markup in — including the bundled web surfaces
+effGen authors prose or markup in — JavaScript in all three module forms
+(``.js``/``.mjs``/``.cjs``, the last two being how the site's build and lint
+configuration is written), the bundled web surfaces
 (``.html``/``.css``), the brand assets (``.svg``), and the scaffolding templates
 the ``create-plugin`` command emits (``.tmpl``/``.tpl``), whose comments and
 copy ship to users like any other source. A file is matched on *any* of its
@@ -120,7 +122,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Files scanned by suffix (source/docs/config) plus these exact names.
 _SOURCE_SUFFIXES = {
     ".py", ".pyi", ".md", ".rst", ".toml", ".cfg", ".ini",
-    ".yaml", ".yml", ".sh", ".bash", ".ts", ".js", ".tsx", ".jsx",
+    ".yaml", ".yml", ".sh", ".bash", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx",
     # Authored markup that ships to users: the self-contained web surfaces,
     # the brand assets, and the plugin scaffolding templates.
     ".html", ".css", ".svg", ".tmpl", ".tpl",
@@ -297,6 +299,7 @@ ALLOWLIST: list[tuple[str, str]] = [
     ("MANIFEST.in", "build_plan"),
     ("deploy/docker/.dockerignore", "build_plan"),
     (".gitleaks.toml", "build_plan"),
+    ("website/eslint.config.mjs", "build_plan"),
     # The sibling jargon-check test carries the forbidden words as test data.
     ("tests/unit/test_onboarding.py", "for bad in"),
     # CI meta-files that themselves grep for placeholder markers.
@@ -686,6 +689,18 @@ def test_scan_covers_authored_markup_suffixes():
     # Recorded model output and third-party quotations stay out of scope.
     for suffix in (".txt", ".jsonl", ".json", ".sql"):
         assert suffix not in _SOURCE_SUFFIXES, suffix
+
+
+def test_scan_covers_javascript_module_suffixes():
+    """All three JavaScript module forms are read, not only ``.js``.
+
+    A site's build, lint and codegen configuration is conventionally written as
+    ``.mjs``/``.cjs``, and those files carry ordinary authored comments — so a
+    scan that reads only ``.js`` leaves authored JavaScript unread.
+    """
+    for suffix in (".js", ".mjs", ".cjs"):
+        assert suffix in _SOURCE_SUFFIXES, suffix
+    assert "website/eslint.config.mjs" in set(_tracked_source_files())
 
 
 def test_scan_covers_files_whose_type_is_not_the_last_suffix():
