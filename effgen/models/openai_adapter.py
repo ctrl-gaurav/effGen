@@ -16,6 +16,7 @@ Supports:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterator
@@ -358,6 +359,9 @@ class OpenAIAdapter(FunctionCallingModel):
             role = "tool"
 
         content_parts: list[dict[str, Any]] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_result_id: str | None = None
+        tool_result_text: str = ""
         for part in message.content:
             if isinstance(part, TextPart):
                 content_parts.append({"type": "text", "text": part.text})
@@ -388,15 +392,48 @@ class OpenAIAdapter(FunctionCallingModel):
                         "image_url": {"url": f"data:{part.mime};base64,{b64}"},
                     })
             elif isinstance(part, ToolCallPart):
-                pass  # tool calls go in a different field
+                # An assistant turn states its call in `tool_calls`, beside
+                # whatever it said in its own words. Dropping it here left the
+                # request carrying the reasoning and no call at all.
+                tool_calls.append({
+                    "id": part.tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": part.name,
+                        "arguments": json.dumps(part.arguments),
+                    },
+                })
             elif isinstance(part, ToolResultPart):
-                pass
+                # A result answers one call, by id. A `tool` message without
+                # the id is rejected by the request schema, so a conversation
+                # assembled without it never reached the provider at all.
+                tool_result_id = part.tool_call_id
+                tool_result_text = (
+                    part.result if isinstance(part.result, str)
+                    else json.dumps(part.result, default=str)
+                )
+
+        if tool_result_id is not None:
+            return {
+                "role": "tool",
+                "tool_call_id": tool_result_id,
+                "content": tool_result_text,
+            }
 
         # If content has a single text part, simplify to string
         if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-            return {"role": role, "content": content_parts[0]["text"]}
-
-        return {"role": role, "content": content_parts}
+            message_dict: dict[str, Any] = {
+                "role": role, "content": content_parts[0]["text"]
+            }
+        elif content_parts:
+            message_dict = {"role": role, "content": content_parts}
+        else:
+            # An assistant turn that only made a call has no content of its
+            # own. The API wants the key present and null, not absent.
+            message_dict = {"role": role, "content": None}
+        if tool_calls:
+            message_dict["tool_calls"] = tool_calls
+        return message_dict
 
     def _transcribe_audio_part(self, part: Any) -> str:
         """Transcribe a single AudioPart via the Whisper API.
@@ -1514,6 +1551,18 @@ class OpenAIAdapter(FunctionCallingModel):
     def supports_tool_calling(self) -> bool:
         """True when the catalog marks this model as supporting native tools."""
         return OPENAI_MODELS.get(self.model_name, {}).get("supports_native_tools", True)
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        the request's ``tool_calls`` entry, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a ``tool``
+        message answering that call id. A model with no native tool calling has
+        no call to carry, so the declaration follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: the Chat Completions API honours ``tool_choice``.

@@ -832,6 +832,27 @@ class BaseModel(ABC):
         """
         return "api" if self.supports_tool_calling() else "none"
 
+    def supports_message_protocol(self) -> bool:
+        """Whether this adapter carries a tool call and a tool result through.
+
+        A conversation held as messages puts the model's own reasoning and the
+        call it made on one assistant turn, and answers that call with a tool
+        turn carrying the call id. An adapter that drops either part sends a
+        request the provider rejects, or — worse — one it accepts with the
+        tool exchange silently missing.
+
+        This is a separate question from :meth:`tool_call_support`. An adapter
+        can take tool *definitions* as a request parameter and still drop the
+        two parts when converting a conversation, so the declaration is about
+        the conversion, and the default is ``False``: an adapter carries the
+        shape only once it says it does.
+
+        Returns:
+            bool: True if a conversation's tool call and tool result reach the
+            provider intact.
+        """
+        return False
+
     def supports_forced_tool_call(self) -> bool:
         """Whether a turn can be sent that *requires* the model to call a tool.
 
