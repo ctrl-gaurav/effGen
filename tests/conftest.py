@@ -245,6 +245,7 @@ _WARN_ONCE_RECORDS = (
     ("effgen.models._adapter_utils", "_reasoning_only_warned"),
     ("effgen.models._adapter_utils", "_bpe_unavailable_warned"),
     ("effgen.core.agent_runtime", "_tool_output_injection_gap_warned"),
+    ("effgen.core.agent_runtime", "_message_protocol_unavailable_warned"),
     ("effgen.models._catalog", "_WARNED"),
     ("effgen.models._cost", "_UNPRICED_BUDGET_WARNED"),
     ("effgen.presets.registry", "_tool_overhead_warned"),
@@ -262,6 +263,7 @@ _WARN_ONCE_RECORDS = (
 # an earlier test already taught the process.
 _LEARNED_ONCE_RECORDS = (
     ("effgen.core.agent_generation", "_reasoning_stream_models"),
+    ("effgen.core.agent_runtime", "_MESSAGE_PROTOCOL_PROBE"),
 )
 
 
@@ -273,7 +275,7 @@ def _reset_warn_once_records():
         if module is None:
             continue
         record = getattr(module, attr, None)
-        if isinstance(record, set):
+        if isinstance(record, set | dict):
             record.clear()
         elif isinstance(record, bool):
             setattr(module, attr, False)

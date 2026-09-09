@@ -192,6 +192,10 @@ ENGINE_MEMBERS = (
     # request layer that could enforce a tool choice, so it advertises that it
     # cannot require a call rather than sending one the runtime would ignore.
     "supports_forced_tool_call",
+    # Also inherited from BaseModel, and also False: this engine hands a
+    # prompt to a local chat template, so an assistant turn carrying a tool
+    # call and a tool turn carrying a result have nowhere to go.
+    "supports_message_protocol",
     "supports_tool_calling",
     "tool_call_support",
     "unload",
