@@ -180,7 +180,7 @@ def _checkpoint_run_kwargs(args) -> dict:
 # Cheapest well-known model per cloud provider, used to suggest a first model in
 # the quickstart. Order = auto-pick preference (fast/free first).
 _QUICKSTART_CLOUD_MODELS: tuple[tuple[str, str], ...] = (
-    ("groq", "llama-3.1-8b-instant"),
+    ("groq", "openai/gpt-oss-20b"),
     ("openai", "gpt-5-nano"),
     ("gemini", "gemini-3.1-flash-lite"),
     ("cerebras", "gpt-oss-120b"),
@@ -204,7 +204,11 @@ def _quickstart_suggest_model() -> tuple[str, str | None, str]:
     for provider, model_id in _QUICKSTART_CLOUD_MODELS:
         info = keys.get(provider)
         if info and info.get("available"):
-            return model_id, provider, f"{provider} key detected"
+            # Qualified with the provider that suggested it, for the same reason
+            # the local fallback carries its engine prefix: several providers
+            # serve the same id, so a caller that uses the id on its own would
+            # otherwise have to guess which one was meant.
+            return f"{provider}:{model_id}", provider, f"{provider} key detected"
     return _QUICKSTART_LOCAL_MODEL, None, "no cloud key found — using a small local model"
 
 
