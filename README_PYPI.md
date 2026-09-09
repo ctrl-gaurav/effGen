@@ -85,6 +85,7 @@ print(f"Answer: {result.output}")
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🔧 | **8 Sep 2026** | **v1.0.1 Released** — a run that stopped without writing an answer now reports `success=False`, `outcome="stopped"` and a typed `stop_reason`, keeps what it reached in `.partial`, and raises `RunStoppedError` under the default `raise_on_error=True`. Inline citation markers are opt-in (`cite_sources=`) and resolve when asked for; the loop guards sit above the length of real work; every tool-calling path states what the tools are for, chosen from their declared category; `AgentConfig(tool_use=...)` says whether a held tool has to be called; and the budget check against a 500,000-row ledger went from 1,278 ms to 0.044 ms. Measured on ten sample sets at 7B: 71.63 → 77.00 overall, **two retrieval cells regress outside their band**, and it costs 37% more model calls and 57% more prompt tokens per sample. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#101---2026-09-08) |
 | 🎉 | **14 Aug 2026** | **v1.0.0 Released** — the first stable release. Point effGen at any OpenAI-compatible server (`base_url`, vLLM/Ollama/LM Studio/a gateway), read back which tool calls a run made, wrap the agent loop in middleware, give one agent many conversations with `run(session=...)`, choose a context-compaction strategy, and resume a `WorkflowDAG` that died half way through. Plus `effgen code` (a terminal coding agent), a model/pricing browser, shareable HTML reports and run cards, `effgen top`, `effgen battle`, and a long pass over everything that used to report the wrong thing: a failed run raises, an unpriced model reports no cost, and a tool call written in an unfamiliar shape is understood. **Three breaking changes** (Python 3.11 floor, `raise_on_error=True`, an unreachable backend raises). [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#100---2026-08-14) |
 | ✨ | **5 Jul 2026** | **v0.3.2 Released** — Usability, Robustness & Polish: structured output + cost gates + document input on the CLI (`batch --schema`, `eval --fail-under`, `compare --optimize cost`, `run --file`), clinical-grade PHI redaction with a `phi` preset, native web-search sources that never vanish, sampling controls (`seed`/`frequency_penalty`) that take effect, a server that returns real HTTP status on failure, provider/model/status-labeled `/metrics` with top-level alerting/SLO exports, batch that survives malformed rows with per-job cost, spreadsheet ingestion, the `general` preset on Gemini, and prompt-library input validation. No breaking changes. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#032---2026-07-05) |
 | ✨ | **29 Jun 2026** | **v0.3.1 Released** — Real-World Usability & Polish: grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, fail-closed multi-agent teams/workflows, an OpenAI-compatible server with no silent tool/embedding downgrades, one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#031---2026-06-29) |
@@ -314,6 +315,50 @@ Observability<br/>
 </div>
 
 <details open>
+<summary><b>🆕 What's new in v1.0.1 — a run that stopped short says so</b></summary>
+
+<br/>
+
+**v1.0.1 is about what a run reports and what the framework's own bookkeeping costs.** A run that
+never wrote an answer says so instead of handing back the notes it took on the way, inline citation
+markers are something you ask for rather than something every retrieval answer gets, the loop guards
+sit above the length of real work, and the budget check no longer reads the whole spend ledger to
+answer one question. **Four changes are visible to an existing caller**, and one of them changes what
+`success` means for a run that stopped part way.
+
+| Area | What changed |
+|------|--------------|
+| **A run that stopped says so** | Three paths that returned `success=True` with internal state in `.output` now return `success=False`, `outcome="stopped"`, a typed `stop_reason` and the model's progress in `.partial`. Under the default `raise_on_error=True` they raise `RunStoppedError`, a `RuntimeError` carrying the response. |
+| **Citations are opt-in** | 1.0.0 asked every retrieval answer for `[1]`, `[2]` markers whether you wanted them or not, and they resolved to nothing. `AgentConfig(cite_sources=True)` or `run(cite_sources=True)` asks; the `rag` preset asks already; and when they are asked for, `[n]` is `citations[n - 1]`. |
+| **Streaming shows the working** | The final answer is unchanged, but a streamed run now emits the model's reasoning before it — 8 chunks became 134 on the same task. |
+| **The budget check** | 1,278 ms → **0.044 ms** warm against a 500,000-row ledger, and a covering-index search instead of a full scan. `effgen cost prune` bounds the file. |
+| **Loop guards above real work** | A repeated call is answered from the run's own record and the run continues, and the loop gets one turn to state the answer before it stops. Over 200 samples the two guards fired 69 times before and once now. |
+| **Tool use is a decision** | `AgentConfig(tool_use="required"/"auto"/"sparing")` and `AgentConfig(tool_contract=...)`, both selected from a tool's declared category, with every shipped default equal to 1.0.0's behaviour. `tool_choice` is a `run()` keyword and reaches the provider. |
+| **Measured** | 71.63 → **77.00** over ten sample sets on a served 7B; coding 70.61 → 84.50. **Retrieval regressed** (`arc_c` −5.00, `arc_e` −4.50, both outside the noise band) and it costs **+37% model calls and +57% prompt tokens** per sample. |
+
+```python
+from effgen import Agent, AgentConfig, RunStoppedError
+
+agent = Agent(AgentConfig(model="openai:gpt-5-nano"))
+try:
+    response = agent.run("What is 17 * 23?")
+    print(response.outcome, response.stop_reason)
+    print(response.text)
+except RunStoppedError as exc:
+    print(exc.stop_reason)
+    print(exc.partial.text if exc.partial else "nothing to report")
+```
+
+```bash
+effgen runs list --status stopped      # runs the loop ended before an answer was written
+effgen cost prune --older-than-days 30 --dry-run
+```
+
+[Full v1.0.1 changelog →](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#101---2026-09-08)
+
+</details>
+
+<details>
 <summary><b>🆕 What's new in v1.0.0 — the first stable release</b></summary>
 
 <br/>
@@ -354,7 +399,7 @@ model = load_model(
 ```bash
 effgen code "add a --dry-run flag to the importer"   # diffs first, writes on your word
 effgen models browse --vision --min-context 128000 --sort price-out
-effgen battle "Explain gradient clipping" -m groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite
+effgen battle "Explain gradient clipping" -m groq:openai/gpt-oss-20b,gemini:gemini-3.1-flash-lite
 effgen top                                           # terminal mission control
 ```
 
@@ -398,10 +443,10 @@ chain = get_guardrail_preset("phi")   # redaction + fail-closed strict mode
 ```
 
 ```bash
-effgen batch --input tickets.jsonl --output out.jsonl -m groq:llama-3.1-8b-instant --schema schema.json
-effgen eval --suite cases.jsonl -m groq:llama-3.1-8b-instant --fail-under 0.9   # exit 1 if it drops
-effgen compare --models "groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite" --suite cases.jsonl --optimize cost
-effgen run "What was Q3 revenue?" --file report.pdf -m groq:llama-3.1-8b-instant
+effgen batch --input tickets.jsonl --output out.jsonl -m groq:openai/gpt-oss-20b --schema schema.json
+effgen eval --suite cases.jsonl -m groq:openai/gpt-oss-20b --fail-under 0.9   # exit 1 if it drops
+effgen compare --models "groq:openai/gpt-oss-20b,gemini:gemini-3.1-flash-lite" --suite cases.jsonl --optimize cost
+effgen run "What was Q3 revenue?" --file report.pdf -m groq:openai/gpt-oss-20b
 ```
 
 [Full v0.3.2 changelog →](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#032---2026-07-05)
@@ -732,7 +777,7 @@ See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs
 1. **5 new cloud backends** — `GroqAdapter`, `TogetherAdapter`, `FireworksAdapter`, `ReplicateAdapter`, `HFInferenceAdapter` — each with streaming, native tools, rate-limit coordination, and cost tracking. 9 providers total.
 
    ```python
-   model = load_model("llama-3.1-8b-instant", provider="groq")
+   model = load_model("openai/gpt-oss-20b", provider="groq")
    model = load_model("Qwen/Qwen2.5-72B-Instruct", provider="hf")
    ```
 
@@ -1144,7 +1189,7 @@ effGen supports **9 cloud inference providers**, any server that speaks the Open
 | **Anthropic** | Cloud API | *(bundled)* | Claude 4.7/4.x, extended thinking, prompt caching, native tools |
 | **Google Gemini** | Cloud API | *(bundled)* | Gemini 3.x/2.5 + Gemma 4, thinking_budget, grounding, Files API, native tools |
 | **Cerebras** | Cloud API | `effgen[cerebras]` | live models (gpt-oss-120b, zai-glm-4.7), ultra-low latency |
-| **Groq** | Cloud API | `effgen[groq]` | 15 catalogued models (llama-3.3-70b-versatile, llama-3.1-8b-instant, openai/gpt-oss-120b), ultra-fast free-tier inference |
+| **Groq** | Cloud API | `effgen[groq]` | 14 catalogued models (openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b), ultra-fast free-tier inference |
 | **Together AI** | Cloud API | `effgen[together]` | 168-model catalog (llama, deepseek, qwen, mistral, minimax), per-model pricing |
 | **Fireworks** | Cloud API | `effgen[fireworks]` | 16 catalogued models (deepseek-v4, kimi-k3, gpt-oss-120b), serverless + dedicated |
 | **Replicate** | Cloud API | `effgen[replicate]` | 37 models, async run-poll, SSE streaming, compute-second billing |
@@ -1157,7 +1202,7 @@ from effgen.core.agent import AgentConfig
 from effgen.tools.builtin import Calculator
 
 # Any of the 9 cloud providers
-model = load_model("llama-3.1-8b-instant", provider="groq")          # Groq
+model = load_model("openai/gpt-oss-20b", provider="groq")          # Groq
 # model = load_model("meta-llama/Llama-3.3-70B-Instruct-Turbo", provider="together")
 # model = load_model("Qwen/Qwen2.5-72B-Instruct", provider="hf")
 

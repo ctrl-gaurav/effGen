@@ -1,5 +1,218 @@
 # effGen Release Notes
 
+## v1.0.1 — September 8, 2026
+
+**1.0.1 is about what a run reports and what the framework's own bookkeeping costs.** A run that
+never wrote an answer says so instead of handing back the notes it took on the way. Inline citation
+markers are something you ask for rather than something every retrieval answer gets. The loop guards
+that used to end a run at its second or third tool call now sit above the length of real work. And
+the budget check that runs before every model call no longer reads the whole spend ledger to answer
+one question.
+
+```bash
+pip install --upgrade effgen
+effgen --version
+```
+
+**Four changes are visible to an existing caller** and are listed first, because one of them changes
+what `success` means for a run that stopped part way.
+
+### A run that stopped without an answer says so
+
+1.0.0 ended three paths with `success=True` and internal state in `.output`: a computation tool that
+tripped the repeat guard, a computation tool that returned a result it had already returned, and a
+model that produced no final answer after its tools had run. On the same reproduction 1.0.0 returns
+`'4'` with `success=True`, no outcome and no stop reason. 1.0.1 returns `success=False`,
+`outcome="stopped"`, `stop_reason="max_iterations_partial"`, and keeps the model's own progress in
+`.partial`.
+
+`AgentResponse` gains `stop_reason` (never `None`, and equal to `metadata["reason"]`), `partial` and
+a derived `outcome` of `"answered"`, `"stopped"` or `"failed"`. Under the default
+`raise_on_error=True` a stopped run raises `RunStoppedError`, which subclasses `RuntimeError` — the
+error the iteration cap has always raised — and carries the run with it:
+
+```python
+from effgen import Agent, AgentConfig, RunStoppedError
+
+agent = Agent(AgentConfig(model="openai:gpt-5-nano"))
+try:
+    response = agent.run("What is 17 * 23?")
+    print(response.outcome, response.stop_reason)
+    print(response.text)
+except RunStoppedError as exc:
+    print(exc.stop_reason)
+    print(exc.partial.text if exc.partial else "nothing to report")
+```
+
+If you would rather inspect the response than catch an error, the flag that has always done that
+still does, and `.outcome` is the field to branch on:
+
+```python
+from effgen import Agent, AgentConfig
+
+agent = Agent(AgentConfig(model="openai:gpt-5-nano", raise_on_error=False))
+response = agent.run("What is 17 * 23?")
+if response.outcome == "stopped":
+    print("stopped:", response.stop_reason)
+    print("got as far as:", response.partial.text if response.partial else "")
+else:
+    print(response.text)
+```
+
+The text the model reached is `.partial.text`, and it is still at `metadata["partial_output"]` byte
+for byte, so a caller reading that key sees no change. The outcome reaches the command line, the run
+store (`effgen runs list --status stopped`), the batch row and its CSV, `effgen code`,
+`EvalResult.stop_reason`, and the OpenAI-compatible server, whose `effgen` envelope now carries
+`stop_reason`, `outcome` and `partial`.
+
+### Citation markers are opt-in
+
+1.0.0 appended *"cite each passage you used inline as [1], [2], …"* to every continuation turn that
+followed a retrieval or search tool, whether or not you had asked for citations. On a question whose
+answer is a single token the model obeyed, and the answer stopped matching. On the same probe 1.0.0
+answers `'B [1], [2]'` where 1.0.1 answers `'B'`.
+
+```python
+from effgen import AgentConfig
+from effgen.presets.registry import get_preset
+
+print(AgentConfig(model="openai:gpt-5-nano").cite_sources)
+print(get_preset("rag").cite_sources)
+```
+
+`AgentConfig(cite_sources=True)` or `run(..., cite_sources=True)` asks for markers; the `rag` preset
+asks for them already. When they are asked for, the retrieval observation is numbered with the
+citation indices themselves, so `[n]` is `citations[n - 1]` across calls and for rows carrying a
+URL — which it was not before. In the default mode a trailing run of markers is removed from the
+answer, and only when the run appended a retrieval observation and every index falls inside the
+passages those observations offered.
+
+Rescoring recorded 14B benchmark answers with the shipped removal function recovers 192, 66 and 52
+answers on three multiple-choice sets and breaks none; over all fifteen recorded retrieval cells it
+fires 481 times and breaks 0 answers. That is a counterfactual over recorded output, and on that
+instrument the effect runs from 3B to 14B and peaks at 14B: over 4,769 recorded answers at each
+size the removal fires 0 times at 1.5B, 135 at 3B, 12 at 7B, 334 at 14B and 0 at 32B. The rescoring
+above is the 14B column. Nothing is claimed for a live 7B — on the served 7B, 1.0.0 emitted a
+trailing marker on 1 of 200 answers of one set and none at all on the other two, so there was
+nothing to recover at that size.
+
+### Saying whether a held tool has to be used
+
+A tool's declared `ToolCategory` now selects both what the model is told the tools are for and
+whether it has to call one. The shipped defaults are exactly what 1.0.0 did — a code executor or a
+system tool must be called, everything else is the model's choice — and `AgentConfig.tool_use` is
+how you say otherwise:
+
+```python
+from effgen import Agent, AgentConfig
+from effgen.tools import get_registry
+
+calculator = get_registry().get_tool_sync("calculator")
+agent = Agent(
+    AgentConfig(model="openai:gpt-5-nano", tools=[calculator], tool_use="required")
+)
+print(agent.config.tool_use)
+```
+
+`"required"` sends back a first answer that skipped the tool and constrains the next turn on
+adapters that can carry the constraint — `BaseModel.supports_forced_tool_call` says which — and
+`"sparing"` asks the model to answer directly when it can. An unknown policy is refused when the
+config is built, not on the first run. `tool_choice` is also a `run()` keyword now, and every
+generation parameter you pass reaches the provider: `Agent._generate` used to copy exactly one name
+out of its keyword arguments and drop the rest with no error and no log line.
+
+### The budget check no longer reads the ledger
+
+Against a 500,000-row ledger, the check that runs before every model call took **1,278 ms** warm and
+1,246.9 ms cold — the same full table scan every time. It is now **0.044 ms** warm and **37.4 ms**
+cold, and the query plan is a covering-index search rather than a scan of the events table. At
+20,000 rows the cold read is 2.5 ms. Summing over an index still reads the rows inside the window,
+so the cold figure grows with the ledger, and there is now a command to bound it:
+
+```bash
+effgen cost prune --older-than-days 30 --dry-run
+```
+
+### What it measures, and what it costs
+
+Ten sample sets at full vendored size — 1,685 samples per release, both against one served
+`Qwen2.5-7B-Instruct` — give **77.00** against 1.0.0's **71.63** as an unweighted mean over the ten
+cells. Three cells gain outside their paired two-sigma band: `gsm8k` 72.00 → 85.00 (±6.63),
+`gsmplus` 54.50 → 65.50 (±7.87) and `bb_hard` 37.14 → 80.00 (±19.79). Five do not move. By category,
+coding goes 70.61 → 84.50 and calculator 60.33 → 67.50 — calculator still below what the same model
+scores with no framework at all, 79.00 on the same samples.
+
+**Two cells regress outside their band and the mechanism is identified but not fixed.** `arc_c` goes
+95.00 → 90.00 (±4.47) and `arc_e` 94.50 → 90.00 (±3.32). Retrieval runs reach the iteration cap ten
+times as often as before — 30 of 600 samples against 3 — and 13 of `arc_c`'s 15 lost samples and 8
+of `arc_e`'s 10 are runs that ran out of iterations. A run that reaches the cap holding a retrieval
+tool hands back a retrieved passage as its partial; 1.0.0 does that too, on the 3 capped runs it had.
+The retrieval prompt changed in three ways at once here and which of them costs the extra turns is
+not settled.
+
+**And it is more expensive.** Per sample, model calls go 2.22 → 3.05 (+37%), prompt tokens 1,120 →
+1,762 (+57%), completion tokens 309 → 353 (+14%) and wall time 13.30 s → 14.03 s (+5%). The
+accuracy is bought with context. Two more places where that shows:
+
+* **A streamed run emits the model's working before its answer.** Same task, identical final answer,
+  8 chunks before and 134 now, beginning with the reasoning. A consumer that concatenates chunks and
+  shows the result gets the working first.
+* **A small local model is asked to write more.** `Qwen2.5-1.5B-Instruct` on the local Transformers
+  engine: *"What is 144 divided by 12?"* goes from 31 to 233 completion tokens and from about 3.5 s
+  to about 27 s; *"Name the largest planet in the solar system."* goes from 11 to 145 tokens and
+  from 0 to 1 tool calls. Both answers stay correct.
+
+### Also in this release
+
+* An agent holding a code executor executes: a first answer that only describes what the tool would
+  have returned is sent back once, naming the tool.
+* A turn's own working is no longer read as that turn's answer. A turn that dispatched several tool
+  calls at once could be recognised as a final answer by a phrase as short as `=`.
+* A result an execution tool computed and the answer dropped is appended to the answer rather than
+  lost, and a batched provider-side call records what it returned instead of leaving
+  `tool_calls[i].result` as `None`.
+* A search that came back with nothing is tried once more, with a different query.
+* The Groq default names a model Groq still serves: `GROQ_DEFAULT_MODEL`, the bundled catalog, the
+  CLI help, the error messages and every shipped example moved off the two retired `llama` ids to
+  `openai/gpt-oss-20b`.
+* A model id that carries a provider prefix loads when a provider is also passed explicitly —
+  `load_model("groq:openai/gpt-oss-20b", provider="groq")` used to raise `Unknown Groq model`. It is
+  the path `effgen run` and `effgen quickstart` take with no `--model`.
+* A declared `output_schema` is stated to the model inside the loop, and on `stream()` as well as
+  `run()`.
+* A tool that declares no category no longer raises `AttributeError` from `Agent.__init__`.
+* Bilingual EN/ES keyword matching in the complexity analyzer, the decomposition engine, the
+  sub-agent router and the prompt optimizer, with accents folded on both sides so `codigo` matches
+  `código`. There is no language-detection step and English behaviour is unchanged;
+  `docs/i18n-notes.md` records why. A root agent's `system_prompt` now also reaches the sub-agents it
+  spawns. Both from @acdonaire.
+
+### Known issues
+
+* A configured spend cap refuses a call that costs nothing: the preflight compares accumulated spend
+  against the cap without asking what the call would cost, so a spent cloud budget also refuses a
+  `transformers`, `vllm` or `openai_compatible` call against a model you serve yourself. Present in
+  1.0.0 as well.
+* A retrieval run over a real corpus can lose a fact 1.0.0 recovers — 2 of 3 against 3 of 3 over
+  seven documentation files, four runs out of four.
+* Groq retired `llama-3.1-8b-instant` and `llama-3.3-70b-versatile`; both answer
+  `404 model_not_found`. Upgrading to 1.0.1 is what fixes the default — `GROQ_DEFAULT_MODEL` is a
+  module constant bound as `GroqAdapter.__init__`'s default argument, and this release repoints it,
+  the bundled catalog, the examples and the docs to `openai/gpt-oss-20b`. On 1.0.0, or in code that
+  pinned a retired id, name a live id yourself: `GroqAdapter(model_name="openai/gpt-oss-20b")` or
+  `--model groq:openai/gpt-oss-20b`. `effgen models refresh` does not fix it — it rewrites only the
+  bundled snapshot, which the module default is never read back from, so the adapter still defaults
+  to the retired id after a refresh. Entries for v1.0.0 and earlier below still show the retired
+  ids in their examples; they record what those releases shipped.
+* The streamed loop does not send back an execution tool's no-call answer, because its tokens are
+  already emitted by the time the turn could be judged, and it does not remove a trailing citation
+  marker for the same reason.
+
+**Public surface:** 223 names to 225. `PartialResult` and `RunStoppedError` are new; nothing was
+removed or renamed.
+
+[Full 1.0.1 changelog →](CHANGELOG.md#101---2026-09-08)
+
 ## v1.0.0 — August 14, 2026
 
 **effGen v1.0.0 is the first stable release.** It is more than 600 commits of work since v0.3.2. The theme is
