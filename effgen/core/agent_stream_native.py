@@ -637,7 +637,20 @@ class AgentNativeStreamMixin:
                             f"\nObservation: {observation}"
                         )
                     else:
+                        # A call naming a tool this agent does not hold is
+                        # still a call the model made. Writing the refusal into
+                        # the run says which tools are callable; leaving it out
+                        # left the next turn with no record of the call at all.
                         observation = unknown_tool_observation(name, list(self.tools))
+                        logger.info(
+                            "[Declined call] '%s' was not dispatched: unknown_tool",
+                            name,
+                        )
+                        scratchpad += (
+                            f"\nAction: {name}"
+                            f"\nAction Input: {json.dumps(args)}"
+                            f"\nObservation: {observation}"
+                        )
                     if on_observation:
                         on_observation(observation)
                     if include_events:

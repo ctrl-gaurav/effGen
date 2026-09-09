@@ -22,8 +22,10 @@ format specification, the question — is assembled elsewhere and is not part of
 a thread's flat rendering: :class:`SystemStep` and :class:`TaskStep` render as
 the empty string in :meth:`to_text` and as messages in :meth:`to_messages`.
 
-Nothing in the agent loop reads this module yet; it is the state the loop moves
-onto in a later release step.
+Every call in a thread carries an id — the provider's own where the turn made a
+provider-native call, otherwise one minted from the step's position — and every
+result carries the id of the call it answers, so a conversation leaving effGen
+never holds a call nothing replied to.
 """
 
 from __future__ import annotations
@@ -261,6 +263,11 @@ class ActionStep:
         the same message as the :class:`~effgen.core.messages.ToolCallPart`.
         Dropping it when the call is present loses the model's own account of
         why it called what it called.
+
+        A step in a thread carries its own :attr:`call_id`, so this renders the
+        same id :meth:`AgentThread.to_messages` gives it. A step that has never
+        joined a thread has no position to mint from and renders under the id a
+        thread would give a step at its start.
         """
         call_id = self.call_id or f"{_LOCAL_CALL_ID_PREFIX}0"
         content: list[ContentPart] = _text_parts(self.reasoning)
@@ -294,7 +301,18 @@ class ActionStep:
 
 @dataclass
 class ObservationStep:
-    """What a tool returned for the call before it."""
+    """What a tool returned for the call before it.
+
+    Attributes:
+        text: The reply the model reads.
+        call_id: The call this answers.
+        is_error: Whether the reply reports a failure.
+        declined: Why the framework answered in its own words rather than a
+            tool's — ``"loop_detected"`` and ``"already_computed"`` for a call
+            the run stopped making, ``"unknown_tool"`` for a tool the agent
+            does not hold. ``None`` when the reply is a tool's own result,
+            including a repeat answered from the record.
+    """
 
     text: str
     call_id: str | None = None
@@ -307,7 +325,13 @@ class ObservationStep:
         return f"\nObservation: {self.text}"
 
     def to_messages(self, *, summary: bool = False) -> list[Message]:
-        """One ``tool`` message answering the call id it carries."""
+        """One ``tool`` message answering the call id it carries.
+
+        A step in a thread carries the id of the call before it, so this
+        renders the same id :meth:`AgentThread.to_messages` gives it. A step
+        that has never joined a thread renders under the id a thread would give
+        a result at its start.
+        """
         call_id = self.call_id or f"{_LOCAL_CALL_ID_PREFIX}0"
         return [
             Message(
@@ -557,17 +581,28 @@ class AgentThread:
     version: int = THREAD_SCHEMA_VERSION
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self._settle_call_ids(0)
+
     # ------------------------------------------------------------------
     # Building
     # ------------------------------------------------------------------
 
     def append(self, step: Step) -> None:
-        """Add one step to the end of the thread."""
+        """Add one step to the end of the thread.
+
+        A call that carried no id of its own is given one here, from its
+        position, so the step names the same call however it is rendered.
+        """
+        start = len(self.steps)
         self.steps.append(step)
+        self._settle_call_ids(start)
 
     def extend(self, steps: list[Step]) -> None:
-        """Add several steps, in order."""
+        """Add several steps, in order, settling any call id they lack."""
+        start = len(self.steps)
         self.steps.extend(steps)
+        self._settle_call_ids(start)
 
     def __len__(self) -> int:
         return len(self.steps)
@@ -908,12 +943,41 @@ class AgentThread:
     # Internals
     # ------------------------------------------------------------------
 
+    def _settle_call_ids(self, start: int) -> None:
+        """Give every call from *start* on an id, and every result the id it answers.
+
+        A turn that made a provider-native call arrives carrying the provider's
+        own id. A turn that wrote its call as text carries none, so the thread
+        mints one from the step's position — the same id a replay of the same
+        run mints, and the same id whether the step is rendered on its own or
+        as part of the thread.
+
+        Args:
+            start: The first index to settle; the steps before it already are.
+        """
+        current = f"{_LOCAL_CALL_ID_PREFIX}0"
+        for step in reversed(self.steps[:start]):
+            if isinstance(step, ActionStep | ObservationStep) and step.call_id:
+                current = step.call_id
+                break
+        for index in range(start, len(self.steps)):
+            step = self.steps[index]
+            if isinstance(step, ActionStep):
+                if not step.call_id:
+                    step.call_id = f"{_LOCAL_CALL_ID_PREFIX}{index}"
+                current = step.call_id
+            elif isinstance(step, ObservationStep):
+                if not step.call_id:
+                    step.call_id = current
+                else:
+                    current = step.call_id
+
     def _call_ids(self) -> list[str]:
         """The call id in force at each step index.
 
-        An action's own id when it carried one, otherwise one minted from the
-        step index so a replayed run mints the same ids. An observation takes
-        the id of the action before it.
+        Every call and every result carries its own id by the time it is in a
+        thread (:meth:`_settle_call_ids`); this reads the id in force at each
+        index so a step between a call and its result can be attributed too.
         """
         ids: list[str] = []
         current = f"{_LOCAL_CALL_ID_PREFIX}0"

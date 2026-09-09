@@ -101,9 +101,10 @@ class AgentReActMixin(
 
     if TYPE_CHECKING:
         # Contributed by :class:`~effgen.core.agent.Agent`, which owns the
-        # per-call state. Declared for the type checker only — at run time it
-        # arrives through the MRO, and these statements do not execute.
+        # per-call state. Declared for the type checker only — at run time they
+        # arrive through the MRO, and these statements do not execute.
         model: Any
+        tools: dict[str, Any]
 
         def _effective_output_schema(self) -> dict[str, Any] | None: ...
 
@@ -543,39 +544,65 @@ class AgentReActMixin(
                             _targs = json.loads(_targs)
                         except (json.JSONDecodeError, TypeError):
                             _targs = {"__raw_input__": _targs}
+                    _call_id = _tc.get("id") or None
+                    _declined: str | None = None
                     if _tname in self.tools:
+                        _batch_start = time.time()
                         with start_tool_call(tool_name=_tname, tool_input=str(_targs)[:500]) as _btspan:
                             _obs = self._execute_tool(_tname, json.dumps(_targs))
                             try:
                                 _btspan.set_attribute(ToolAttrs.STATUS, "ok")
                             except Exception:
                                 logger.debug("Failed to set tool span status", exc_info=True)
+                        _batch_elapsed = time.time() - _batch_start
                         tool_calls += 1
-                        # The record carries what the call returned, as it does
-                        # on the one-call-per-turn path: a batched call is a
-                        # call the run made, and a record with no result in it
-                        # cannot say what the run was holding when it answered.
+                        # The record carries what the call returned and how long
+                        # it took, as it does on the one-call-per-turn path: a
+                        # batched call is a call the run made, and a record with
+                        # no result in it cannot say what the run was holding
+                        # when it answered.
                         guards.record_execution(
                             _tname,
                             arguments=_targs,
                             result=_obs,
+                            duration=_batch_elapsed,
                             iteration=iterations,
                         )
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
-                        _call_id = _tc.get("id") or None
-                        thread.append(
-                            ActionStep(
-                                tool=_tname,
-                                arguments=dict(_targs) if isinstance(_targs, dict) else {},
-                                raw=json.dumps(_targs),
-                                call_id=_call_id,
-                                reasoning=_batch_reasoning,
-                            )
-                        )
-                        _batch_reasoning = ""
-                        thread.append(ObservationStep(text=str(_obs), call_id=_call_id))
                     else:
-                        batch_observations.append(f"[{_tname}] → Tool not found")
+                        # A call naming a tool this agent does not hold is
+                        # still a call the model made. Answering it says which
+                        # tools are callable; dropping it left the turn with a
+                        # call nothing replied to and the model with no idea
+                        # its request had been refused.
+                        _declined = "unknown_tool"
+                        _obs = (
+                            unknown_tool_observation(_tname, list(self.tools))
+                            if self.tools
+                            else NUDGE_NO_TOOLS
+                        )
+                        logger.info(
+                            "[Batch] '%s' is not a tool this agent holds; the "
+                            "call is answered rather than dropped",
+                            _tname,
+                        )
+                        batch_observations.append(f"[{_tname}] → {_obs}")
+                    thread.append(
+                        ActionStep(
+                            tool=_tname,
+                            arguments=dict(_targs) if isinstance(_targs, dict) else {},
+                            raw=json.dumps(_targs),
+                            call_id=_call_id,
+                            reasoning=_batch_reasoning,
+                        )
+                    )
+                    _batch_reasoning = ""
+                    thread.append(
+                        ObservationStep(
+                            text=str(_obs), call_id=_call_id,
+                            is_error=_declined is not None, declined=_declined,
+                        )
+                    )
                 # After batch execution, nudge model to synthesize a final answer.
                 thread.append(
                     NudgeStep(text=NUDGE_CONTINUE, render_as="raw", nudge_id="continue")
@@ -850,6 +877,8 @@ class AgentReActMixin(
                         tool=action, raw=str(action_input),
                         call_id=call_id, reasoning=reasoning,
                     ))
+                    # The reply is the tool's own recorded result, not the
+                    # framework's words, so the observation is not a decline.
                     thread.append(ObservationStep(text=str(replay), call_id=call_id))
                     cur_observation = replay
                     nudge = guards.post_tool_nudge(
@@ -884,17 +913,22 @@ class AgentReActMixin(
                             action,
                         )
                         guards.force_text_answer = True
-                        thread.append(ActionStep(
-                            tool=action, raw=str(action_input),
+                        _decline_call(
+                            thread, action, action_input,
                             call_id=call_id, reasoning=reasoning,
-                        ))
-                        thread.append(
-                            ObservationStep(
-                                text=NUDGE_HAVE_RESULTS, declined="loop_detected",
-                                call_id=call_id,
-                            )
+                            reason="loop_detected", text=NUDGE_HAVE_RESULTS,
                         )
                         continue
+                    if partial:
+                        # The run ends on one of the two branches below, and
+                        # the call the model just made is part of what
+                        # happened: recording it with the reply it got leaves
+                        # the conversation with no call nothing answered.
+                        _decline_call(
+                            thread, action, action_input,
+                            call_id=call_id, reasoning=reasoning,
+                            reason="loop_detected", text=NUDGE_HAVE_RESULTS,
+                        )
                     if partial and self._is_context_retrieval_tool(action):
                         return self._stopped_outcome_response(
                             partial,
@@ -929,15 +963,10 @@ class AgentReActMixin(
                     # just told is already computed). Stop offering tools for
                     # the rest of this run so the model must respond in prose.
                     guards.force_text_answer = True
-                    thread.append(ActionStep(
-                        tool=action, raw=str(action_input),
+                    _decline_call(
+                        thread, action, action_input,
                         call_id=call_id, reasoning=reasoning,
-                    ))
-                    thread.append(
-                        ObservationStep(
-                            text=NUDGE_ALREADY_COMPUTED, declined="already_computed",
-                            call_id=call_id,
-                        )
+                        reason="already_computed", text=NUDGE_ALREADY_COMPUTED,
                     )
                     continue
 
@@ -959,7 +988,9 @@ class AgentReActMixin(
                         tool=action, raw=str(action_input),
                         call_id=call_id, reasoning=reasoning,
                     ))
-                    thread.append(ObservationStep(text=str(observation), call_id=call_id))
+                    thread.append(ObservationStep(
+                        text=str(observation), call_id=call_id, declined="unknown_tool",
+                    ))
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
@@ -1741,6 +1772,41 @@ class AgentReActMixin(
             )
         finally:
             self._current_depth -= 1
+
+
+def _decline_call(
+    thread: AgentThread,
+    tool: str,
+    action_input: Any,
+    *,
+    call_id: str | None,
+    reasoning: str,
+    reason: str,
+    text: str,
+) -> None:
+    """Record a call the loop chose not to dispatch, with the reply it got.
+
+    The loop declines a call for three reasons: it has the result already, the
+    same call keeps coming back, or the tool is not one this agent holds. In
+    each case the model asked for something and is owed an answer — and a
+    conversation carrying a call that nothing replies to is rejected outright
+    by a provider, so the reply is not optional once the run is held as
+    messages.
+
+    Args:
+        thread: The run's conversation.
+        tool: The tool the turn named.
+        action_input: The input the turn wrote, as it wrote it.
+        call_id: The provider's id for the call, when the turn carried one.
+        reasoning: What the model said beside the call.
+        reason: Why the call was declined, kept on the observation.
+        text: The reply the model reads.
+    """
+    logger.info("[Declined call] '%s' was not dispatched: %s", tool, reason)
+    thread.append(ActionStep(
+        tool=tool, raw=str(action_input), call_id=call_id, reasoning=reasoning,
+    ))
+    thread.append(ObservationStep(text=text, call_id=call_id, declined=reason))
 
 
 def _protocol_of(thread: AgentThread) -> str:
