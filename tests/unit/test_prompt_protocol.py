@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 import json
 import pkgutil
+import sys
 from collections.abc import Iterator
 from typing import Any
 
@@ -593,30 +594,71 @@ def _model_classes() -> list[type]:
     return classes
 
 
-def _declares(cls: type) -> bool:
+def _tool_capable_models(cls: type) -> list[tuple[str, dict[str, Any]]]:
+    """The models this adapter's own catalog says take tool definitions.
+
+    An adapter that answers for a whole provider declares the protocol for any
+    model, but one reading a catalog answers for the model it is holding — so
+    a stub given a name no catalog knows reports False and would be skipped.
+    The candidates come from the adapter's own module, never from a list of
+    provider names kept here.
+    """
+    module = sys.modules.get(cls.__module__)
+    found: list[tuple[str, dict[str, Any]]] = []
+    for value in vars(module).values() if module else ():
+        if not isinstance(value, dict):
+            continue
+        for model, info in value.items():
+            if (
+                isinstance(model, str)
+                and isinstance(info, dict)
+                and info.get("supports_native_tools")
+            ):
+                found.append((model, info))
+    return found
+
+
+def _declaring_instance(cls: type) -> Any | None:
+    """An instance of *cls* that declares the message protocol, or ``None``.
+
+    Every model the adapter's catalog offers is tried before the adapter is
+    taken at its word for declaring nothing, so an adapter that carries the
+    parts cannot slip past this gate by reporting False for a model name that
+    does not exist.
+    """
     try:
         obj = cls.__new__(cls)
     except TypeError:
-        return False  # an abstract base declares nothing
-    for attribute, value in (
-        ("model_name", "an-adapter-model"), ("base_url", None), ("_is_loaded", True),
-    ):
+        return None  # an abstract base declares nothing
+    for model_name, info in [("an-adapter-model", {}), *_tool_capable_models(cls)]:
+        for attribute, value in (
+            ("model_name", model_name), ("base_url", None), ("api_key", ""),
+            ("_is_loaded", True), ("_info", info),
+        ):
+            try:
+                object.__setattr__(obj, attribute, value)
+            except Exception:
+                return None
         try:
-            object.__setattr__(obj, attribute, value)
+            if obj.supports_message_protocol():
+                return obj
         except Exception:
-            return False
-    try:
-        return bool(obj.supports_message_protocol())
-    except Exception:
-        return False
+            continue
+    return None
+
+
+def _declares(cls: type) -> bool:
+    return _declaring_instance(cls) is not None
 
 
 def test_an_adapter_that_declares_the_protocol_actually_carries_it() -> None:
     """Read from a real conversion, not from the source text.
 
-    Six adapters already report ``tool_call_support() == "api"`` and drop both
-    tool parts on the way to the provider. The declaration is about the
-    conversion, so it is checked by converting.
+    The declaration is about the conversion, so it is checked by converting.
+    The providers disagree about the shape — ``tool_calls`` and a ``tool``
+    message, ``tool_use``/``tool_result`` blocks, ``function_call`` parts — so
+    what is asserted is that the call id reaches the request twice: once on the
+    call the assistant made, once on the turn answering it.
     """
     conversation = [
         Message(role=Role.ASSISTANT, content=[
@@ -627,16 +669,18 @@ def test_an_adapter_that_declares_the_protocol_actually_carries_it() -> None:
             ToolResultPart(tool_call_id=CALL_ID, result="36"),
         ]),
     ]
-    declared = [cls for cls in _model_classes() if _declares(cls)]
-    assert declared, "no adapter declares the message protocol"
-    for cls in declared:
-        obj = cls.__new__(cls)
-        object.__setattr__(obj, "model_name", "an-adapter-model")
+    declared = [
+        (cls, obj) for cls in _model_classes()
+        if (obj := _declaring_instance(cls)) is not None
+    ]
+    # Every adapter that carries the parts is walked, not only the ones whose
+    # declaration does not depend on the model they are holding.
+    assert len(declared) >= 10, [cls.__name__ for cls, _ in declared]
+    for cls, obj in declared:
         convert = getattr(obj, "_create_messages", None)
         assert callable(convert), f"{cls.__name__} declares the protocol and cannot convert"
-        sent = convert(conversation)
-        assert any("tool_calls" in m for m in sent), cls.__name__
-        assert any("tool_call_id" in m for m in sent), cls.__name__
+        sent = json.dumps(convert(conversation), default=str)
+        assert sent.count(CALL_ID) == 2, cls.__name__
 
 
 def test_an_adapter_that_does_not_declare_it_is_never_offered_the_shape() -> None:
