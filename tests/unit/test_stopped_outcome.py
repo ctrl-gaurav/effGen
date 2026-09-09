@@ -358,6 +358,7 @@ def test_a_written_call_after_a_tool_ran_keeps_the_observations():
     writes a call out *after* its tools ran, which no scripted ReAct turn can
     produce reliably — the same reason no recorded sample reaches it either.
     """
+    from effgen.core.thread import AgentThread, ObservationStep, ThoughtStep
     from effgen.core.tool_call_record import ToolCall
 
     agent = _agent([_calc("12*3")])
@@ -365,7 +366,10 @@ def test_a_written_call_after_a_tool_ran_keeps_the_observations():
     response = agent._written_tool_call_response(
         "calculator", "<tool_call>…</tool_call>",
         iterations=2, tool_calls=1, tokens_used=10, tool_ran=True,
-        calls=calls, scratchpad="Thought: compute.\nObservation: 36",
+        calls=calls,
+        thread=AgentThread(
+            steps=[ThoughtStep(text="compute."), ObservationStep(text="36")]
+        ),
     )
 
     assert response.outcome == "failed"

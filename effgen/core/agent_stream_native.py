@@ -72,6 +72,7 @@ from .retrieval_requery import (
     REQUERY_MIN_ITERATIONS_LEFT,
     should_requery,
 )
+from .thread import AgentThread
 from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
@@ -219,11 +220,11 @@ class AgentNativeStreamMixin:
         # not execute.
         model: Any
 
-        def _extract_partial_answer(self, scratchpad: str) -> str | None: ...
+        def _extract_partial_answer(self, thread: AgentThread) -> str | None: ...
 
         def _partial_result(
             self,
-            scratchpad: str,
+            thread: AgentThread,
             *,
             text: str,
             calls: Any = (),
@@ -686,7 +687,9 @@ class AgentNativeStreamMixin:
                     "[Loop detected] Repeated action '%s' (%s) while streaming",
                     action, check.loop_type,
                 )
-                partial = self._extract_partial_answer(scratchpad)
+                partial = self._extract_partial_answer(
+                    AgentThread.from_scratchpad(scratchpad)
+                )
                 # What a tool returned is not an answer, whatever the tool was.
                 # Stop offering tools and spend one turn asking the model to
                 # state the answer from the observations it already has, before
@@ -805,7 +808,9 @@ class AgentNativeStreamMixin:
                 scratchpad += f"\n{nudge}"
 
         # ---- the iteration cap ------------------------------------------
-        partial_answer = self._extract_partial_answer(scratchpad)
+        partial_answer = self._extract_partial_answer(
+            AgentThread.from_scratchpad(scratchpad)
+        )
         if guards.written_call and not partial_answer:
             self._last_stream_response = self._native_written_call(
                 task, guards, "", iterations=iterations, tool_calls=tool_calls,
@@ -823,7 +828,8 @@ class AgentNativeStreamMixin:
         cap_partial = None
         if partial_answer:
             cap_partial = self._partial_result(
-                scratchpad, text=partial_answer, calls=guards.calls,
+                AgentThread.from_scratchpad(scratchpad),
+                text=partial_answer, calls=guards.calls,
                 iterations=iterations, tool_calls=tool_calls,
             )
             meta["partial"] = True
@@ -938,7 +944,8 @@ class AgentNativeStreamMixin:
         retrieval = self._is_context_retrieval_tool(action) if action else False
         detail = self._repeated_tool_detail(action, reason, retrieval=retrieval)
         partial = self._partial_result(
-            scratchpad, text=text, calls=guards.calls,
+            AgentThread.from_scratchpad(scratchpad),
+            text=text, calls=guards.calls,
             iterations=iterations, tool_calls=tool_calls,
         )
         meta: dict[str, Any] = {
@@ -1038,8 +1045,9 @@ class AgentNativeStreamMixin:
         meta: dict[str, Any] = {"reason": "written_tool_call", "error": detail}
         partial = None
         if guards.calls:
+            run = AgentThread.from_scratchpad(scratchpad)
             candidate = self._partial_result(
-                scratchpad, text=self._extract_partial_answer(scratchpad) or "",
+                run, text=self._extract_partial_answer(run) or "",
                 calls=guards.calls, iterations=iterations, tool_calls=tool_calls,
             )
             if candidate.text.strip():

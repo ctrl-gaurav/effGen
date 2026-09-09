@@ -1,8 +1,9 @@
 """The ReAct reasoning loop for :class:`Agent`.
 
-Holds the loop itself — the scratchpad, the instructions and nudges it appends,
-the stop it reports when a turn writes a call out instead of making it or when
-the iteration cap is reached — and sub-agent delegation. The surrounding
+Holds the loop itself — the thread of typed steps it builds, the instructions
+and nudges it adds to that thread, the stop it reports when a turn writes a call
+out instead of making it or when the iteration cap is reached — and sub-agent
+delegation. The surrounding
 concerns live beside it and are inherited by :class:`AgentReActMixin`, so every
 method resolves on :class:`Agent` as before: reading a turn in
 :class:`~effgen.core.agent_react_parsing.AgentReActParsingMixin`, the
@@ -44,6 +45,14 @@ from .execution_tracker import EventType, ExecutionEvent
 from .result_relay import relay_result
 from .retrieval_requery import REQUERY_FORCES_TOOL_CALL, should_requery
 from .router import RoutingDecision, RoutingStrategy
+from .thread import (
+    ActionStep,
+    AgentThread,
+    AnswerStep,
+    NudgeStep,
+    ObservationStep,
+    ThoughtStep,
+)
 from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,7 @@ from .agent_runtime import (  # noqa: E402
     CONTEXT_ANSWER_INSTRUCTION,
     CONTEXT_CITATION_INSTRUCTION,
     CONTINUE_INSTRUCTION,
+    CONTINUE_REASONING_LINE,
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
@@ -152,7 +162,10 @@ class AgentReActMixin(
         iterations = 0
         tool_calls = 0
         tokens_used = 0
-        scratchpad = ""
+        # The run's conversation, as typed steps. The prompt frame still
+        # receives a string — ``thread.to_text()`` renders it — so a caller
+        # with a custom template sees exactly the text it saw before.
+        thread = AgentThread()
         # An explicit ``max_iterations=None`` — what an optional flag forwards when
         # the user did not set it — must fall back to the configured cap rather
         # than reach the loop comparison as None.
@@ -187,7 +200,7 @@ class AgentReActMixin(
         def _requery(answer: str) -> bool:
             """Send this run back for one more search, or leave the answer alone.
 
-            True when the answer was not accepted and the scratchpad now asks
+            True when the answer was not accepted and the thread now asks
             for a different query. Called from every point that would otherwise
             accept an answer, so which of them the model happened to reach —
             with an answer label or without one — does not decide whether the
@@ -204,8 +217,13 @@ class AgentReActMixin(
                 return False
             if not guards.take_retrieval_requery():
                 return False
-            nonlocal scratchpad
-            scratchpad += "\nObservation: " + NUDGE_SEARCH_AGAIN
+            thread.append(
+                NudgeStep(
+                    text=NUDGE_SEARCH_AGAIN,
+                    render_as="observation",
+                    nudge_id="search_again",
+                )
+            )
             if REQUERY_FORCES_TOOL_CALL:
                 guards.force_tool_call = True
             return True
@@ -220,9 +238,18 @@ class AgentReActMixin(
                 _ckpt_mgr = _CM(_ckpt_dir)
             except Exception as _e:
                 logger.warning("Failed to init CheckpointManager: %s", _e)
-        # Allow resuming with a seeded scratchpad
+        # A run resumed from a checkpoint written before a run's steps were
+        # kept starts from the transcript that checkpoint holds. Reading it
+        # back is lossy — a call id and an argument's type are not in the text —
+        # but it renders the same bytes, so the resumed run sees the prompt it
+        # would have seen.
         if _resume_scratchpad_arg:
-            scratchpad = _resume_scratchpad_arg
+            thread = AgentThread.from_scratchpad(_resume_scratchpad_arg)
+            if thread.to_text() != _resume_scratchpad_arg:
+                logger.info(
+                    "[thread] resumed transcript does not begin at a step "
+                    "boundary; the run continues from what could be read"
+                )
         while iterations < max_iterations:
             iterations += 1
             iter_start = time.time()
@@ -233,7 +260,7 @@ class AgentReActMixin(
                         self,
                         task=task,
                         iteration=iterations,
-                        scratchpad=scratchpad,
+                        scratchpad=thread.to_text(),
                         tool_calls=tool_calls,
                         tokens_used=tokens_used,
                         metadata={"interval": _ckpt_interval},
@@ -250,7 +277,9 @@ class AgentReActMixin(
                 and self.model.supports_tool_calling()
             )
 
-            # Build prompt
+            # Build prompt. The frame is assembled from the transcript the
+            # thread renders, which is the same string the loop used to carry.
+            transcript = thread.to_text()
             _cite_sources, _numbered_passages = self._citation_prompt_state()
             _answer_shape = self._answer_shape_instruction()
             gen_kwargs = dict(kwargs)
@@ -266,7 +295,7 @@ class AgentReActMixin(
                 # assembled by the same function the streamed loop calls, so the
                 # two paths cannot say different things to the same model.
                 prompt = self._native_tool_prompt(
-                    task, scratchpad, conversation_history, guards.previous_actions,
+                    task, transcript, conversation_history, guards.previous_actions,
                 )
                 # Pass tool definitions for the chat template
                 tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
@@ -281,13 +310,13 @@ class AgentReActMixin(
                     tools_description=tools_description,
                     conversation_history=conversation_history,
                     task=task,
-                    scratchpad=scratchpad
+                    scratchpad=transcript
                 )
             else:
                 # ReAct mode: use enhanced ToolPromptGenerator
                 prompt = self._tool_prompt_generator.generate_react_prompt(
                     task=task,
-                    scratchpad=scratchpad,
+                    scratchpad=transcript,
                     conversation_history=conversation_history,
                     system_prompt=self.config.system_prompt,
                     verbose=self._verbose_tools,
@@ -309,7 +338,7 @@ class AgentReActMixin(
             # there is nothing to constrain — the tools are prose in the prompt —
             # and on an adapter that does not advertise it, sending it anyway
             # loses the turn. Both degrade to the nudge already in the
-            # scratchpad, which is the whole of the ask for them.
+            # thread, which is the whole of the ask for them.
             #
             # The flag is spent whether or not it could be used, so a turn that
             # could not be constrained does not leak the constraint onto a later
@@ -367,13 +396,15 @@ class AgentReActMixin(
             _obs_log.event("agent.iteration.generate", iteration=iterations, tokens=iter_tokens, model=getattr(self, "model_name", "unknown"))
 
             if response.get("finish_reason") == "error":
-                return self._generation_failure_response(
+                failure = self._generation_failure_response(
                     response,
                     iterations=iterations,
                     tool_calls=tool_calls,
                     tokens=tokens_used,
                     debug_trace=debug_trace,
                 )
+                failure.metadata["thread"] = thread
+                return failure
 
             # Debug: Log the raw response
             logger.info(f"[Iteration {iterations}] Raw model output: {response['text'][:300]}...")
@@ -422,11 +453,22 @@ class AgentReActMixin(
                             iteration=iterations,
                         )
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
-                        scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
+                        _call_id = _tc.get("id") or None
+                        thread.append(
+                            ActionStep(
+                                tool=_tname,
+                                arguments=dict(_targs) if isinstance(_targs, dict) else {},
+                                raw=json.dumps(_targs),
+                                call_id=_call_id,
+                            )
+                        )
+                        thread.append(ObservationStep(text=str(_obs), call_id=_call_id))
                     else:
                         batch_observations.append(f"[{_tname}] → Tool not found")
                 # After batch execution, nudge model to synthesize a final answer.
-                scratchpad += f"\n{NUDGE_CONTINUE}"
+                thread.append(
+                    NudgeStep(text=NUDGE_CONTINUE, render_as="raw", nudge_id="continue")
+                )
                 guards.note_batch_run()
                 parsed = {"thought": "", "action": None, "action_input": None, "final_answer": None}
                 dispatched_calls_this_turn = True
@@ -447,10 +489,11 @@ class AgentReActMixin(
             # Debug: Log what was parsed
             logger.info(f"[Iteration {iterations}] Parsed - Action: {parsed.get('action')}, Input: {parsed.get('action_input')}, Final: {parsed.get('final_answer')}")
 
-            # Add to scratchpad. A turn that made a native tool call reports no
-            # thought, and the scratchpad is prompt text the model reads back —
-            # so an absent thought is an empty line, never the word "None".
-            scratchpad += f"\nThought: {parsed.get('thought') or ''}"
+            # Record the turn's own reasoning. A turn that made a native tool
+            # call reports no thought, and the transcript is prompt text the
+            # model reads back — so an absent thought renders as the bare label
+            # and an empty line, never as the word "None".
+            thread.append(ThoughtStep(text=parsed.get("thought") or ""))
 
             # Capture debug iteration data
             cur_observation = None  # filled later if tool runs
@@ -462,7 +505,7 @@ class AgentReActMixin(
                 _iterations: int = iterations,
                 _tool_calls: int = tool_calls,
                 _iter_start: float = iter_start,
-                _scratchpad: str = scratchpad,
+                _thread: AgentThread = AgentThread(steps=list(thread.steps)),
                 **extra_meta: Any,
             ) -> AgentResponse:
                 """Helper to build response and attach debug trace."""
@@ -488,7 +531,7 @@ class AgentReActMixin(
                             tool_ran=guards.tool_ran(written),
                             debug_trace=debug_trace,
                             calls=guards.calls,
-                            scratchpad=_scratchpad,
+                            thread=_thread,
                         )
                     # A tool that computed the answer itself — a move sequence,
                     # a colouring, a sorted list — is answered by summarising it
@@ -497,9 +540,12 @@ class AgentReActMixin(
                     # so a result carrying an "Answer:" line of its own is not
                     # read as a label on the answer.
                     output = relay_result(output, guards.calls, self.tools)
+                if success:
+                    thread.append(AnswerStep(text=output, stop_reason="final_answer"))
                 meta: dict[str, Any] = {
                     "reason": "final_answer",
                     "tool_calling_strategy": self._tool_calling_strategy.name,
+                    "thread": thread,
                 }
                 meta.update(extra_meta)
                 if debug_trace is not None:
@@ -526,13 +572,13 @@ class AgentReActMixin(
                 "n/a",
                 "na",
             }:
-                partial = self._extract_partial_answer(scratchpad)
+                partial = self._extract_partial_answer(thread)
                 if partial:
                     return self._stopped_outcome_response(
                         sanitize_final_answer(partial) or partial,
                         action=guards.calls[-1].name if guards.calls else None,
                         reason="null_final_from_model",
-                        scratchpad=scratchpad,
+                        thread=thread,
                         iterations=iterations,
                         tool_calls=tool_calls,
                         tokens_used=tokens_used,
@@ -561,12 +607,18 @@ class AgentReActMixin(
                             tool_ran=guards.tool_ran(guards.written_call),
                             debug_trace=debug_trace,
                             calls=guards.calls,
-                            scratchpad=scratchpad,
+                            thread=thread,
                         )
                 logger.info(
                     "Discarding scaffolding-only final answer; continuing loop"
                 )
-                scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
+                thread.append(
+                    NudgeStep(
+                        text=NUDGE_NOT_USABLE,
+                        render_as="observation",
+                        nudge_id="not_usable",
+                    )
+                )
                 final_answer = None
 
             if final_answer:
@@ -579,9 +631,12 @@ class AgentReActMixin(
                 # decline again, and the iterations buy more elsewhere.
                 refused_tool = guards.note_execution_refusal()
                 if refused_tool is not None:
-                    scratchpad += (
-                        "\nObservation: "
-                        + NUDGE_MUST_EXECUTE.format(tool=refused_tool)
+                    thread.append(
+                        NudgeStep(
+                            text=NUDGE_MUST_EXECUTE.format(tool=refused_tool),
+                            render_as="observation",
+                            nudge_id="must_execute",
+                        )
                     )
                     continue
 
@@ -606,7 +661,7 @@ class AgentReActMixin(
                         final_answer=final_answer,
                         tokens_used=iter_tokens,
                         latency=time.time() - iter_start,
-                        scratchpad_snapshot=scratchpad,
+                        scratchpad_snapshot=thread.to_text(),
                     ))
                 return _build_response(final_answer)
 
@@ -638,13 +693,13 @@ class AgentReActMixin(
                             final_answer=response_text,
                             tokens_used=iter_tokens,
                             latency=time.time() - iter_start,
-                            scratchpad_snapshot=scratchpad,
+                            scratchpad_snapshot=thread.to_text(),
                         ))
                     return _build_response(response_text)
 
             # Execute action if present
             if parsed.get("action") and parsed.get("action_input"):
-                action = parsed["action"]
+                action = str(parsed["action"])
                 action_input = parsed["action_input"]
 
                 # Repeat detection: the same call again, or the same tool
@@ -671,30 +726,31 @@ class AgentReActMixin(
                         "replaying the recorded result instead of ending the run",
                         action,
                     )
-                    scratchpad += (
-                        f"\nAction: {action}"
-                        f"\nAction Input: {action_input}"
-                        f"\nObservation: {replay}"
-                    )
+                    thread.append(ActionStep(tool=action, raw=str(action_input)))
+                    thread.append(ObservationStep(text=str(replay)))
                     cur_observation = replay
                     nudge = guards.post_tool_nudge(
                         iterations, action_call_count, replay
                     )
                     if nudge:
-                        scratchpad += f"\n{nudge}"
+                        thread.append(
+                            NudgeStep(
+                                text=str(nudge), render_as="raw", nudge_id="post_tool"
+                            )
+                        )
                     continue
                 if check.is_loop:
                     logger.info(
                         f"[Loop detected] Repeated action '{action}' ({check.loop_type}) — "
                         f"the run stops offering this tool"
                     )
-                    # Extract the last successful observation from scratchpad
-                    partial = self._extract_partial_answer(scratchpad)
+                    # Read the last successful observation out of the thread
+                    partial = self._extract_partial_answer(thread)
                     # What a tool returned is not an answer, whatever the tool
                     # was: a retrieved passage is source material, and a
                     # computed number is usually an intermediate one, so
                     # handing either back loses the question it belonged to.
-                    # The model already has both in the scratchpad. Stop
+                    # The model already has both in the transcript. Stop
                     # offering tools and spend one turn asking it to state the
                     # answer from what it has, before falling back to the
                     # progress itself.
@@ -705,10 +761,11 @@ class AgentReActMixin(
                             action,
                         )
                         guards.force_text_answer = True
-                        scratchpad += (
-                            f"\nAction: {action}"
-                            f"\nAction Input: {action_input}"
-                            f"\nObservation: {NUDGE_HAVE_RESULTS}"
+                        thread.append(ActionStep(tool=action, raw=str(action_input)))
+                        thread.append(
+                            ObservationStep(
+                                text=NUDGE_HAVE_RESULTS, declined="loop_detected"
+                            )
                         )
                         continue
                     if partial and self._is_context_retrieval_tool(action):
@@ -716,7 +773,7 @@ class AgentReActMixin(
                             partial,
                             action=action,
                             reason="loop_detected",
-                            scratchpad=scratchpad,
+                            thread=thread,
                             iterations=iterations,
                             tool_calls=tool_calls,
                             tokens_used=tokens_used,
@@ -731,7 +788,7 @@ class AgentReActMixin(
                             sanitize_final_answer(partial) or partial,
                             action=action,
                             reason="loop_detected",
-                            scratchpad=scratchpad,
+                            thread=thread,
                             iterations=iterations,
                             tool_calls=tool_calls,
                             tokens_used=tokens_used,
@@ -745,10 +802,11 @@ class AgentReActMixin(
                     # just told is already computed). Stop offering tools for
                     # the rest of this run so the model must respond in prose.
                     guards.force_text_answer = True
-                    scratchpad += (
-                        f"\nAction: {action}"
-                        f"\nAction Input: {action_input}"
-                        f"\nObservation: {NUDGE_ALREADY_COMPUTED}"
+                    thread.append(ActionStep(tool=action, raw=str(action_input)))
+                    thread.append(
+                        ObservationStep(
+                            text=NUDGE_ALREADY_COMPUTED, declined="already_computed"
+                        )
                     )
                     continue
 
@@ -766,9 +824,8 @@ class AgentReActMixin(
                         if self.tools
                         else NUDGE_NO_TOOLS
                     )
-                    scratchpad += f"\nAction: {action}"
-                    scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: {observation}"
+                    thread.append(ActionStep(tool=action, raw=str(action_input)))
+                    thread.append(ObservationStep(text=str(observation)))
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
@@ -799,13 +856,12 @@ class AgentReActMixin(
                     _slog.tool_event(action, "executed", latency=tool_elapsed)
                     _obs_log.tool_event("executed", tool=action, latency_ms=round(tool_elapsed * 1000, 1))
 
-                    # Add observation to scratchpad
-                    scratchpad += f"\nAction: {action}"
-                    scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: {tool_result}"
+                    # Record the call and what it returned
+                    thread.append(ActionStep(tool=action, raw=str(action_input)))
+                    thread.append(ObservationStep(text=str(tool_result)))
 
                     # Log the observation for debugging
-                    logger.info(f"Tool result added to scratchpad: {tool_result[:100]}...")
+                    logger.info(f"Tool result added to the thread: {tool_result[:100]}...")
 
                     if self._should_return_direct_calculator_result(task, action, action_input):
                         logger.info(
@@ -827,7 +883,7 @@ class AgentReActMixin(
                         # What the tool returned is not the answer, whatever
                         # the tool is: a retrieved passage is source material,
                         # and a repeated number is usually an intermediate one.
-                        # The observation is in the scratchpad, so stop
+                        # The observation is in the transcript, so stop
                         # offering tools and give the model one turn to state
                         # the answer from it, falling back to the progress
                         # itself only when that turn produces nothing.
@@ -838,7 +894,13 @@ class AgentReActMixin(
                                 action,
                             )
                             guards.force_text_answer = True
-                            scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
+                            thread.append(
+                                NudgeStep(
+                                    text=NUDGE_HAVE_RESULTS,
+                                    render_as="raw",
+                                    nudge_id="have_results",
+                                )
+                            )
                             continue
                         logger.info(
                             "[Loop efficiency] Tool '%s' reproduced an identical "
@@ -850,7 +912,7 @@ class AgentReActMixin(
                                 tool_result,
                                 action=action,
                                 reason="repeated_tool_result",
-                                scratchpad=scratchpad,
+                                thread=thread,
                                 iterations=iterations,
                                 tool_calls=tool_calls,
                                 tokens_used=tokens_used,
@@ -865,7 +927,7 @@ class AgentReActMixin(
                             sanitize_final_answer(tool_result) or tool_result,
                             action=action,
                             reason="repeated_tool_result",
-                            scratchpad=scratchpad,
+                            thread=thread,
                             iterations=iterations,
                             tool_calls=tool_calls,
                             tokens_used=tokens_used,
@@ -878,7 +940,11 @@ class AgentReActMixin(
                         iterations, action_call_count, tool_result
                     )
                     if nudge:
-                        scratchpad += f"\n{nudge}"
+                        thread.append(
+                            NudgeStep(
+                                text=str(nudge), render_as="raw", nudge_id="post_tool"
+                            )
+                        )
 
             else:
                 # A turn that produced neither an action nor an answer, but did
@@ -899,11 +965,23 @@ class AgentReActMixin(
                             tool_ran=guards.tool_ran(guards.written_call),
                             debug_trace=debug_trace,
                             calls=guards.calls,
-                            scratchpad=scratchpad,
+                            thread=thread,
                         )
-                    scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
+                    thread.append(
+                        NudgeStep(
+                            text=NUDGE_NOT_USABLE,
+                            render_as="observation",
+                            nudge_id="not_usable",
+                        )
+                    )
                 # No action specified, prompt to continue
-                scratchpad += "\nAction: (continue reasoning)"
+                thread.append(
+                    NudgeStep(
+                        text=CONTINUE_REASONING_LINE,
+                        render_as="raw",
+                        nudge_id="continue_reasoning",
+                    )
+                )
 
             # Record debug iteration
             if debug_trace is not None:
@@ -918,12 +996,12 @@ class AgentReActMixin(
                     observation=cur_observation,
                     tokens_used=iter_tokens,
                     latency=time.time() - iter_start,
-                    scratchpad_snapshot=scratchpad,
+                    scratchpad_snapshot=thread.to_text(),
                 ))
 
         # Max iterations reached. When every turn wrote its tool call out as
         # text and nothing ran, the cap is a symptom: report the cause instead.
-        partial_answer = self._extract_partial_answer(scratchpad)
+        partial_answer = self._extract_partial_answer(thread)
         if guards.written_call and not partial_answer:
             return self._written_tool_call_response(
                 guards.written_call,
@@ -934,9 +1012,9 @@ class AgentReActMixin(
                 tool_ran=guards.tool_ran(guards.written_call),
                 debug_trace=debug_trace,
                 calls=guards.calls,
-                scratchpad=scratchpad,
+                thread=thread,
             )
-        # The run stopped without a final answer. Whatever the scratchpad holds
+        # The run stopped without a final answer. Whatever the thread holds
         # is a tool observation or a half-finished thought — source material, not
         # something the model wrote as its answer — so it is reported as progress
         # under ``partial_output`` and the outcome itself states what happened
@@ -947,15 +1025,17 @@ class AgentReActMixin(
         reason = (
             "max_iterations_partial" if partial_answer else "max_iterations_exhausted"
         )
+        thread.append(AnswerStep(text=partial_answer or "", stop_reason=reason))
         meta: dict[str, Any] = {
             "reason": reason,
             "error": detail,
             "tool_calling_strategy": self._tool_calling_strategy.name,
+            "thread": thread,
         }
         cap_partial = None
         if partial_answer:
             cap_partial = self._partial_result(
-                scratchpad,
+                thread,
                 text=partial_answer,
                 calls=guards.calls,
                 iterations=iterations,
@@ -1064,7 +1144,7 @@ class AgentReActMixin(
         tool_ran: bool = False,
         debug_trace: Any = None,
         calls: Any = (),
-        scratchpad: str = "",
+        thread: AgentThread | None = None,
     ) -> AgentResponse:
         """Report a turn whose answer only describes the tool call it should have made.
 
@@ -1075,16 +1155,19 @@ class AgentReActMixin(
         """
         detail = self._written_tool_call_detail(tool_name, answer, tool_ran=tool_ran)
         logger.warning("Tool call was written as text, not made: %s", detail["message"])
+        run = thread if thread is not None else AgentThread()
+        run.append(AnswerStep(text=answer or "", stop_reason="written_tool_call"))
         meta: dict[str, Any] = {
             "reason": "written_tool_call",
             "error": detail,
             "tool_calling_strategy": detail["tool_calling_strategy"],
+            "thread": run,
         }
         partial = None
         if calls:
             candidate = self._partial_result(
-                scratchpad,
-                text=self._extract_partial_answer(scratchpad) or "",
+                run,
+                text=self._extract_partial_answer(run) or "",
                 calls=calls,
                 iterations=iterations,
                 tool_calls=tool_calls,
@@ -1121,7 +1204,7 @@ class AgentReActMixin(
         *,
         action: str | None,
         reason: str,
-        scratchpad: str,
+        thread: AgentThread,
         iterations: int,
         tool_calls: int,
         tokens_used: int,
@@ -1152,7 +1235,7 @@ class AgentReActMixin(
             action: The tool involved, or ``None`` when unnamed.
             reason: ``"loop_detected"``, ``"repeated_tool_result"`` or
                 ``"null_final_from_model"``.
-            scratchpad: The run's scratchpad, read for the last thought.
+            thread: The run's conversation, read for the last thought.
             iterations: Iterations run.
             tool_calls: Tool calls made.
             tokens_used: Tokens consumed.
@@ -1168,12 +1251,13 @@ class AgentReActMixin(
             action, reason, retrieval=retrieval, answer=answer
         )
         partial = self._partial_result(
-            scratchpad,
+            thread,
             text=text,
             calls=calls,
             iterations=iterations,
             tool_calls=tool_calls,
         )
+        thread.append(AnswerStep(text=text, stop_reason=reason))
         meta: dict[str, Any] = {
             "reason": reason,
             "error": detail,
@@ -1182,6 +1266,7 @@ class AgentReActMixin(
             "partial": True,
             "partial_output": text,
             "tool_calling_strategy": self._tool_calling_strategy.name,
+            "thread": thread,
         }
         logger.info(
             "outcome stopped: stop_reason=%s tool=%s category=%s observations=%d",
@@ -1285,7 +1370,7 @@ class AgentReActMixin(
         """Return the typed outcome for a run that stopped at its iteration cap.
 
         The loop ran out of iterations before the model wrote a final answer, so
-        the run has no answer to report. What the scratchpad holds at that point
+        the run has no answer to report. What the thread holds at that point
         is tool output and reasoning: returning it as the result presents a
         retrieved passage as if the model had written it. The outcome therefore
         states what happened and what to do, and the recovered text travels

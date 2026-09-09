@@ -29,9 +29,47 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from .agent_response import PartialResult
+    from .thread import AgentThread, ObservationStep
 
 # The parsers log to the ReAct stream they serve.
 logger = logging.getLogger("effgen.core.agent_react")
+
+#: A turn that announces it has the answer, and then states it. What follows
+#: the announcement is the answer; the announcement itself is not.
+_KNOWS_THE_ANSWER_RE = re.compile(
+    r"I (?:now )?know[^.]*\.\s*(.+)\Z", re.IGNORECASE | re.DOTALL
+)
+
+#: A thought shorter than this is bookkeeping, not something to report back.
+_SUBSTANTIVE_THOUGHT_CHARS = 20
+
+#: A weekday names an answer of its own, whatever the tool that produced it
+#: went on to say.
+_DAY_NAMES = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+
+
+def _without_scaffolding(step: "ObservationStep") -> str | None:
+    """What a tool returned, or ``None`` when the framework wrote the line.
+
+    A call the loop declined to make is answered with an instruction rather
+    than a result, and a transcript read back from an older run can carry one
+    of the framework's own lines where an observation goes. Neither is progress
+    the run made.
+    """
+    if getattr(step, "declined", None):
+        return None
+    text = step.text
+    for pattern in _SCAFFOLD_LITERAL_RES:
+        text = pattern.sub("", text)
+    return text
 
 
 class AgentReActParsingMixin:
@@ -96,51 +134,46 @@ class AgentReActParsingMixin:
             self._text_fallback_strategy = cached
         return cached
 
-    def _extract_partial_answer(self, scratchpad: str) -> str | None:
-        """
-        Extract the best partial answer from the scratchpad when max iterations is reached.
+    def _extract_partial_answer(self, thread: "AgentThread") -> str | None:
+        """What the run had reached when it stopped without writing an answer.
 
-        Looks for patterns like "I now know the answer", recent observations with
-        answer-like content, or the last substantive thought.
+        Read from the run's steps rather than from the transcript they render:
+        a thought is a thought because it is one, not because a line began with
+        the word. A line the framework injected is not the run's progress and is
+        never a candidate, and neither is a call the loop declined to make.
 
         Args:
-            scratchpad: The accumulated scratchpad text.
+            thread: The run's conversation.
 
         Returns:
-            A partial answer string, or None if nothing useful found.
+            A partial answer string, or ``None`` when the run reached nothing
+            worth reporting.
         """
-        if not scratchpad:
+        if thread is None or not len(thread):
             return None
 
-        # Remove injected loop-bookkeeping markers before extraction so they are
-        # never captured into an observation/thought and leaked as the answer.
-        for pat in _SCAFFOLD_LITERAL_RES:
-            scratchpad = pat.sub("", scratchpad)
+        # A turn that says it has the answer and then states it. The statement
+        # is what is wanted, not the announcement.
+        for step in thread.thoughts():
+            match = _KNOWS_THE_ANSWER_RE.match(step.text.strip())
+            if match and match.group(1).strip():
+                return match.group(1).strip()
 
-        # Pattern 1: "I now know" type thoughts
-        know_match = re.search(
-            r"Thought:\s*I (?:now )?know[^.]*\.\s*(.+?)(?=\nThought:|\nAction:|\Z)",
-            scratchpad, re.IGNORECASE | re.DOTALL
-        )
-        if know_match:
-            return know_match.group(1).strip()
-
-        # Pattern 2: Observations with clear result values
-        observations = re.findall(r"Observation:\s*(.+?)(?=\nThought:|\nAction:|\Z)", scratchpad, re.DOTALL)
+        # What the tools returned. An observation the framework wrote — a
+        # nudge, or a declined call answered with an instruction — is the
+        # framework's words and is not progress.
+        observations = [
+            text
+            for text in (_without_scaffolding(step) for step in thread.observations())
+            if text is not None
+        ]
         if observations:
-            # If multiple observations, combine non-error ones for multi-tool tasks.
             # Strip tool-echo prefixes ("[tool(args)] → result") so only the
             # results are joined, not the scaffolding.
             valid_obs = [
                 self._humanize_observation(_TOOL_ECHO_RE.sub("", o.strip()))
                 for o in observations
                 if o.strip() and not o.strip().lower().startswith("error")
-            ]
-            # Drop any segment that is pure ReAct scaffolding (a stray
-            # "Thought:/Action:" that slipped past the boundary regex).
-            valid_obs = [
-                o for o in valid_obs
-                if o and not re.match(r"^(thought|action|observation|final answer)\b", o.strip(), re.IGNORECASE)
             ]
             # Deduplicate while preserving order — a model that loops on the same
             # retrieval/search tool produces the same passage repeatedly, and
@@ -157,26 +190,27 @@ class AgentReActParsingMixin:
             elif valid_obs:
                 return sanitize_final_answer(valid_obs[-1])
 
-        # Pattern 2b: Look for day names or numeric results in any observation
-        day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        for obs in reversed(observations) if observations else []:
-            obs_lower = obs.strip().lower()
-            for day in day_names:
-                if day in obs_lower:
-                    return obs.strip()
+            # A named day is an answer even when the tool that produced it
+            # failed on the rest of the question.
+            for obs in reversed(observations):
+                obs_lower = obs.strip().lower()
+                for day in _DAY_NAMES:
+                    if day in obs_lower:
+                        return obs.strip()
 
-        # Pattern 3: Last substantive thought
-        thoughts = re.findall(r"Thought:\s*(.+?)(?=\nAction:|\nObservation:|\Z)", scratchpad, re.DOTALL)
+        # Failing that, the last thought the run wrote, when it wrote enough of
+        # one to be worth reporting.
+        thoughts = thread.thoughts()
         if thoughts:
-            last_thought = thoughts[-1].strip()
-            if len(last_thought) > 20:
+            last_thought = thoughts[-1].text.strip()
+            if len(last_thought) > _SUBSTANTIVE_THOUGHT_CHARS:
                 return last_thought
 
         return None
 
     def _partial_result(
         self,
-        scratchpad: str,
+        thread: "AgentThread",
         *,
         text: str,
         calls: "Sequence[Any]" = (),
@@ -191,7 +225,7 @@ class AgentReActParsingMixin:
         with each tool's own words rather than a joined rewrite of them.
 
         Args:
-            scratchpad: The accumulated scratchpad, read for the last thought.
+            thread: The run's conversation, read for the last thought.
             text: The flattened partial text.
             calls: The run's tool-call records, in call order.
             iterations: Iterations the run had made.
@@ -208,19 +242,11 @@ class AgentReActParsingMixin:
             if result is None:
                 result = getattr(call, "error", None)
             observations.append("" if result is None else str(result))
-        thoughts = re.findall(
-            r"Thought:\s*(.+?)(?=\nAction:|\nObservation:|\Z)", scratchpad or "", re.DOTALL
-        )
-        last_thought = None
-        for candidate in reversed(thoughts):
-            stripped = candidate.strip()
-            if stripped:
-                last_thought = stripped
-                break
+        thought = thread.last_thought() if thread is not None else None
         return PartialResult(
             observations=tuple(observations),
             last_observation=observations[-1] if observations else None,
-            last_thought=last_thought,
+            last_thought=thought.text.strip() if thought is not None else None,
             text=text,
             iterations=iterations,
             tool_calls=tool_calls,
