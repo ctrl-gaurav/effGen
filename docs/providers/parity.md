@@ -49,10 +49,26 @@ on the same assistant turn as the call it made, and each tool result answering t
 and it reaches only an adapter whose `supports_message_protocol()` says it carries both parts
 through to the provider.
 
-Carrying the message protocol today: the OpenAI adapter and every OpenAI-compatible endpoint
-built on it (a served model, vLLM, and any provider exposing the same request schema). Every
-other adapter answers `False`, so a run that asks for `"messages"` there gets the flat
-transcript and one log line saying which model and why — never a rejected request.
+Every requested call is answered, including the ones the loop declines to dispatch — a repeat
+it already has the result for, a call the loop breaker stopped, a tool the agent does not
+hold — because a conversation carrying a call with no reply is rejected outright by a
+provider. `AgentThread.unanswered_call_ids()` is the invariant; it is empty on every run
+effGen produces.
+
+Carrying the message protocol today, each in its own provider's shape:
+
+| adapter | a tool call travels as | its result travels as |
+|---|---|---|
+| OpenAI, and every OpenAI-compatible endpoint | `tool_calls` on the assistant message | a `tool` message quoting `tool_call_id` |
+| Groq, Together, Cerebras, Fireworks, HF inference | the same | the same |
+| Anthropic | a `tool_use` content block | a `tool_result` block in a user turn |
+| Gemini | a `function_call` part | a `function_response` part |
+| Replicate | `tool_calls`, on the models whose input schema is a message array | a `tool` message quoting `tool_call_id` |
+
+The local chat-template engines — Transformers, vLLM in-process, MLX, GGUF — answer `False`:
+they render a prompt from a template and have no tool role to put a result in. A run that
+asks for `"messages"` there gets the flat transcript and one log line saying which model and
+why — never a rejected request.
 
 ## Switching Providers
 
