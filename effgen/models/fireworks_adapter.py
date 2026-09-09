@@ -33,6 +33,7 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._tool_wire import messages_to_openai
 from effgen.models._usage import (
     accumulate_stream_tool_call_deltas,
     cost_label,
@@ -339,6 +340,17 @@ class FireworksAdapter(BaseModel):
 
         return result
 
+    def _create_messages(self, prompt: Any) -> list[dict[str, Any]]:
+        """The prompt as this provider's message array.
+
+        A conversation travels as one, so an assistant turn's tool call and the
+        result answering it reach the request with the id the provider minted.
+        Anything that is not a conversation is sent as a single user turn.
+        """
+        return messages_to_openai(
+            prompt, provider='fireworks', model_name=self.model_name
+        ) or [{"role": "user", "content": prompt}]
+
     def _do_generate(
         self,
         prompt: str,
@@ -349,7 +361,7 @@ class FireworksAdapter(BaseModel):
     ) -> GenerationResult:
         """Internal: make the SDK call and return a GenerationResult."""
         if messages is None:
-            messages = [{"role": "user", "content": prompt}]
+            messages = self._create_messages(prompt)
 
         request_params: dict[str, Any] = {
             "model": self.model_name,
@@ -575,7 +587,7 @@ class FireworksAdapter(BaseModel):
         if config is None:
             config = GenerationConfig()
 
-        messages = [{"role": "user", "content": prompt}]
+        messages = self._create_messages(prompt)
         request_params: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
@@ -747,6 +759,18 @@ class FireworksAdapter(BaseModel):
     def supports_tool_calling(self) -> bool:
         """Return True if the loaded model supports native tool-calling."""
         return bool(FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False))
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        the request's ``tool_calls`` entry, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a ``tool``
+        message answering that call id. A model with no native tool calling has
+        no call to carry, so the declaration follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: ``tool_choice`` is honoured here.

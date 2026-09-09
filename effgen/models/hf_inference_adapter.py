@@ -411,10 +411,16 @@ class HFInferenceAdapter(BaseModel):
         from effgen.core.messages import AudioPart, ImagePart, TextPart, VideoPart
         from effgen.multimodal.image_pre import prepare as _preprocess_image
 
+        from ._tool_wire import openai_message, split_tool_parts
+
         role = message.role.value
+        # A turn's tool call and its result are separated out first, so the
+        # loop below stays about content and the call reaches the request with
+        # the id the provider minted for it.
+        other_parts, tool_calls, tool_result = split_tool_parts(message)
         content_parts: list[dict[str, Any]] = []
 
-        for part in message.content:
+        for part in other_parts:
             if isinstance(part, TextPart):
                 content_parts.append({"type": "text", "text": part.text})
             elif isinstance(part, ImagePart):
@@ -443,9 +449,7 @@ class HFInferenceAdapter(BaseModel):
                         "image_url": {"url": f"data:{part.mime};base64,{b64}"},
                     })
 
-        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-            return {"role": role, "content": content_parts[0]["text"]}
-        return {"role": role, "content": content_parts}
+        return openai_message(role, content_parts, tool_calls, tool_result)
 
     def _transcribe_audio_part(self, part: Any) -> str:
         """Transcribe a single AudioPart via HF automatic_speech_recognition."""
@@ -517,20 +521,26 @@ class HFInferenceAdapter(BaseModel):
         if messages is not None:
             return messages
 
-        # Handle effGen Message objects
-        try:
-            from effgen.core.messages import Message
-            if isinstance(prompt, Message):
-                return [self._effgen_message_to_dict(prompt)]
-            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
-                return [self._effgen_message_to_dict(m) for m in prompt]
-        except ImportError:
-            pass
+        conversation = self._create_messages(prompt)
+        if conversation is not None:
+            return conversation
 
         return [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
+
+    def _create_messages(self, prompt: Any) -> list[dict[str, Any]] | None:
+        """The prompt as this provider's message array, when it is one.
+
+        A conversation travels as one, so an assistant turn's tool call and the
+        result answering it reach the request with the id the provider minted.
+        Returns ``None`` for a prompt that is not a conversation, which the
+        caller frames with its own system turn.
+        """
+        from ._tool_wire import messages_via
+
+        return messages_via(self._effgen_message_to_dict, prompt)
 
     # ------------------------------------------------------------------
     # Generation (non-streaming)
@@ -1148,6 +1158,18 @@ class HFInferenceAdapter(BaseModel):
     def supports_tool_calling(self) -> bool:
         """True when the catalog marks this model as supporting native tools."""
         return bool(self._info.get("supports_native_tools", False))
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        the request's ``tool_calls`` entry, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a ``tool``
+        message answering that call id. A model with no native tool calling has
+        no call to carry, so the declaration follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: ``tool_choice`` is honoured here.

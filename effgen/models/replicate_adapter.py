@@ -57,6 +57,7 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._tool_wire import messages_to_openai
 from effgen.models._usage import normalize_tool_calls
 from effgen.models.base import (
     BaseModel,
@@ -340,9 +341,38 @@ class ReplicateAdapter(BaseModel):
         """Return the model's context window size (8192 when unknown)."""
         return self._info.get("context", 8_192)
 
+    def supports_message_protocol(self) -> bool:
+        """Whether this model's input schema carries a call and its result.
+
+        Replicate runs many models behind one API and each declares its own
+        input schema. Only the models taking an OpenAI-style message array with
+        native tools have somewhere for a tool call and its answering result to
+        go, so the declaration reads the model's own schema rather than
+        answering for the provider as a whole.
+        """
+        info = self._info
+        return (
+            info.get("input_schema") == "messages"
+            and bool(info.get("supports_native_tools"))
+        )
+
     # ------------------------------------------------------------------
     # Input helpers
     # ------------------------------------------------------------------
+
+    def _create_messages(self, prompt: Any) -> list[dict[str, Any]] | None:
+        """The prompt as a message array, when it is a conversation.
+
+        Reaches the request only on the models whose input schema is a message
+        array; an assistant turn's tool call travels as ``tool_calls`` and the
+        result answering it as a ``tool`` message quoting the id.
+
+        Returns:
+            The message array, or ``None`` when *prompt* is not a conversation.
+        """
+        return messages_to_openai(
+            prompt, provider="replicate", model_name=self.model_name
+        )
 
     def _build_input(
         self,
@@ -356,6 +386,9 @@ class ReplicateAdapter(BaseModel):
         info = self._info
         schema = info.get("input_schema", "prompt_only")
         max_tok = config.max_tokens or 512
+
+        if messages is None:
+            messages = self._create_messages(prompt)
 
         if schema == "messages" and messages is not None:
             # Models that accept an OpenAI-style messages array

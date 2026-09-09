@@ -631,12 +631,27 @@ class GeminiAdapter(FunctionCallingModel):
             if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
                 # Multi-turn: flatten all messages into a contents list
                 from google.genai import types as _gt  # type: ignore[import]
+
+                from ._tool_wire import call_names_by_id
+
+                # A result part carries the id it answers but not the tool's
+                # name, and a function response is keyed by name here. The name
+                # is read off the call that earned the id.
+                call_names = call_names_by_id(prompt)
                 contents = []
                 for msg in prompt:
-                    role = "user" if msg.role.value in ("user", "system") else "model"
+                    # A tool result belongs to the user side of the exchange:
+                    # the model asked, and this is what came back.
+                    role = (
+                        "user"
+                        if msg.role.value in ("user", "system", "tool")
+                        else "model"
+                    )
                     contents.append(_gt.Content(
                         role=role,
-                        parts=self._message_to_genai_parts(msg, _preprocess_image),
+                        parts=self._message_to_genai_parts(
+                            msg, _preprocess_image, call_names=call_names,
+                        ),
                     ))
                 return contents
         except ImportError:
@@ -655,8 +670,37 @@ class GeminiAdapter(FunctionCallingModel):
                 parts.append(item)
         return parts
 
-    def _message_to_genai_parts(self, message: Any, preprocess_fn: Any) -> list[Any]:
+    def _create_messages(self, prompt: Any) -> list[Any] | None:
+        """The prompt as this provider's contents list, when it is a conversation.
+
+        An assistant turn's tool call travels as a ``function_call`` part
+        carrying the id the provider minted, and the result answering it as a
+        ``function_response`` part quoting the same id.
+
+        Returns:
+            The contents list, or ``None`` when *prompt* is not a conversation.
+        """
+        try:
+            from effgen.core.messages import Message
+        except ImportError:  # pragma: no cover - effgen.core is always importable
+            return None
+        if isinstance(prompt, Message):
+            prompt = [prompt]
+        if not (isinstance(prompt, list) and prompt and isinstance(prompt[0], Message)):
+            return None
+        contents = self._prepare_content(prompt)
+        return list(contents) if isinstance(contents, list) else None
+
+    def _message_to_genai_parts(
+        self, message: Any, preprocess_fn: Any,
+        call_names: dict[str, str] | None = None,
+    ) -> list[Any]:
         """Convert an effGen Message to a list of google.genai Part objects.
+
+        A tool call travels as a ``function_call`` part carrying the id the
+        provider minted, and its result as a ``function_response`` part quoting
+        the same id. *call_names* supplies the tool name a response is keyed
+        by, since a result part carries only the id.
 
         VideoPart handling:
           - If the model supports native video (supports_video=True in registry)
@@ -667,13 +711,37 @@ class GeminiAdapter(FunctionCallingModel):
         """
         from google.genai import types as _gt  # type: ignore[import]
 
-        from effgen.core.messages import AudioPart, ImagePart, TextPart, VideoPart
+        from effgen.core.messages import (
+            AudioPart,
+            ImagePart,
+            TextPart,
+            ToolCallPart,
+            ToolResultPart,
+            VideoPart,
+        )
+
+        from ._tool_wire import result_text
 
         model_info = GEMINI_MODELS.get(self.model_name, {})
         supports_native_video = bool(model_info.get("supports_video", False))
+        names = call_names or {}
 
         parts: list[Any] = []
         for part in message.content:
+            if isinstance(part, ToolCallPart):
+                parts.append(_gt.Part(function_call=_gt.FunctionCall(
+                    id=part.tool_call_id,
+                    name=part.name,
+                    args=dict(part.arguments),
+                )))
+                continue
+            if isinstance(part, ToolResultPart):
+                parts.append(_gt.Part(function_response=_gt.FunctionResponse(
+                    id=part.tool_call_id,
+                    name=names.get(part.tool_call_id, part.tool_call_id),
+                    response={"result": result_text(part.result)},
+                )))
+                continue
             if isinstance(part, TextPart):
                 parts.append(_gt.Part.from_text(text=part.text))
             elif isinstance(part, ImagePart):
@@ -1206,6 +1274,16 @@ class GeminiAdapter(FunctionCallingModel):
     def supports_tool_calling(self) -> bool:
         """Alias for :meth:`supports_function_calling`."""
         return True
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        a ``function_call`` part carrying the id the provider minted, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a
+        ``function_response`` part quoting the same id.
+        """
+        return self.supports_tool_calling()
 
     def streams_tool_calls(self) -> bool:
         """True: a streamed turn's native function calls are recorded."""

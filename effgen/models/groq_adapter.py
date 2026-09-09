@@ -460,6 +460,19 @@ class GroqAdapter(BaseModel):
 
         return result
 
+    def _create_messages(self, prompt: Any) -> list[dict[str, Any]]:
+        """The prompt as this provider's message array.
+
+        A conversation travels as one, so an assistant turn's tool call and the
+        result answering it reach the request with the id the provider minted.
+        Anything that is not a conversation is sent as a single user turn.
+        """
+        from ._tool_wire import messages_via
+
+        return messages_via(self._message_to_groq, prompt) or [
+            {"role": "user", "content": prompt}
+        ]
+
     @staticmethod
     def _message_to_groq(message: Any) -> dict[str, Any]:
         """Convert an effGen Message to a Groq/OpenAI-compatible dict."""
@@ -468,10 +481,16 @@ class GroqAdapter(BaseModel):
         from effgen.core.messages import ImagePart, TextPart, VideoPart
         from effgen.multimodal.image_pre import prepare as _preprocess_image
 
+        from ._tool_wire import openai_message, split_tool_parts
+
         role = message.role.value
+        # A turn's tool call and its result are separated out first, so the
+        # loop below stays about content and the call reaches the request with
+        # the id the provider minted for it.
+        other_parts, tool_calls, tool_result = split_tool_parts(message)
         content_parts: list[dict[str, Any]] = []
 
-        for part in message.content:
+        for part in other_parts:
             if isinstance(part, TextPart):
                 content_parts.append({"type": "text", "text": part.text})
             elif isinstance(part, ImagePart):
@@ -489,9 +508,7 @@ class GroqAdapter(BaseModel):
                         "image_url": {"url": f"data:{part.mime};base64,{b64}"},
                     })
 
-        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-            return {"role": role, "content": content_parts[0]["text"]}
-        return {"role": role, "content": content_parts}
+        return openai_message(role, content_parts, tool_calls, tool_result)
 
     def _estimate_prompt_tokens(self, request_params: dict[str, Any]) -> int:
         """Estimate prompt tokens from a request's messages and tool schemas.
@@ -550,17 +567,7 @@ class GroqAdapter(BaseModel):
     ) -> GenerationResult:
         """Internal: make the SDK call and return a GenerationResult."""
         if messages is None:
-            # Handle effGen Message objects
-            try:
-                from effgen.core.messages import Message
-                if isinstance(prompt, Message):
-                    messages = [self._message_to_groq(prompt)]
-                elif isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
-                    messages = [self._message_to_groq(m) for m in prompt]
-                else:
-                    messages = [{"role": "user", "content": prompt}]
-            except ImportError:
-                messages = [{"role": "user", "content": prompt}]
+            messages = self._create_messages(prompt)
 
         request_params: dict[str, Any] = {
             "model": self.model_name,
@@ -875,17 +882,7 @@ class GroqAdapter(BaseModel):
             hint="Use 'qwen/qwen3.6-27b' for Groq vision.",
         )
 
-        try:
-            from effgen.core.messages import Message
-
-            if isinstance(prompt, Message):
-                messages = [self._message_to_groq(prompt)]
-            elif isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
-                messages = [self._message_to_groq(m) for m in prompt]
-            else:
-                messages = [{"role": "user", "content": prompt}]
-        except ImportError:
-            messages = [{"role": "user", "content": prompt}]
+        messages = self._create_messages(prompt)
         request_params: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
@@ -1069,6 +1066,18 @@ class GroqAdapter(BaseModel):
     def supports_tool_calling(self) -> bool:
         """Return True if the loaded model supports native tool-calling."""
         return GROQ_MODELS.get(self.model_name, {}).get("supports_native_tools", False)
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        the request's ``tool_calls`` entry, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a ``tool``
+        message answering that call id. A model with no native tool calling has
+        no call to carry, so the declaration follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: ``tool_choice`` is honoured here.

@@ -16,7 +16,6 @@ Supports:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections.abc import Iterator
@@ -348,21 +347,22 @@ class OpenAIAdapter(FunctionCallingModel):
             AudioPart,
             ImagePart,
             TextPart,
-            ToolCallPart,
-            ToolResultPart,
             VideoPart,
         )
         from effgen.multimodal.image_pre import prepare as _preprocess_image
 
+        from ._tool_wire import openai_message, split_tool_parts
+
         role = message.role.value
-        if role == "tool":
-            role = "tool"
+
+        # An assistant turn states its call in `tool_calls` beside whatever it
+        # said in its own words, and a result answers one call by id — a `tool`
+        # message without the id is rejected by the request schema. Both are
+        # separated out first so the loop below stays about content.
+        other_parts, tool_calls, tool_result = split_tool_parts(message)
 
         content_parts: list[dict[str, Any]] = []
-        tool_calls: list[dict[str, Any]] = []
-        tool_result_id: str | None = None
-        tool_result_text: str = ""
-        for part in message.content:
+        for part in other_parts:
             if isinstance(part, TextPart):
                 content_parts.append({"type": "text", "text": part.text})
             elif isinstance(part, ImagePart):
@@ -391,49 +391,8 @@ class OpenAIAdapter(FunctionCallingModel):
                         "type": "image_url",
                         "image_url": {"url": f"data:{part.mime};base64,{b64}"},
                     })
-            elif isinstance(part, ToolCallPart):
-                # An assistant turn states its call in `tool_calls`, beside
-                # whatever it said in its own words. Dropping it here left the
-                # request carrying the reasoning and no call at all.
-                tool_calls.append({
-                    "id": part.tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": part.name,
-                        "arguments": json.dumps(part.arguments),
-                    },
-                })
-            elif isinstance(part, ToolResultPart):
-                # A result answers one call, by id. A `tool` message without
-                # the id is rejected by the request schema, so a conversation
-                # assembled without it never reached the provider at all.
-                tool_result_id = part.tool_call_id
-                tool_result_text = (
-                    part.result if isinstance(part.result, str)
-                    else json.dumps(part.result, default=str)
-                )
 
-        if tool_result_id is not None:
-            return {
-                "role": "tool",
-                "tool_call_id": tool_result_id,
-                "content": tool_result_text,
-            }
-
-        # If content has a single text part, simplify to string
-        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-            message_dict: dict[str, Any] = {
-                "role": role, "content": content_parts[0]["text"]
-            }
-        elif content_parts:
-            message_dict = {"role": role, "content": content_parts}
-        else:
-            # An assistant turn that only made a call has no content of its
-            # own. The API wants the key present and null, not absent.
-            message_dict = {"role": role, "content": None}
-        if tool_calls:
-            message_dict["tool_calls"] = tool_calls
-        return message_dict
+        return openai_message(role, content_parts, tool_calls, tool_result)
 
     def _transcribe_audio_part(self, part: Any) -> str:
         """Transcribe a single AudioPart via the Whisper API.

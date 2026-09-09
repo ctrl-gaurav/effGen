@@ -248,13 +248,43 @@ class AnthropicAdapter(FunctionCallingModel):
         """Convert an effGen Message to an Anthropic message dict."""
         import base64
 
-        from effgen.core.messages import ImagePart, TextPart, VideoPart
+        from effgen.core.messages import (
+            ImagePart,
+            TextPart,
+            ToolCallPart,
+            ToolResultPart,
+            VideoPart,
+        )
         from effgen.multimodal.image_pre import prepare as _preprocess_image
 
-        role = message.role.value
+        from ._tool_wire import result_text
+
+        # The Messages API has no `tool` role: a result travels as a
+        # `tool_result` block inside a user turn, quoting the id of the
+        # `tool_use` block it answers. So the role is decided by what the
+        # message carries, not only by what it declared.
+        role = "user" if message.role.value in ("tool", "system") else message.role.value
         content_parts: list[dict] = []
 
         for part in message.content:
+            if isinstance(part, ToolCallPart):
+                content_parts.append({
+                    "type": "tool_use",
+                    "id": part.tool_call_id,
+                    "name": part.name,
+                    "input": dict(part.arguments),
+                })
+                continue
+            if isinstance(part, ToolResultPart):
+                block: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": part.tool_call_id,
+                    "content": result_text(part.result),
+                }
+                if part.is_error:
+                    block["is_error"] = True
+                content_parts.append(block)
+                continue
             if isinstance(part, TextPart):
                 content_parts.append({"type": "text", "text": part.text})
             elif isinstance(part, ImagePart):
@@ -317,6 +347,52 @@ class AnthropicAdapter(FunctionCallingModel):
                 content.append({"type": "text", "text": str(item)})
         return content
 
+    @staticmethod
+    def _system_text(prompt: Any) -> str:
+        """The text of any system turns in a conversation, joined.
+
+        Takes one message or a list of them, so a caller who passed a single
+        :class:`~effgen.core.messages.Message` is read the same way as one who
+        passed a conversation.
+        """
+        from effgen.core.messages import Message
+
+        messages: Any = [prompt] if isinstance(prompt, Message) else prompt
+        return "\n\n".join(
+            str(getattr(part, "text", ""))
+            for message in messages if message.role.value == "system"
+            for part in message.content if getattr(part, "type", "") == "text"
+        )
+
+    def _create_messages(self, prompt: Any) -> list[dict[str, Any]] | None:
+        """The prompt as this provider's message array, when it is a conversation.
+
+        An assistant turn's tool call travels as a ``tool_use`` block and the
+        result answering it as a ``tool_result`` block quoting the same id. A
+        system turn is not in the array at all — the Messages API takes its
+        instructions in ``system`` — so it is dropped here and hoisted by
+        :meth:`_build_request`.
+
+        Returns:
+            The message array, or ``None`` when *prompt* is not a conversation.
+        """
+        try:
+            from effgen.core.messages import Message
+        except ImportError:  # pragma: no cover - effgen.core is always importable
+            return None
+        if isinstance(prompt, Message):
+            prompt = [prompt]
+        if not (isinstance(prompt, list) and prompt and isinstance(prompt[0], Message)):
+            return None
+        turns = [
+            self._effgen_message_to_anthropic(message)
+            for message in prompt if message.role.value != "system"
+        ]
+        # A conversation of nothing but instructions has no turn to send, and
+        # the Messages API refuses an empty array. The caller frames it as one
+        # turn instead, which is what it did before this array existed.
+        return turns or None
+
     def _build_request(
         self,
         prompt: str | list,
@@ -335,14 +411,15 @@ class AnthropicAdapter(FunctionCallingModel):
         count across system + messages + tools does not exceed 4.
         """
         # Handle effGen Message list (multi-turn)
-        try:
-            from effgen.core.messages import Message
-            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
-                messages = [self._effgen_message_to_anthropic(m) for m in prompt]
-            else:
-                messages = [{"role": "user", "content": self._build_content(prompt)}]
-        except ImportError:
+        messages = self._create_messages(prompt)
+        if messages is None:
             messages = [{"role": "user", "content": self._build_content(prompt)}]
+        elif not system_prompt:
+            # The Messages API takes its instructions in `system`, not as a
+            # turn in the conversation.
+            carried = self._system_text(prompt)
+            if carried:
+                system_prompt = carried
         request: dict[str, Any] = {
             "model": self.model_name,
             "max_tokens": config.max_tokens or 4096,
@@ -1131,6 +1208,19 @@ class AnthropicAdapter(FunctionCallingModel):
     def supports_tool_calling(self) -> bool:
         """Alias for :meth:`supports_function_calling`."""
         return self.supports_function_calling()
+
+    def supports_message_protocol(self) -> bool:
+        """True: this converter carries a tool call and a tool result through.
+
+        An assistant turn's :class:`~effgen.core.messages.ToolCallPart` becomes
+        a ``tool_use`` block, and a
+        :class:`~effgen.core.messages.ToolResultPart` becomes a ``tool_result``
+        block quoting that id inside a user turn — the Messages API has no
+        ``tool`` role of its own. A model with no native tool calling has no
+        call to carry, so the declaration follows
+        :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: the Messages API enforces the choice.
