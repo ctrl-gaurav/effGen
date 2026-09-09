@@ -153,6 +153,20 @@ class StreamEvent:
     usage: dict[str, Any] | None = None
 
 
+def _metadata_as_data(metadata: dict[str, Any]) -> dict[str, Any]:
+    """The response's metadata with the run's conversation written as data.
+
+    ``metadata["thread"]`` carries the run's steps as objects, which is what a
+    caller inspecting a finished run wants. A saved document cannot hold an
+    object, so the thread is written through its own serialisation and every
+    other entry is left exactly as the run put it there.
+    """
+    thread = metadata.get("thread")
+    if thread is None or not hasattr(thread, "to_dict"):
+        return metadata
+    return {**metadata, "thread": thread.to_dict()}
+
+
 @dataclass
 class AgentResponse:
     """
@@ -448,7 +462,7 @@ class AgentResponse:
             "execution_trace": self.execution_trace,
             "execution_tree": self.execution_tree,
             "routing_decision": self.routing_decision.to_dict() if self.routing_decision else None,
-            "metadata": self.metadata,
+            "metadata": _metadata_as_data(self.metadata),
             "citations": [c.to_dict() if hasattr(c, "to_dict") else c for c in self.citations],
             "sources": self.sources,
         }
