@@ -221,7 +221,7 @@ class RouterEvent:
 
     Attributes:
         from_provider:  Provider that failed (e.g. ``"groq"``).
-        from_model:     Model that failed (e.g. ``"llama-3.1-8b-instant"``).
+        from_model:     Model that failed (e.g. ``"openai/gpt-oss-20b"``).
         to_provider:    Provider the router is failing over to.
         to_model:       Model the router is failing over to.
         reason:         Short human-readable reason (e.g. ``"rate_limited"``).

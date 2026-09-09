@@ -16,7 +16,7 @@ and jitter before it counts as anything.
 
 Usage::
 
-    python scripts/ci_provider_smoke.py --provider groq --model llama-3.1-8b-instant
+    python scripts/ci_provider_smoke.py --provider groq --model openai/gpt-oss-20b
     python scripts/ci_provider_smoke.py --provider cerebras --model gpt-oss-120b --checks stream
 """
 

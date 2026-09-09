@@ -20,7 +20,7 @@ A minimal extension that adds:
 - A running effGen API server (`effgen serve`). Set `effgen.serverUrl`
   (default `http://localhost:8080`).
 - `effgen.defaultModel` — the model id sent to the server (default `gpt-5-nano`;
-  use any id your server can serve, e.g. `groq:llama-3.1-8b-instant` or a local
+  use any id your server can serve, e.g. `groq:openai/gpt-oss-20b` or a local
   HuggingFace repo id). Run `effgen models list` to see options.
 
 ## Build from source

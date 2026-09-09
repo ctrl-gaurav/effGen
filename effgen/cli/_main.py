@@ -621,7 +621,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   effgen run "What is 25 * 17?" --model Qwen/Qwen2.5-1.5B-Instruct
   effgen run "Summarize quantum computing" -m gpt-5-nano --provider openai
-  effgen run "Tell me a joke" -m groq:llama-3.1-8b-instant
+  effgen run "Tell me a joke" -m groq:openai/gpt-oss-20b
   effgen chat -m gpt-5-nano --provider openai
   effgen models list                 # provider registry overview
   effgen models list --provider groq # full per-model detail
@@ -630,7 +630,7 @@ Examples:
 
 Model id formats:
   - Local HuggingFace repo:   Qwen/Qwen2.5-1.5B-Instruct
-  - Provider-prefixed:        openai:gpt-5-nano   groq:llama-3.1-8b-instant
+  - Provider-prefixed:        openai:gpt-5-nano   groq:openai/gpt-oss-20b
   - Bare id + --provider:     -m gpt-5-nano --provider openai
   Providers: openai, anthropic, gemini, cerebras, groq, together,
              fireworks, replicate, hf

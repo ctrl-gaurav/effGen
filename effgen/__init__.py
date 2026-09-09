@@ -13,7 +13,7 @@ notebook, call :func:`effgen.load_env` once to get the same key discovery::
 
     from effgen import load_env, create_agent
     load_env()  # reads OPENAI_API_KEY / GROQ_API_KEY / ... from a nearby .env
-    agent = create_agent("minimal", "groq:llama-3.1-8b-instant")
+    agent = create_agent("minimal", "groq:openai/gpt-oss-20b")
 
 The public surface (``effgen.__all__``) is resolved **lazily**: importing
 ``effgen`` only sets up version metadata and logging hygiene, and the first

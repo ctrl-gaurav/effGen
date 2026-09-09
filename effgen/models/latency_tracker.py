@@ -215,7 +215,7 @@ def timed_call(
 
     For streaming::
 
-        with timed_call("groq", "llama-3.1-8b-instant") as t:
+        with timed_call("groq", "openai/gpt-oss-20b") as t:
             for chunk in stream:
                 if first_chunk:
                     t.mark_first_token()

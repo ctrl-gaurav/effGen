@@ -664,7 +664,7 @@ class PlaygroundREPL:
         if model is None:
             _print_err(
                 "No model specified and none configured. "
-                "Use 'run --model <id>' (e.g. run --model groq:llama-3.1-8b-instant)."
+                "Use 'run --model <id>' (e.g. run --model groq:openai/gpt-oss-20b)."
             )
             return
 

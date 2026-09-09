@@ -180,7 +180,7 @@ def add_compare_parser(subparsers: argparse._SubParsersAction, *, preset_choices
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  effgen compare --models gpt-5-nano,groq:llama-3.1-8b-instant --suite math\n"
+            "  effgen compare --models gpt-5-nano,groq:openai/gpt-oss-20b --suite math\n"
             "  effgen compare --models gpt-5-nano,gpt-5-mini --suite reasoning --optimize cost\n"
             "  effgen compare --models a,b --suite ./cases.jsonl --json | jq .recommendations\n"
             "\n"
@@ -192,7 +192,7 @@ def add_compare_parser(subparsers: argparse._SubParsersAction, *, preset_choices
                                  help='Comma-separated model ids. Use a '
                                       'provider:model prefix to pin a provider '
                                       'for a bare id (e.g. '
-                                      'groq:llama-3.1-8b-instant,gpt-5-nano).')
+                                      'groq:openai/gpt-oss-20b,gpt-5-nano).')
     compare_parser.add_argument('--suite', required=True,
                                  help='Built-in suite name (math, tool_use, '
                                       'reasoning, safety, conversation) OR a path '
@@ -258,7 +258,7 @@ def add_battle_parser(subparsers: argparse._SubParsersAction) -> None:
         epilog=(
             "Examples:\n"
             "  effgen battle \"Explain a B-tree in two sentences.\" \\\n"
-            "      -m openai:gpt-5-nano,groq:llama-3.1-8b-instant\n"
+            "      -m openai:gpt-5-nano,groq:openai/gpt-oss-20b\n"
             "  effgen battle \"Write a haiku about caching.\" -m a,b,c --judge openai:gpt-5-mini\n"
             "  effgen battle \"...\" -m a,b --json | jq '.contenders[].cost_usd'\n"
             "  effgen battle \"...\" -m a,b --report battle.html\n"
@@ -279,7 +279,7 @@ def add_battle_parser(subparsers: argparse._SubParsersAction) -> None:
     battle_parser.add_argument('prompt', help='The prompt every model answers')
     battle_parser.add_argument('-m', '--models', required=True, metavar='A,B[,C]',
                                 help='Comma-separated model ids to race (at least two), '
-                                     'e.g. openai:gpt-5-nano,groq:llama-3.1-8b-instant')
+                                     'e.g. openai:gpt-5-nano,groq:openai/gpt-oss-20b')
     battle_parser.add_argument('--judge', metavar='MODEL',
                                 help='Model asked to pick the best answer. Optional — the '
                                      'measured outcomes need no judge.')

@@ -191,14 +191,14 @@ class Agent(
             raise TypeError(
                 "Agent() needs an AgentConfig. Build one with "
                 "AgentConfig(name=..., model=...), or use the preset helper "
-                "create_agent('minimal', 'groq:llama-3.1-8b-instant')."
+                "create_agent('minimal', 'groq:openai/gpt-oss-20b')."
             )
         if not isinstance(config, AgentConfig):
             raise TypeError(
                 "Agent(config=...) expects an AgentConfig, not "
                 f"{type(config).__name__}. Build one with "
                 "AgentConfig(name=..., model=...), or use the preset helper "
-                "create_agent('minimal', 'groq:llama-3.1-8b-instant')."
+                "create_agent('minimal', 'groq:openai/gpt-oss-20b')."
             )
         self.config = config
         self.name = config.name

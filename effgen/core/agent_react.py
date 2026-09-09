@@ -74,7 +74,7 @@ from .agent_runtime import (  # noqa: E402
 #: named in the hint a written-out call block produces. Kept short and stable;
 #: ``effgen models list`` marks every model that advertises tool calling.
 _TOOL_CALLING_EXAMPLES = (
-    "openai:gpt-5-nano, gemini:gemini-3.1-flash-lite or groq:llama-3.3-70b-versatile"
+    "openai:gpt-5-nano, gemini:gemini-3.1-flash-lite or groq:openai/gpt-oss-120b"
 )
 
 

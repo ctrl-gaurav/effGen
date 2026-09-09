@@ -110,7 +110,7 @@ TIPS: tuple[str, ...] = (
     "effgen run --preset coding (or math/research/rag) starts with a tuned tool set.",
     "pip install 'effgen[vllm]' enables faster local GPU inference.",
     "effgen cost shows your spend; effgen cost set-budget caps it.",
-    "use a provider prefix to be explicit: -m groq:llama-3.1-8b-instant.",
+    "use a provider prefix to be explicit: -m groq:openai/gpt-oss-20b.",
     "effgen tools list shows every built-in tool; tools info <name> explains one.",
     "--explain shows the full step-by-step reasoning trace for a run.",
     "effgen chat opens an interactive session with the same agent.",

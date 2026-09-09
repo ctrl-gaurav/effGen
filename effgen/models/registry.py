@@ -18,7 +18,7 @@ Usage::
 
     providers = ProviderRegistry.list_providers()
     models    = ProviderRegistry.list_models("groq")
-    provider, adapter_cls, info = ProviderRegistry.lookup("llama-3.3-70b-versatile")
+    provider, adapter_cls, info = ProviderRegistry.lookup("groq:openai/gpt-oss-120b")
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ class ProviderRegistry:
 
         Args:
             model_id: The model identifier, optionally prefixed with
-                      ``"provider:model_id"`` (e.g. ``"groq:llama-3.3-70b-versatile"``).
+                      ``"provider:model_id"`` (e.g. ``"groq:openai/gpt-oss-120b"``).
             provider: Explicit provider override (takes precedence over prefix
                       in *model_id*).
 

@@ -93,10 +93,10 @@ models:
     max_tokens: 8192
     temperature: 0.7
 
-  # Groq Llama 3.1 8B Instant — ultra-fast free-tier inference
-  groq_llama31_8b:
+  # Groq GPT-OSS 20B — fast hosted open model (Groq's default)
+  groq_gpt_oss_20b:
     type: groq
-    model_name: llama-3.1-8b-instant
+    model_name: openai/gpt-oss-20b
     max_tokens: 8192
     temperature: 0.7
 

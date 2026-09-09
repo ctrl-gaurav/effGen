@@ -499,7 +499,7 @@ class AmbiguousModelError(Exception):
     """Raised when a model ID exists in multiple providers and no provider prefix is given.
 
     Example: ``"llama-3.3-70b"`` could be Groq, Together, or Fireworks.
-    Callers should disambiguate with ``"groq:llama-3.3-70b-versatile"`` syntax.
+    Callers should disambiguate with ``"groq:openai/gpt-oss-120b"`` syntax.
 
     Attributes:
         model_id: The ambiguous model identifier.

@@ -261,7 +261,7 @@ def run_battle_command(args: Any) -> int:
     if len(models) < 2:
         print(
             "A battle needs at least two models to compare "
-            "(-m openai:gpt-5-nano,groq:llama-3.1-8b-instant). "
+            "(-m openai:gpt-5-nano,groq:openai/gpt-oss-20b). "
             "Use `effgen models list` to see available ids.",
             file=sys.stderr,
         )

@@ -131,7 +131,7 @@ class ChatViewMixin:
         if self._model_defaulted and "/" in self.model_id and ":" not in self.model_id:
             self._banner_line(
                 f"Loading a local model ({self.model_id}); the first run downloads it. "
-                "For a fast keyed model:  effgen chat -m groq:llama-3.1-8b-instant",
+                "For a fast keyed model:  effgen chat -m groq:openai/gpt-oss-20b",
                 style="dim",
             )
         # Friendly resume: if there are saved conversations, point at the most

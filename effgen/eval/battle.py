@@ -11,7 +11,7 @@ Usage::
     from effgen.eval.battle import run_battle
 
     result = run_battle("Explain a hash map in two sentences.",
-                        ["openai:gpt-5-nano", "groq:llama-3.1-8b-instant"])
+                        ["openai:gpt-5-nano", "groq:openai/gpt-oss-20b"])
     for c in result.contenders:
         print(c.model, c.latency_s, c.cost_usd)
         print(c.answer)
@@ -406,7 +406,7 @@ def run_battle(
 
     Args:
         prompt: The prompt every contender answers.
-        models: Model ids, e.g. ``["openai:gpt-5-nano", "groq:llama-3.1-8b-instant"]``.
+        models: Model ids, e.g. ``["openai:gpt-5-nano", "groq:openai/gpt-oss-20b"]``.
         temperature: Sampling temperature applied to every contender.
         max_tokens: Output cap applied to every contender.
         system_prompt: System prompt applied to every contender.

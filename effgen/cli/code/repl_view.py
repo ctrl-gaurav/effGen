@@ -60,7 +60,7 @@ class CodeViewMixin:
         if self._model_defaulted and "/" in (self.model_id or "") and ":" not in (self.model_id or ""):
             self._banner_line(
                 f"Loading a local model ({self.model_id}); the first run downloads it. "
-                "For a fast keyed model:  /model groq:llama-3.1-8b-instant",
+                "For a fast keyed model:  /model groq:openai/gpt-oss-20b",
                 style="dim",
             )
 

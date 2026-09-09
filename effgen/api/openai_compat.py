@@ -248,7 +248,7 @@ def create_openai_router(
         ):
             message += (
                 " Pass a provider-prefixed model id (e.g. 'openai:gpt-5-nano', "
-                "'groq:llama-3.1-8b-instant'), a valid local model id, or "
+                "'groq:openai/gpt-oss-20b'), a valid local model id, or "
                 "'effgen-default'."
             )
         headers: dict[str, str] = {}
@@ -277,7 +277,7 @@ def create_openai_router(
         # The list is the drop-in aliases plus the ids this process has actually
         # served a successful response for this run. It is not exhaustive: any
         # `provider:model` id the server can reach (e.g. "openai:gpt-5-nano",
-        # "groq:llama-3.1-8b-instant") is callable whether or not it appears here.
+        # "groq:openai/gpt-oss-20b") is callable whether or not it appears here.
         now = _now()
         # The legacy OpenAI-flagship names (gpt-4, gpt-3.5-turbo, ...) are
         # drop-in compatibility aliases, each mapped to a concrete local model
@@ -335,7 +335,7 @@ def create_openai_router(
                     "Listed ids are drop-in compatibility aliases plus models "
                     "this server has served this run. Any reachable "
                     "'provider:model' id (e.g. 'openai:gpt-5-nano', "
-                    "'groq:llama-3.1-8b-instant') is also accepted as the "
+                    "'groq:openai/gpt-oss-20b') is also accepted as the "
                     "request 'model', whether or not it appears in this list."
                 ),
             },
