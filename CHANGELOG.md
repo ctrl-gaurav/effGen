@@ -11,223 +11,165 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Highlights
 
-**1.0.1 is about what a run reports and what the framework's own bookkeeping costs.** A run that
-never wrote an answer says so instead of handing back the notes it took on the way; inline citation
-markers are something a caller asks for rather than something every retrieval answer gets; the loop
-guards that used to end a run at its second or third tool call now sit above the length of real
-work; and the budget check that runs before every model call no longer reads the whole spend ledger
-to answer one question.
+This release fixes how the framework reports what a run did, what it puts in a prompt, and what its
+own bookkeeping costs.
 
-**Four changes are visible to an existing caller and are listed first.** One of them changes what
-`success` means for a run that stopped part way, which a patch release does not usually do. It is
-here because 1.0.0 reported those runs as successes and put intermediate values in `.output`.
+The main things: a run that stops without an answer now says so instead of handing back its working
+notes. Citation markers are opt-in instead of being added to every retrieval answer. The loop guards
+no longer stop a run that is still making progress. Every tool-calling path now tells the model what
+the tools are for. The budget check before each model call reads an index instead of the whole spend
+ledger. And the Groq default points at a model Groq still serves.
 
-Measured on ten sample sets at full vendored size — 1,685 samples per arm, both arms against one
-served `Qwen2.5-7B-Instruct` — 1.0.1 scores **77.00** against 1.0.0's **71.63** as an unweighted
-mean over the ten cells. Three cells gain outside their paired noise band, **two regress outside
-theirs**, and five do not move. It costs **37% more model calls and 57% more prompt tokens per
-sample** to do it. The gains, the regressions and the cost are all in *Measured* below.
+None of this is tuned for a benchmark. These are changes to how the framework behaves. We ran public
+sample sets to check the changes helped rather than to chase a score, and where a change cost
+something we say so.
+
+Four changes are visible to existing code, and one of them changes what `success` means for a run
+that stopped part way. Those are listed first.
 
 The public surface grew from 223 names to 225. Nothing was removed or renamed.
 
-### Changed - what an existing caller sees
+### Changed: what existing code sees
 
-1. **A run that stopped without an answer reports `success=False`, and by default it raises.**
+#### 1. A run that stops without an answer now reports failure, and raises by default
 
-   1.0.0 ended three paths with `success=True` and internal state in `.output`: a computation tool
-   that tripped the repeat guard, a computation tool that returned a result it had already
-   returned, and a model that produced no final answer after its tools had run. On the same
-   reproduction, 1.0.0 returns `'4'` with `success=True`, no outcome and no stop reason; 1.0.1
-   returns `success=False`, `outcome="stopped"`, `stop_reason="max_iterations_partial"` and keeps
-   the model's own progress in `.partial`.
+In 1.0.0 three paths returned `success=True` with internal state in `.output`: a computation tool
+that tripped the repeat guard, a computation tool that returned a result it had already returned,
+and a model that gave no final answer after its tools ran. On the same test 1.0.0 returns `'4'` with
+`success=True`, no outcome and no stop reason. 1.0.1 returns `success=False`, `outcome="stopped"`,
+`stop_reason="max_iterations_partial"`, and keeps what the model reached in `.partial`.
 
-   `AgentResponse` gains `stop_reason` (never `None`, and equal to `metadata["reason"]`), `partial`
-   (a `PartialResult`) and a derived `outcome` of `"answered"`, `"stopped"` or `"failed"`.
-   `to_dict()` carries all three.
+With the default `raise_on_error=True`, a stopped run raises `RunStoppedError`. It subclasses
+`RuntimeError`, which is what the iteration cap has always raised, and it carries `.response`,
+`.stop_reason` and `.partial`.
 
-   Under the default `raise_on_error=True` a stopped run raises `RunStoppedError`, which subclasses
-   `RuntimeError` — the error the iteration cap has always raised — and carries `.response`,
-   `.stop_reason` and `.partial`, so the progress survives the raise.
+```python
+from effgen import Agent, AgentConfig, RunStoppedError
 
-   *Migration:* if you were reading a response back from a run that stopped, either catch
-   `RunStoppedError` or pass `raise_on_error=False` and branch on `.outcome`. The text the model
-   reached is `.partial.text`, and it is still at `metadata["partial_output"]` byte for byte, so a
-   caller reading that key sees no change.
+agent = Agent(AgentConfig(model="openai:gpt-5-nano"))
+try:
+    response = agent.run("What is 17 * 23?")
+    print(response.outcome, response.stop_reason)
+    print(response.text)
+except RunStoppedError as exc:
+    print(exc.stop_reason)
+    print(exc.partial.text if exc.partial else "nothing to report")
+```
 
-   ```python
-   from effgen import Agent, AgentConfig, RunStoppedError
+To upgrade: catch `RunStoppedError`, or pass `raise_on_error=False` and check `.outcome`, which is
+`"answered"`, `"stopped"` or `"failed"`. The text the model reached is in `.partial.text`, and it is
+still at `metadata["partial_output"]` byte for byte.
 
-   agent = Agent(AgentConfig(model="openai:gpt-5-nano"))
-   try:
-       response = agent.run("What is 17 * 23?")
-       print(response.outcome, response.stop_reason)
-       print(response.text)
-   except RunStoppedError as exc:
-       print(exc.stop_reason)
-       print(exc.partial.text if exc.partial else "nothing to report")
-   ```
+The outcome also shows up in the CLI, the run store (`effgen runs list --status stopped`), the batch
+row and its CSV, `effgen code`, `EvalResult.stop_reason`, and the OpenAI-compatible server, whose
+`effgen` envelope now carries `stop_reason`, `outcome` and `partial`.
 
-   The outcome reaches the command line, the run store (`effgen runs list --status stopped`), the
-   batch row and its CSV, `effgen code`, `EvalResult.stop_reason`, and the OpenAI-compatible
-   server, whose `effgen` envelope now carries `stop_reason`, `outcome` and `partial`. `/health`,
-   `/v1/models`, chat and streaming answer as they did, with identical content and identical usage
-   counts.
+#### 2. Citation markers are opt-in
 
-2. **Inline citation markers are opt-in.**
+1.0.0 added "cite each passage you used inline as [1], [2], ..." to every turn that followed a
+retrieval or search tool, whether or not you asked for citations. The markers did not point at
+anything, so they were noise added to the answer. On a question with a one-word answer the model
+followed the instruction and the answer stopped matching: 1.0.0 answers `'B [1], [2]'` where 1.0.1
+answers `'B'`.
 
-   1.0.0 appended *"cite each passage you used inline as [1], [2], …"* to every continuation turn
-   that followed a retrieval or search tool, whether or not the caller had asked for citations. On
-   a multiple-choice question the model obeyed and the answer stopped matching. On the same probe
-   1.0.0 answers `'B [1], [2]'` where 1.0.1 answers `'B'`.
+Ask for them with `AgentConfig(cite_sources=True)` or `run(..., cite_sources=True)`. The `rag`
+preset asks already. When you do ask, the retrieval results are numbered with the citation indexes,
+so `[n]` is `citations[n - 1]`, across calls and for rows with a URL. That was not true before.
 
-   `AgentConfig.cite_sources` (default `False`) and `run(..., cite_sources=True)` are how a caller
-   asks. When markers are asked for, the retrieval observation is numbered with the citation
-   indices themselves, so `[n]` is `citations[n - 1]` across calls and for rows carrying a URL. The
-   `rag` preset asks for them. In the default mode a trailing run of markers is removed from the
-   answer at the single `run()` funnel, and only when the run appended a retrieval observation and
-   every index falls inside the passages those observations offered.
+Replaying recorded answers through the removal code recovers 192, 66 and 52 answers on three
+question sets and breaks none. Across fifteen recorded retrieval runs it fires 481 times and breaks
+nothing. How much this matters depends on the model. Over 4,769 answers at each size it fires 0
+times at 1.5B, 135 at 3B, 12 at 7B, 334 at 14B and 0 at 32B, so a model that rarely wrote the
+markers had little to gain.
 
-   *Migration:* if you relied on the markers, set `cite_sources=True`. If you parsed them out
-   yourself, you can stop.
+#### 3. A streamed run sends the model's working before its answer
 
-   Rescoring the recorded 14B benchmark answers with the shipped removal function — a
-   counterfactual over recorded output, not a live run — recovers `arc_e` **86.74 → 94.82** (205
-   answers carried a marker, 192 recovered, 0 broken), `arc_c` **89.68 → 95.31** (74, +66, −0) and
-   `csqa` **85.75 → 90.01** (55, +52, −0). Over all 15 recorded retrieval cells the function fires
-   481 times and breaks 0 answers. **On that instrument the effect runs from 3B to 14B and peaks at
-   14B.** Over the same 4,769 recorded answers at each size the removal fires 0 times at 1.5B, 135
-   at 3B, 12 at 7B, 334 at 14B, and 0 at 32B — where only 4 answers carry a marker at all. The
-   rescoring above is the 14B column. Nothing is claimed for a live 7B: on the served 7B, 1.0.0
-   emitted a trailing marker on 1 of 200 `arc_e` answers and 0 of 200 on `arc_c` and `csqa`, so
-   there was no live loss at that size to recover.
+Same task, same final answer, but 8 chunks became 134, starting with the model's reasoning. If you
+join the chunks and show the result, you now get the working first.
 
-   The instruction change reaches the streamed paths; the removal step does not, because a trailing
-   marker cannot be taken off a token stream without buffering the tail.
+#### 4. A small local model writes more and reaches for tools more often
 
-3. **A streamed run emits the model's working before its answer.**
+`Qwen2.5-1.5B-Instruct` on the local Transformers engine, four runs per release, same token counts
+every time. "What is 144 divided by 12?" goes from 31 to 233 completion tokens and from about 3.5
+seconds to about 27. "Name the largest planet in the solar system." goes from 11 to 145 tokens and
+from 0 to 1 tool calls. Both answers stay correct.
 
-   On the same task the final answer is identical and the figure appears in the stream on both
-   releases, but 1.0.0 streamed **8** chunks carrying the answer and 1.0.1 streams **134**,
-   beginning with the model's reasoning. A consumer that concatenates chunks and shows the result
-   now gets the working first.
+## Added
 
-4. **A small local model is asked to write more, and reaches for a tool more readily.**
+- `PartialResult` and `RunStoppedError`.
+- `AgentConfig.cite_sources`, `.tool_contract` and `.tool_use`. `cite_sources` and `tool_choice` are
+  now `run()` keywords.
+- `effgen.prompts.tool_contract`, with four tool contracts picked from a tool's declared
+  `ToolCategory`, and a `ToolUsePolicy` of `REQUIRED`, `AUTO` or `SPARING` set for every category.
+  Every shipped default matches what 1.0.0 already did.
+- `BaseModel.supports_forced_tool_call`.
+- `SQLiteCostStore.spend_since`, `spend_today`, `spend_week`, `spend_month`, `count`, `count_since`
+  and `prune`, plus `effgen cost prune`.
+- `effgen runs list --status stopped`, `EvalResult.stop_reason` and `PresetConfig.cite_sources`.
+- English and Spanish keyword matching in the complexity analyzer, decomposition engine, sub-agent
+  router and prompt optimizer, with accents folded on both sides. There is no language detection
+  step and English behaviour is unchanged. A root agent's `system_prompt` now also reaches the
+  sub-agents it spawns. Both from @acdonaire.
 
-   `Qwen2.5-1.5B-Instruct` on the local Transformers engine, four runs per release with identical
-   token counts every time: *"What is 144 divided by 12?"* goes from **31 to 233** completion
-   tokens and from about 3.5 s to about 27 s; *"Name the largest planet in the solar system."* goes
-   from **11 to 145** completion tokens and from 0 to 1 tool calls, about 1.3 s to about 16 s. Both
-   answers stay correct. The same mechanism — the framework says more on every prompt and reaches
-   for a tool more readily — is what buys the coding gain below.
+## Fixed
 
-### Added
-
-- `PartialResult` — what a run had reached when it stopped: the observations, the last observation,
-  the last thought, the flattened text, the iteration count and the tool calls.
-- `RunStoppedError` — raised under the default `raise_on_error=True` when a run ends without an
-  answer, carrying the response and the partial.
-- `AgentConfig.cite_sources`, `AgentConfig.tool_contract` and `AgentConfig.tool_use`; `cite_sources`
-  and `tool_choice` as `run()` keywords.
-- `effgen.prompts.tool_contract` — four tool contracts (`VERIFY`, `EXECUTE`, `LOOKUP`, `GENERAL`)
-  selected from a tool's declared `ToolCategory`, a `ToolUsePolicy` of `REQUIRED` / `AUTO` /
-  `SPARING` with a policy declared for every category, and the accessors `select_tool_contract`,
-  `contract_for_category`, `policy_for_category`, `select_tool_use_policy`, `is_execution_tool` and
-  `coerce_tool_use_policy`. Every shipped default is what 1.0.0 already did: `code_execution` and
-  `system` tools must be called, every other category is the model's choice, and no policy but
-  `SPARING` adds a word to a prompt.
-- `BaseModel.supports_forced_tool_call`, which every adapter answers, so a provider that cannot
-  require a tool call is asked in words instead of losing a turn to a rejected request.
-- `SQLiteCostStore` aggregate readers — `spend_since`, `spend_today`, `spend_week`, `spend_month`,
-  `count`, `count_since` and `prune` — and `effgen cost prune`, which bounds the ledger file.
-- `effgen runs list --status stopped`, and `stop_reason` on `EvalResult`.
-- `PresetConfig.cite_sources`, set on the `rag` preset.
-- Bilingual EN/ES keyword matching in the complexity analyzer, the decomposition engine, the
-  sub-agent router and the prompt optimizer, with accents folded on both sides so `codigo` matches
-  `código`. There is no language-detection step and English behaviour is unchanged; `docs/i18n-notes.md`
-  records why. Thanks to @acdonaire.
-- A root agent's `system_prompt` now reaches the sub-agents it spawns and the prompt that decomposes
-  the task. Thanks to @acdonaire.
-
-### Fixed
-
-- **The budget check no longer reads the ledger to answer one question.** Against a 500,000-row
-  ledger a preflight took **1,278 ms** warm and 1,246.9 ms cold — the same full table scan every
-  time. It is now **0.044 ms** warm and **37.4 ms** cold, and the query plan is a covering-index
-  search rather than `SCAN cost_events`. At 20,000 rows the cold read is 2.5 ms. Summing over an
-  index still reads the rows inside the window, so the cold figure grows with the ledger; `effgen
-  cost prune` is there to bound it.
-- **The loop guards stop ending runs that are still working.** An exact repeat of a call that
-  already succeeded is answered from the run's own record and the run continues; the drift
-  thresholds are bounded by the run's iteration budget and fire one turn before the cap; and when
-  the loop does break, every tool category gets one turn to state the answer from the observations
-  it has before the run is reported as stopped. Over 200 samples of `gsm8k` the two guards fired
-  69 times in 1.0.0 and **once** in 1.0.1; over 125 samples of `bb_med`, 24 became **0**.
-- **A turn's own working is no longer read as that turn's answer.** A turn that dispatched several
-  tool calls at once could be recognised as a final answer by a phrase as short as `=`, which
-  returned the text the model wrote before any result came back and discarded the observations the
-  batch had just fetched.
-- **An agent holding a code executor executes.** A first answer given with no call to a tool whose
-  declared category says it does work the model cannot do in its head is sent back once, naming the
-  tool, and the turn after it is sent with `tool_choice="required"` on adapters that support it.
-  Only the first refusal is pushed back, and the opening turn is never constrained.
-- **Every generation parameter reaches the provider.** `Agent._generate` copied exactly one name
-  out of its keyword arguments when building the adapter call, so everything else was discarded
-  between the loop and the provider with no error and no log line.
-- **A batched provider-side tool call records what it returned.** `AgentResponse.tool_calls[i].result`
-  was `None` for every call made on such a turn.
-- **A result a tool computed is not dropped from the answer.** When an execution tool returned a
-  multi-line result the answer does not state, that result is appended to the answer rather than
-  lost. It never touches a retrieval result, steps over a call that failed, and declines when the
-  answer is one entry of the result.
-- **A search that came back with nothing is tried once more**, with a different query, before the
-  run settles on saying the material is silent.
-- **Every tool-calling path states what the tools are for**, in the same words, chosen from the
-  tools' declared categories — the blocking loop, the text stream, native tool calling and the
-  native stream. 1.0.0 handed a model tool definitions and said nothing about them. An execution
-  set, a computation set and a retrieval set each select their own contract; a set that mixes
-  categories gets the general one; an agent with no tools states nothing.
-- **A declared `output_schema` is stated to the model inside the loop**, and on `stream()` as well
-  as `run()`. The retrieval close no longer demands prose the question did not ask for.
-- **A tool that declares no category no longer crashes `Agent.__init__`** with
-  `AttributeError: 'NoneType' object has no attribute 'value'`.
-- Spanish keyword matching now covers both verb forms and unaccented spellings.
-- **The Groq default names a model Groq still serves.** Groq retired `llama-3.1-8b-instant` and
-  `llama-3.3-70b-versatile`, and both answer `404 model_not_found`. `GROQ_DEFAULT_MODEL`, the
-  bundled `_data/groq.json` catalog — re-fetched from the live API, 14 models — the CLI help, the
-  error messages and every shipped example now name `openai/gpt-oss-20b`.
-- **A provider-qualified model id passed beside an explicit provider now loads.**
-  `load_model("groq:openai/gpt-oss-20b", provider="groq")` handed the adapter the whole string and
-  raised `Unknown Groq model 'groq:openai/gpt-oss-20b'`. A prefix that names the provider already
-  passed is now dropped; a prefix naming a different provider is a real disagreement and is left
-  alone. This is the path `effgen run` and `effgen quickstart` take when no `--model` is given.
+- **The budget check no longer reads the whole ledger.** Against a 500,000 row ledger the check took
+  1,278 ms warm and 1,246.9 ms cold, doing a full table scan every time. It is now 0.044 ms warm and
+  37.4 ms cold, using a covering index instead of a scan. At 20,000 rows the cold read is 2.5 ms.
+  `effgen cost prune` keeps the file small.
+- **The loop guards no longer stop runs that are still working.** A repeat of a call that already
+  succeeded is answered from the run's own record and the run keeps going. The drift thresholds are
+  now bounded by the run's iteration budget. And when the loop does break, every tool category gets
+  one turn to answer from what it has. Over a 200 run sample the two guards fired 69 times in 1.0.0
+  and once in 1.0.1. Over a 125 run sample, 24 firings became 0.
+- **A turn's own working is no longer read as its answer.** A turn that sent several tool calls at
+  once could be treated as a final answer because of something as short as `=`.
+- **An agent holding a code executor now runs the code.** A first answer that only describes what
+  the tool would have returned is sent back once, naming the tool. The next turn is sent with
+  `tool_choice="required"` on adapters that support it.
+- **Every generation parameter reaches the provider.** `Agent._generate` copied one name out of its
+  keyword arguments and dropped the rest, with no error and no log line.
+- **A batched provider-side tool call records what it returned** instead of leaving
+  `tool_calls[i].result` as `None`.
+- **A result a tool computed but the answer left out is added back to the answer.**
+- **A search that returns nothing is tried once more** with a different query.
+- **Every tool-calling path says what the tools are for**, in the same words, picked from the tools'
+  declared categories.
+- **A declared `output_schema` is stated inside the loop**, on `stream()` as well as `run()`.
+- **A tool with no declared category no longer raises from `Agent.__init__`.**
+- **The Groq default names a model Groq still serves.** `GROQ_DEFAULT_MODEL`, the bundled catalog,
+  the CLI help, the error messages and every shipped example moved off the two retired `llama` ids
+  to `openai/gpt-oss-20b`.
+- **A model id with a provider prefix now loads when you also pass the provider.**
+  `load_model("groq:openai/gpt-oss-20b", provider="groq")` used to raise `Unknown Groq model`. This
+  is the path `effgen run` and `effgen quickstart` take when you give no `--model`.
 
 ### Measured
 
-Ten sample sets at full vendored size, 1,685 samples per arm, both arms against one served
-`Qwen2.5-7B-Instruct` at the same settings. The band is the paired two-sigma band computed from
-each cell's own discordant samples; a delta inside its band is not a result.
+Ten sample sets at full size, 1,685 runs per arm, both arms against one served
+`Qwen2.5-7B-Instruct` at the same settings. The band is the paired two sigma band worked out from
+each set's own disagreeing runs. A change inside its band is not a result.
 
-| set | 1.0.0 | 1.0.1 | delta | band (2σ) | |
+| set | 1.0.0 | 1.0.1 | delta | band (2 sigma) | |
 |---|---|---|---|---|---|
-| gsm8k | 72.00 | **85.00** | +13.00 | ±6.63 | gain |
-| gsmplus | 54.50 | **65.50** | +11.00 | ±7.87 | gain |
-| bb_hard | 37.14 | **80.00** | +42.86 | ±19.79 | gain |
-| math500 | 54.50 | 52.00 | −2.50 | ±7.00 | inside the band |
-| bb_easy | 97.08 | 97.50 | +0.42 | ±1.86 | inside the band |
-| bb_med | 77.60 | 76.00 | −1.60 | ±7.84 | inside the band |
-| csqa | 92.00 | 90.00 | −2.00 | ±4.47 | inside the band |
-| simpleqa | 42.00 | 44.00 | +2.00 | ±13.27 | inside the band |
-| arc_c | 95.00 | 90.00 | −5.00 | ±4.47 | **regression** |
-| arc_e | 94.50 | 90.00 | −4.50 | ±3.32 | **regression** |
+| gsm8k | 72.00 | **85.00** | +13.00 | 6.63 | better |
+| gsmplus | 54.50 | **65.50** | +11.00 | 7.87 | better |
+| bb_hard | 37.14 | **80.00** | +42.86 | 19.79 | better |
+| math500 | 54.50 | 52.00 | -2.50 | 7.00 | inside the band |
+| bb_easy | 97.08 | 97.50 | +0.42 | 1.86 | inside the band |
+| bb_med | 77.60 | 76.00 | -1.60 | 7.84 | inside the band |
+| csqa | 92.00 | 90.00 | -2.00 | 4.47 | inside the band |
+| simpleqa | 42.00 | 44.00 | +2.00 | 13.27 | inside the band |
+| arc_c | 95.00 | 90.00 | -5.00 | 4.47 | **worse** |
+| arc_e | 94.50 | 90.00 | -4.50 | 3.32 | **worse** |
 | **all ten, unweighted** | **71.63** | **77.00** | | | |
 
-By category: coding 70.61 → **84.50**, calculator 60.33 → **67.50**, agentic 42.00 → **44.00**,
-retrieval 93.83 → **90.00**. Coding is now the release's strongest category. Calculator remains
-**below what the same model scores with no framework at all** — 67.50 against 79.00 on the same
-samples — which this release does not change, and which is worth knowing before you put a
-calculator tool in front of a small model doing arithmetic.
+By category: coding 70.61 to **84.50**, calculator 60.33 to **67.50**, agentic 42.00 to **44.00**,
+retrieval 93.83 to **90.00**. Calculator is still below what the same model scores with no framework
+at all, 67.50 against 79.00 on the same questions. This release does not change that, and it is
+worth knowing before you put a calculator tool in front of a small model doing arithmetic.
 
-What it costs, per sample:
+What a run costs:
 
 | | 1.0.0 | 1.0.1 |
 |---|---|---|
@@ -236,44 +178,40 @@ What it costs, per sample:
 | completion tokens | 309 | **353** (+14%) |
 | wall time | 13.30 s | **14.03 s** (+5%) |
 
-**The release buys its accuracy with context. On these sets it did not get cheaper; it got more
-expensive.**
+These fixes buy their correctness with context. On these sets the framework did not get cheaper, it
+got more expensive.
 
 ### Known issues
 
-1. **Retrieval regressed, and the mechanism is identified but not fixed.** `arc_c` −5.00 and
-   `arc_e` −4.50 are both outside their bands. Retrieval runs reach the iteration cap ten times as
-   often as in 1.0.0 — 30 of 600 samples against 3 — and 13 of `arc_c`'s 15 lost samples and 8 of
-   `arc_e`'s 10 are runs that ran out of iterations. The retrieval prompt changed in three ways at
-   once in this release, and which of them costs the extra turns is not settled.
-2. **A run that reaches the iteration cap holding a retrieval tool returns a retrieved passage** as
-   its `partial`. The reporting is right — `success=False`, a typed outcome, a typed stop reason —
-   but the payload is source material presented as an answer. 1.0.0 does this too, on the 3 capped
-   retrieval runs it had; what changed is how often it is reached.
-3. **A retrieval run over a real corpus can lose a fact 1.0.0 recovers.** Over seven documentation
-   files and three questions whose answers are in them, 1.0.0 recovers 3 of 3 in four runs out of
-   four and 1.0.1 recovers 2 of 3 in four out of four; citations per run fall from 3 to 1–2.
-4. **A configured spend cap refuses a call that costs nothing.** `CostTracker.check_preflight`
-   compares accumulated spend against the cap without asking what the call would cost, so a spent
-   cloud budget also refuses a `transformers`, `vllm` or `openai_compatible` call against a model
-   you are serving yourself. Present in 1.0.0 as well.
-5. **Groq retired `llama-3.1-8b-instant` and `llama-3.3-70b-versatile`.** Both answer
-   `404 model_not_found`, and Groq's live catalog no longer lists either. **Upgrading to 1.0.1 is
-   what fixes the default**: `GROQ_DEFAULT_MODEL` is a module constant bound as
-   `GroqAdapter.__init__`'s default argument, and this release repoints it — along with the bundled
-   catalog, the examples and the docs — to `openai/gpt-oss-20b`. On 1.0.0 the only fix is to name a
-   live id yourself, `GroqAdapter(model_name="openai/gpt-oss-20b")` or
-   `--model groq:openai/gpt-oss-20b`, and the same goes for any code that pinned a retired id.
-   `effgen models refresh` does not fix it: it rewrites only the bundled `_data/<provider>.json`
-   snapshot, which neither the module default nor a pinned argument is ever read back from, so
-   after a refresh the adapter still defaults to the retired id. Entries for 1.0.0 and earlier
-   below still show the retired ids in their examples; they record what those releases shipped.
-6. **The streamed loop does not send back an execution tool's no-call answer**, because its tokens
-   are already emitted by the time the turn could be judged. The blocking loop is where that check
-   runs.
-7. **`simpleqa` reaches 44.00 against the best framework measured beside it at 64.00.** The second
-   search helps — mean search calls 1.86, against a ceiling of 3 — but the gap is structural and is
-   not closed here.
+1. **Retrieval got worse, and we know why but have not fixed it.** Two question sets lost 5.00 and
+   4.50 points, both outside their noise bands. The cause is the loop, not the answer. Retrieval
+   runs hit the iteration cap ten times as often as in 1.0.0, 30 of 600 runs against 3, and most of
+   the lost answers are runs that ran out of iterations. The retrieval prompt changed in three ways
+   at once in this release and we have not yet worked out which one costs the extra turns.
+2. **A run that hits the iteration cap while holding a retrieval tool returns a retrieved passage**
+   as its `partial`. The reporting is right, but the payload is source material shown as an answer.
+   1.0.0 did this too, on the 3 capped retrieval runs it had.
+3. **A retrieval run over a real set of documents can miss a fact 1.0.0 finds.** 2 of 3 against 3 of
+   3 over seven documentation files, four runs out of four on each release.
+4. **A spend cap can refuse a call that costs nothing.** The check compares money already spent
+   against the cap without asking what the call would cost, so a used up cloud budget also blocks a
+   `transformers`, `vllm` or `openai_compatible` call against a model you serve yourself. This was
+   in 1.0.0 too.
+5. **Groq retired `llama-3.1-8b-instant` and `llama-3.3-70b-versatile`.** Both return
+   `404 model_not_found`. Upgrading to 1.0.1 is what fixes the default, because
+   `GROQ_DEFAULT_MODEL` is a module constant used as the default argument of `GroqAdapter.__init__`,
+   and this release repoints it, the bundled catalog, the examples and the docs to
+   `openai/gpt-oss-20b`. On 1.0.0, or in code that pinned a retired id, name a live id yourself with
+   `GroqAdapter(model_name="openai/gpt-oss-20b")` or `--model groq:openai/gpt-oss-20b`.
+   `effgen models refresh` does not fix it. It only rewrites the bundled snapshot, and the module
+   default is never read back from that snapshot, so after a refresh the adapter still defaults to
+   the retired id.
+6. **The streamed loop does not send back an execution tool's no-call answer**, and does not strip a
+   trailing citation marker. Its tokens are already out by the time the turn could be judged.
+7. **Open-ended search answers are still well behind the best system we measured next to them**,
+   44.00 against 64.00 on the same questions. Searching a second time helps, with a mean of 1.86
+   search calls against a ceiling of 3, but the gap is structural and this release does not close
+   it.
 
 ---
 
