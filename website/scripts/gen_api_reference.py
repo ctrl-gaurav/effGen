@@ -59,10 +59,11 @@ AREAS: list[dict] = [
     {
         "id": "agents",
         "title": "Agents",
-        "blurb": "The agent itself, the configuration it runs under, the state it can be saved to, and the record of the tools it called.",
+        "blurb": "The agent itself, the configuration it runs under, the state it can be saved to, the record of the tools it called, and what a run that stopped short had got done.",
         "modules": [
             "effgen.core.agent",
             "effgen.core.agent_config",
+            "effgen.core.agent_response",
             "effgen.core.state",
             "effgen.core.tool_call_record",
         ],

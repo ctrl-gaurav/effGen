@@ -1,13 +1,13 @@
 {
- "derived_at": "2026-08-24",
- "version": "1.0.0",
- "public_names": 223,
+ "derived_at": "2026-09-07",
+ "version": "1.0.1",
+ "public_names": 225,
  "kind_counts": {
   "alias": 1,
   "class": 87,
-  "dataclass": 40,
+  "dataclass": 41,
   "enum": 12,
-  "exception": 17,
+  "exception": 18,
   "function": 65,
   "module": 1
  },
@@ -15,8 +15,8 @@
   {
    "id": "agents",
    "title": "Agents",
-   "blurb": "The agent itself, the configuration it runs under, the state it can be saved to, and the record of the tools it called.",
-   "count": 5
+   "blurb": "The agent itself, the configuration it runs under, the state it can be saved to, the record of the tools it called, and what a run that stopped short had got done.",
+   "count": 6
   },
   {
    "id": "presets-config",
@@ -46,7 +46,7 @@
    "id": "errors",
    "title": "Errors",
    "blurb": "The typed exceptions a run raises, and what each one means about whether retrying is worth anything.",
-   "count": 16
+   "count": 17
   },
   {
    "id": "tools",
@@ -347,7 +347,7 @@
    "module": "effgen.core.agent_config",
    "area": "agents",
    "summary": "Agent configuration.",
-   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, *, name: str = '') -> None",
+   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, cite_sources: bool = False, tool_contract: str | None = None, tool_use: ToolUsePolicy | str | None = None, *, name: str = '') -> None",
    "params": [
     {
      "name": "model",
@@ -635,7 +635,7 @@
      "default": "None",
      "required": false,
      "keyword_only": false,
-     "description": ""
+     "description": "A JSON Schema (or a Pydantic model class) every run must answer in. It is the one machine-readable statement of answer shape the framework has, so it is stated to the model inside the tool loop and the answer is validated against it afterwards. `run(output_schema=...)` / `run(output_model=...)` overrides it for a single call. The framework describes only the machinery it inserted \u2014 a block of retrieved passages the model did not ask for, say \u2014 and leaves the form of the answer to whoever knows the question: this schema first, then the task and `system_prompt`. Nothing effGen appends asks for a shape of its own, so a task that asks for a letter gets a letter."
     },
     {
      "name": "guardrails",
@@ -729,6 +729,30 @@
      "name": "cache_tools",
      "type": "bool",
      "default": "True",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "cite_sources",
+     "type": "bool",
+     "default": "False",
+     "required": false,
+     "keyword_only": false,
+     "description": "Ask the model for inline `[1]`, `[2]` markers when it answers from retrieved passages, and number those passages for it so marker `n` is `response.citations[n - 1]`. Off by default, because a marker ends up inside `response.output`. `run(cite_sources=...)` overrides it for a single call."
+    },
+    {
+     "name": "tool_contract",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "tool_use",
+     "type": "ToolUsePolicy | str | None",
+     "default": "None",
      "required": false,
      "keyword_only": false,
      "description": ""
@@ -1450,6 +1474,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: the Messages API enforces the choice.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_function_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -1704,6 +1736,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Report whether `generate_stream` records the turn's tool calls.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether a turn can be sent that *requires* the model to call a tool.",
      "is_async": false,
      "inherited_from": null
     },
@@ -2349,6 +2389,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True: a streamed turn's native tool calls are recorded.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -3397,7 +3445,7 @@
    "module": "effgen.eval.evaluator",
    "area": "evaluation",
    "summary": "Result from evaluating a single test case.",
-   "signature": "(test_case: TestCase, agent_output: str = '', score: float = 0.0, passed: bool = False, latency: float = 0.0, tokens_used: int = 0, cost_usd: float | None = None, tool_accuracy: float = 0.0, tools_called: list[str] = <factory>, scoring_mode: ScoringMode = ScoringMode.CONTAINS, details: dict[str, Any] = <factory>, error: str | None = None) -> None",
+   "signature": "(test_case: TestCase, agent_output: str = '', score: float = 0.0, passed: bool = False, latency: float = 0.0, tokens_used: int = 0, cost_usd: float | None = None, tool_accuracy: float = 0.0, tools_called: list[str] = <factory>, scoring_mode: ScoringMode = ScoringMode.CONTAINS, details: dict[str, Any] = <factory>, error: str | None = None, stop_reason: str | None = None) -> None",
    "params": [
     {
      "name": "test_case",
@@ -3494,6 +3542,14 @@
      "required": false,
      "keyword_only": false,
      "description": "The classified failure message when the run itself failed (the model is unreachable, the id does not exist, the key is rejected), otherwise `None`. A case with an `error` scored zero because it never produced an answer \u2014 not because the answer was wrong."
+    },
+    {
+     "name": "stop_reason",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "What ended the run, when the response carried it \u2014 so a case that scored zero because the loop stopped it is told apart from one that scored zero on a wrong answer."
     }
    ],
    "returns": null,
@@ -3890,6 +3946,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True: a streamed turn's native tool calls are recorded.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -4763,6 +4827,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice` is honoured here.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_function_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -5163,6 +5235,14 @@
      "kind": "method",
      "signature": "() -> None",
      "summary": "Instantiate the HuggingFace InferenceClient.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -7297,6 +7377,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: the Chat Completions API honours `tool_choice`.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_function_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -7618,6 +7706,86 @@
      "kind": "method",
      "signature": "(content: str, **kwargs: Any) -> GuardrailResult",
      "summary": "Detect and redact PII/PHI; the result carries the redacted content.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "PartialResult",
+   "kind": "dataclass",
+   "module": "effgen.core.agent_response",
+   "area": "agents",
+   "summary": "What a run had reached when it stopped without an answer.",
+   "signature": "(observations: tuple[str, ...] = (), last_observation: str | None = None, last_thought: str | None = None, text: str = '', iterations: int = 0, tool_calls: int = 0) -> None",
+   "params": [
+    {
+     "name": "observations",
+     "type": "tuple[str, ...]",
+     "default": "()",
+     "required": false,
+     "keyword_only": false,
+     "description": "Every tool result of the run, in call order, exactly as the tools returned them (bounded only by the tool-call record's own cap). Not deduplicated and not reworded."
+    },
+    {
+     "name": "last_observation",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The final entry of `observations`, or `None` when the run made no tool call."
+    },
+    {
+     "name": "last_thought",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The model's last substantive reasoning line, when the run left one."
+    },
+    {
+     "name": "text",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The flattened one-line form, also carried as `metadata[\"partial_output\"]`."
+    },
+    {
+     "name": "iterations",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "How many loop iterations the run had made."
+    },
+    {
+     "name": "tool_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "How many tool calls the run had made."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> PartialResult",
+     "summary": "Rebuild a payload from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "Return the payload as plain data, for JSON output and saved runs.",
      "is_async": false,
      "inherited_from": null
     }
@@ -9009,6 +9177,31 @@
    ]
   },
   {
+   "name": "RunStoppedError",
+   "kind": "exception",
+   "module": "effgen.errors",
+   "area": "errors",
+   "summary": "The loop stopped a run before the model wrote an answer.",
+   "signature": "(response: AgentResponse) -> None",
+   "params": [
+    {
+     "name": "response",
+     "type": "AgentResponse",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The `effgen.core.agent_response.AgentResponse` the run produced, with `success=False`."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "RuntimeError"
+   ],
+   "members": [],
+   "values": []
+  },
+  {
    "name": "SLO",
    "kind": "dataclass",
    "module": "effgen.observability.slo",
@@ -9213,10 +9406,34 @@
      "inherited_from": null
     },
     {
+     "name": "count",
+     "kind": "method",
+     "signature": "() -> int",
+     "summary": "Number of events currently stored.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "count_since",
+     "kind": "method",
+     "signature": "(since: float) -> int",
+     "summary": "Number of events with `timestamp >= since`, counted in SQLite.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "insert",
      "kind": "method",
      "signature": "(provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float, timestamp: float | None = None) -> None",
      "summary": "Insert one cost event atomically.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "prune",
+     "kind": "method",
+     "signature": "(*, max_age_days: float | None = None, keep_rows: int | None = None) -> int",
+     "summary": "Delete old events and return how many rows went.",
      "is_async": false,
      "inherited_from": null
     },
@@ -9257,6 +9474,38 @@
      "kind": "method",
      "signature": "() -> list[CostEvent]",
      "summary": "Return events from the last 7 days.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "spend_month",
+     "kind": "method",
+     "signature": "() -> float",
+     "summary": "Total USD spend over the last 30 days.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "spend_since",
+     "kind": "method",
+     "signature": "(since: float) -> float",
+     "summary": "Return total USD spend with `timestamp >= since`, summed in SQLite.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "spend_today",
+     "kind": "method",
+     "signature": "() -> float",
+     "summary": "Total USD spend over the last 24 hours (rolling day).",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "spend_week",
+     "kind": "method",
+     "signature": "() -> float",
+     "summary": "Total USD spend over the last 7 days.",
      "is_async": false,
      "inherited_from": null
     }
@@ -11222,6 +11471,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_forced_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice` is honoured here.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_function_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -11820,7 +12077,7 @@
     {
      "name": "generate_react_prompt",
      "kind": "method",
-     "signature": "(task: str, scratchpad: str = '', conversation_history: str = '', system_prompt: str = 'You are a helpful AI assistant.', verbose: bool = True, closing_instruction: str = '') -> str",
+     "signature": "(task: str, scratchpad: str = '', conversation_history: str = '', system_prompt: str = 'You are a helpful AI assistant.', verbose: bool = True, closing_instruction: str = '', answer_shape: str = '', tool_contract: str = '') -> str",
      "summary": "Generate a complete ReAct prompt with enhanced tool descriptions.",
      "is_async": false,
      "inherited_from": null
