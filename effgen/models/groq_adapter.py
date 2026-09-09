@@ -207,7 +207,7 @@ class GroqAdapter(BaseModel):
     Args:
         model_name: Groq model ID. Must be a key in
             :data:`~effgen.models.groq_models.GROQ_MODELS`.
-            Defaults to ``"llama-3.1-8b-instant"``.
+            Defaults to ``"openai/gpt-oss-20b"``.
         api_key: Groq API key. If omitted, reads ``GROQ_API_KEY``
             from the environment.
         max_retries: Total attempts this adapter makes for one call. The
@@ -223,7 +223,7 @@ class GroqAdapter(BaseModel):
 
         from effgen.models.groq_adapter import GroqAdapter
 
-        adapter = GroqAdapter("llama-3.3-70b-versatile")
+        adapter = GroqAdapter("openai/gpt-oss-120b")
         adapter.load()
 
         result = adapter.generate("What is the capital of France?")
@@ -1110,8 +1110,8 @@ def _register() -> None:
             capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema, Capability.vision},
             # Free developer tier routes as zero out-of-pocket cost while quota remains.
             # Per-model paid list prices are retained in GROQ_MODELS for tie-break metadata.
-            # llama-3.1-8b-instant: $0.05/$0.08; llama-3.3-70b: $0.59/$0.79 per 1M tokens.
-            # Pricing verified: https://groq.com/pricing (2026-05-11)
+            # openai/gpt-oss-20b: $0.075/$0.30; openai/gpt-oss-120b: $0.15/$0.60 per 1M tokens.
+            # Pricing verified: https://groq.com/pricing (2026-09-08)
             pricing={"input_per_1m": 0.0, "output_per_1m": 0.0, "free_tier": True},
         )
     except Exception:

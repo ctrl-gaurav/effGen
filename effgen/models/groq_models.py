@@ -10,7 +10,7 @@ Context windows, modalities and per-token pricing from the Groq Models API
 ``x-ratelimit-*`` response headers.  A model whose ``supported_features`` include
 ``reasoning`` is flagged ``reasoning: True``: it spends output budget on hidden
 reasoning, so it needs the larger default budget.  Catalog reconciled against the
-live listing on 2026-08-07.
+live listing on 2026-09-08.
 """
 
 from __future__ import annotations
@@ -19,38 +19,6 @@ GROQ_MODELS: dict[str, dict] = {
     # -----------------------------------------------------------------------
     # Chat Completions — text models
     # -----------------------------------------------------------------------
-    "llama-3.3-70b-versatile": {
-        "family": "llama",
-        "context": 131_072,
-        "max_output": 32_768,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "rpm": 30,
-        "rpd": 1_000,
-        "tpm": 12_000,
-        "tpd": 100_000,
-        "active": True,
-        "modality": "chat",
-        "notes": "Llama 3.3 70B — best quality on free tier",
-        "pricing_per_1m_input": 0.59,
-        "pricing_per_1m_output": 0.79,
-    },
-    "llama-3.1-8b-instant": {
-        "family": "llama",
-        "context": 131_072,
-        "max_output": 8_192,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "rpm": 30,
-        "rpd": 14_400,
-        "tpm": 6_000,
-        "tpd": 500_000,
-        "active": True,
-        "modality": "chat",
-        "notes": "Llama 3.1 8B — fastest free-tier model",
-        "pricing_per_1m_input": 0.05,
-        "pricing_per_1m_output": 0.08,
-    },
     "qwen/qwen3.6-27b": {
         "family": "qwen",
         "context": 131_072,
@@ -68,6 +36,20 @@ GROQ_MODELS: dict[str, dict] = {
         "notes": "Qwen3.6 27B — accepts text and image input",
         "pricing_per_1m_input": 0.60,
         "pricing_per_1m_output": 3.00,
+    },
+    "qwen/qwen3.8-27b": {
+        "family": "qwen",
+        "context": 131_042,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
+        "rpm": 30,
+        "rpd": 1_000,
+        "tpm": 8_000,
+        "tpd": None,
+        "active": True,
+        "modality": "chat",
+        "notes": "Qwen3.8 27B — answers directly, without a reasoning chain",
     },
     "openai/gpt-oss-120b": {
         "family": "gpt-oss",
@@ -259,7 +241,7 @@ GROQ_MODELS: dict[str, dict] = {
 }
 
 # Default model for new GroqAdapter instances
-GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 # Chat-capable model IDs (usable via chat.completions.create)
 GROQ_CHAT_MODELS = {

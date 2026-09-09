@@ -133,15 +133,6 @@ _MEASURED: dict[str, dict[str, Any]] = {
         "fix": "Use Qwen/Qwen2.5-7B-Instruct locally, or a keyed cloud model.",
         "measured_on": "2026-08-06",
     },
-    "groq:llama-3.1-8b-instant": {
-        "verdict": LIMITED,
-        "reason": (
-            "on coding tasks it tends to write the tool call out as text "
-            "instead of calling the tool, so the file is described, not written"
-        ),
-        "fix": "Use a larger model for multi-file work; it is fine for questions.",
-        "measured_on": "2026-08-09",
-    },
     "qwen/qwen2.5-7b-instruct": {
         "verdict": SUITABLE,
         "reason": "it calls the coding tools and works from their real output",
