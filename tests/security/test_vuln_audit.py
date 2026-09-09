@@ -76,6 +76,14 @@ _EXEMPT = {
     # The CVE is a path traversal reachable only when an attacker controls the
     # resource name passed to nltk.data.load()/find(); effgen passes only the
     # fixed corpus names "wordnet"/"omw-1.4", never an attacker-supplied path.
+    "accelerate",  # CVE-2026-69112 affects every release through 1.14.0, which is
+    # the latest on PyPI, so there is no version to upgrade to. The advisory is a
+    # path traversal in load_checkpoint_in_model / load_checkpoint_and_dispatch,
+    # which fail to sanitise weight_map entries in a sharded checkpoint index.
+    # effgen never calls either function; it reaches accelerate only through
+    # transformers from_pretrained(device_map=...), so the path is reachable only
+    # by loading a checkpoint the user chose to trust. Drop this entry as soon as
+    # a fixed accelerate ships.
 }
 
 def _pip_audit_runnable() -> bool:
@@ -241,6 +249,13 @@ class TestExemptPackagesKnownVulns:
                     "latest); the path-traversal requires an attacker-controlled "
                     "resource name to nltk.data.load()/find(), and effgen only passes "
                     "the fixed corpus names 'wordnet'/'omw-1.4'",
+            "accelerate": "CVE-2026-69112 affects every release through 1.14.0, the "
+                          "latest on PyPI, so there is no version to upgrade to; the "
+                          "path traversal is in load_checkpoint_in_model / "
+                          "load_checkpoint_and_dispatch, which effgen never calls, and "
+                          "accelerate is reached only through transformers "
+                          "from_pretrained(device_map=...), so it needs a checkpoint "
+                          "the user chose to trust",
         }
         missing = _EXEMPT - set(rationale.keys())
         assert not missing, (

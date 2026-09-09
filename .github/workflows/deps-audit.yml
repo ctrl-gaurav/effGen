@@ -95,6 +95,13 @@ jobs:
               # fix for CVE-2026-12243 (path traversal via attacker-controlled
               # nltk.data resource name; effgen passes only fixed corpus names)
               "nltk",
+              # CVE-2026-69112 affects every release through 1.14.0, the latest on
+              # PyPI, so there is nothing to upgrade to. The path traversal is in
+              # load_checkpoint_in_model / load_checkpoint_and_dispatch, which
+              # effgen never calls; accelerate is reached only via transformers
+              # from_pretrained(device_map=...), so it needs a checkpoint the user
+              # chose to trust. Drop this once a fixed accelerate ships.
+              "accelerate",
           }
 
           try:
