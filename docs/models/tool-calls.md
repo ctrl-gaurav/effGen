@@ -56,7 +56,7 @@ TOOLS = [{
     },
 }]
 
-model = load_model("groq:llama-3.1-8b-instant")
+model = load_model("groq:openai/gpt-oss-20b")
 result = model.generate_with_tools("What is 6*7? Use the calculator.", tools=TOOLS)
 
 for call in result.metadata["tool_calls"]:

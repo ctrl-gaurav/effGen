@@ -55,11 +55,11 @@ model = CerebrasAdapter("gpt-oss-120b")
 
 # Or Groq
 # from effgen.models.groq_adapter import GroqAdapter
-# model = GroqAdapter("llama-3.3-70b-versatile")
+# model = GroqAdapter("openai/gpt-oss-120b")
 
 # Or via registry
 # from effgen.models import load_model
-# model = load_model("groq:llama-3.3-70b-versatile")
+# model = load_model("groq:openai/gpt-oss-120b")
 
 model.load()
 agent = Agent(config=AgentConfig(
@@ -141,7 +141,7 @@ For the canonical parity task, these models were validated:
 | Provider | Model | Notes |
 |----------|-------|-------|
 | Cerebras | `gpt-oss-120b` | Fast, free-tier eligible |
-| Groq | `llama-3.3-70b-versatile` | Best quality/speed on free tier |
+| Groq | `openai/gpt-oss-120b` | Best quality/speed on free tier |
 | Together | `Qwen/Qwen3.5-9B` | Cheapest tool-capable serverless model |
 | Fireworks | `accounts/fireworks/models/kimi-k2p6` | Tool-capable serverless model |
 | HuggingFace | `Qwen/Qwen2.5-72B-Instruct` | Best free HF model |

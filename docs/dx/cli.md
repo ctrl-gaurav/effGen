@@ -75,7 +75,7 @@ accuracy/latency matrix with a recommendation.
 
 ```bash
 effgen compare \
-  --models "gpt-5-nano,groq:llama-3.1-8b-instant" \
+  --models "gpt-5-nano,groq:openai/gpt-oss-20b" \
   --suite conversation \
   --scoring contains
 ```
@@ -106,7 +106,7 @@ side. Where `compare` scores a suite against expected answers, `battle` answers
 
 ```bash
 effgen battle "Explain a B-tree in two sentences." \
-  -m openai:gpt-5-nano,groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite
+  -m openai:gpt-5-nano,groq:openai/gpt-oss-20b,gemini:gemini-3.1-flash-lite
 ```
 
 On a terminal each model gets a column that fills in as its answer streams,
@@ -127,7 +127,7 @@ visible as loading rather than counted as slow generation:
 
 ```
 | Model                          | TTFT  | Latency | Cost      |
-| groq:llama-3.1-8b-instant      | 0.42s | 1.87s   | $0.000008 |
+| groq:openai/gpt-oss-20b      | 0.42s | 1.87s   | $0.000008 |
 | transformers:Qwen2.5-1.5B      | 0.48s | 1.23s   | unpriced  |   (load 12.7s)
 ```
 
@@ -151,7 +151,7 @@ which renders that run's result as a single HTML file: a headline verdict, the
 tables the terminal shows, and inline charts.
 
 ```bash
-effgen compare --models "gpt-5-nano,groq:llama-3.1-8b-instant" \
+effgen compare --models "gpt-5-nano,groq:openai/gpt-oss-20b" \
   --suite math --optimize cost --report bakeoff.html
 
 effgen eval --suite math -m gpt-5-nano --provider openai --report eval.html
@@ -196,7 +196,7 @@ effgen run "..." -o run.json && effgen report run.json   # a saved run
 
 ```bash
 effgen run "What is 18723 * 4409? Use the calculator tool." \
-  -m llama-3.1-8b-instant --provider groq -t calculator --card run.html
+  -m openai/gpt-oss-20b --provider groq -t calculator --card run.html
 ```
 
 The card carries the task, the model and provider that answered it, a

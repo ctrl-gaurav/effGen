@@ -113,7 +113,7 @@ path separator — `:` on Linux/macOS, `;` on Windows) of Python files, and ever
 ```bash
 export EFFGEN_PROMPTS_DIR=~/my-prompts
 effgen prompts list --domain marketing
-effgen prompts run marketing.explainer.v1 -m groq:llama-3.1-8b-instant
+effgen prompts run marketing.explainer.v1 -m groq:openai/gpt-oss-20b
 ```
 
 Each `*.py` file in the directory is loaded (files whose name starts with `_`

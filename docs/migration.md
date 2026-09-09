@@ -21,7 +21,7 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
-- **Routing.** Send `provider:model` (`groq:llama-3.1-8b-instant`,
+- **Routing.** Send `provider:model` (`groq:openai/gpt-oss-20b`,
   `gemini:gemini-3.1-flash-lite`) or `provider/model`; a bare local id
   (`transformers:Qwen/Qwen2.5-1.5B-Instruct`) also loads. `effgen-default`
   routes to the server's configured default model. OpenAI flagship names
@@ -45,7 +45,7 @@ emit client-side `tool_calls` deltas. Request a registered tool by name:
 
 ```python
 resp = client.chat.completions.create(
-    model="groq:llama-3.1-8b-instant",
+    model="groq:openai/gpt-oss-20b",
     messages=[{"role": "user", "content": "What is 17 * 23?"}],
     tools=[{"type": "function", "function": {"name": "calculator"}}],
 )

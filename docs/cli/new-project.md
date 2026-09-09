@@ -27,7 +27,7 @@ Directory: my-agent
   wrote    example.py    a runnable agent script
   wrote    .gitignore    keeps .env out of git
 
-Model:      groq:llama-3.1-8b-instant
+Model:      groq:openai/gpt-oss-20b
             groq key detected
             change it on the 'model:' line of effgen.yaml
 
@@ -70,7 +70,7 @@ is the daily spend cap, which is the same `~/.effgen/budget.json` that
 # the agent may take on one task. Both apply to every run that loads this file.
 # A daily spend cap across all runs is separate: effgen cost set-budget 1.00
 
-model: groq:llama-3.1-8b-instant
+model: groq:openai/gpt-oss-20b
 system_prompt: You are a helpful assistant. Answer concisely and say when you are unsure.
 temperature: 0.2
 max_tokens: 512
@@ -106,7 +106,7 @@ effgen run "What is 25 * 17?" -c effgen.yaml \
     -m gemini:gemini-3.1-flash-lite              # this one instead
 ```
 
-The model id is written provider-prefixed (`groq:llama-3.1-8b-instant`,
+The model id is written provider-prefixed (`groq:openai/gpt-oss-20b`,
 `transformers:Qwen/Qwen2.5-1.5B-Instruct`) because a file travels without a
 `--provider` flag beside it.
 

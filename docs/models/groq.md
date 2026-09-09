@@ -21,7 +21,7 @@ Or put it in your `.env` file.
 ```python
 from effgen.models.groq_adapter import GroqAdapter
 
-adapter = GroqAdapter("llama-3.1-8b-instant")
+adapter = GroqAdapter("openai/gpt-oss-20b")
 adapter.load()
 
 result = adapter.generate("What is the capital of France?")
@@ -35,7 +35,7 @@ adapter.unload()
 ```python
 from effgen.models import load_model
 
-model = load_model("llama-3.3-70b-versatile", provider="groq")
+model = load_model("openai/gpt-oss-120b", provider="groq")
 result = model.generate("Explain quantum entanglement in one sentence.")
 print(result.text)
 model.unload()
@@ -44,7 +44,7 @@ model.unload()
 ## Streaming
 
 ```python
-adapter = GroqAdapter("llama-3.1-8b-instant")
+adapter = GroqAdapter("openai/gpt-oss-20b")
 adapter.load()
 
 for chunk in adapter.generate_stream("Count from 1 to 10."):
@@ -71,7 +71,7 @@ tools = [{
     },
 }]
 
-adapter = GroqAdapter("llama-3.3-70b-versatile")
+adapter = GroqAdapter("openai/gpt-oss-120b")
 adapter.load()
 
 result = adapter.generate_with_tools("What is 17 * 23?", tools)
@@ -89,21 +89,20 @@ The shape of `metadata["tool_calls"]` is the same for every adapter — see
 ## Models
 
 Rate limits below are for the Developer plan. Catalog reconciled against Groq's
-live model listing on 2026-08-07; `qwen/qwen3.6-27b` is the vision-capable entry.
+live model listing on 2026-09-08; `qwen/qwen3.6-27b` is the vision-capable entry.
 
 ### Chat Completion Models
 
 | Model | Context | Max Output | Tools | RPM | RPD | TPM | TPD |
 |-------|---------|-----------|-------|-----|-----|-----|-----|
-| `llama-3.1-8b-instant` | 131k | 8k | ✓ | 30 | 14,400 | 6k | 500k |
-| `llama-3.3-70b-versatile` | 131k | 32k | ✓ | 30 | 1,000 | 12k | 100k |
-| `qwen/qwen3.6-27b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | — |
-| `openai/gpt-oss-120b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | 200k |
-| `openai/gpt-oss-20b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | 200k |
-| `openai/gpt-oss-safeguard-20b` | 131k | 4k | ✓ | 30 | 1,000 | 8k | 200k |
-| `groq/compound` | 131k | 8k | ✓ | 30 | 250 | 70k | — |
-| `groq/compound-mini` | 131k | 8k | ✓ | 30 | 250 | 70k | — |
-| `allam-2-7b` | 4k | 2k | — | 30 | 7,000 | 6k | 500k |
+| `qwen/qwen3.6-27b` | 131,072 | 16,384 | ✓ | 30 | 1,000 | 8k | — |
+| `qwen/qwen3.8-27b` | 131,042 | 16,384 | ✓ | 30 | 1,000 | 8k | — |
+| `openai/gpt-oss-120b` | 131,072 | 16,384 | ✓ | 30 | 1,000 | 8k | 200k |
+| `openai/gpt-oss-20b` | 131,072 | 16,384 | ✓ | 30 | 1,000 | 8k | 200k |
+| `openai/gpt-oss-safeguard-20b` | 131,072 | 4,096 | ✓ | 30 | 1,000 | 8k | 200k |
+| `groq/compound` | 131,072 | 8,192 | ✓ | 30 | 250 | 70k | — |
+| `groq/compound-mini` | 131,072 | 8,192 | ✓ | 30 | 250 | 70k | — |
+| `allam-2-7b` | 4,096 | 2,048 | — | 30 | 7,000 | 6k | 500k |
 | `meta-llama/llama-prompt-guard-2-86m` | 512 | 256 | — | 30 | 14,400 | 15k | 500k |
 | `meta-llama/llama-prompt-guard-2-22m` | 512 | 256 | — | 30 | 14,400 | 15k | 500k |
 
@@ -135,7 +134,7 @@ print(status)  # {"enabled": True, "status": "..."}
 To disable rate limiting (e.g., in tests):
 
 ```python
-adapter = GroqAdapter("llama-3.1-8b-instant", enable_rate_limiting=False)
+adapter = GroqAdapter("openai/gpt-oss-20b", enable_rate_limiting=False)
 ```
 
 ## Programmatic Model Discovery
@@ -143,15 +142,15 @@ adapter = GroqAdapter("llama-3.1-8b-instant", enable_rate_limiting=False)
 ```python
 from effgen.models.groq_models import available_models, chat_models, tool_capable_models, model_info
 
-print(available_models())       # all 15 models
-print(chat_models())            # 11 chat-capable models
-print(tool_capable_models())    # 8 models with native tool support
+print(available_models())       # all 14 models
+print(chat_models())            # 10 chat-capable models
+print(tool_capable_models())    # 7 models with native tool support
 
-info = model_info("llama-3.3-70b-versatile")
+info = model_info("openai/gpt-oss-120b")
 print(info["context"])          # 131072
 print(info["supports_native_tools"])  # True
 print(info["rpm"])              # 30
-print(info["notes"])            # "Llama 3.3 70B — best quality on free tier"
+print(info["notes"])            # "OpenAI GPT-OSS 120B open weights"
 ```
 
 The `notes` field tells users about model characteristics; `context`, `max_output`, `rpm`/`rpd`/`tpm`/`tpd` are all machine-readable so the adapter and future router can make decisions automatically.

@@ -208,7 +208,7 @@ executions as node-link graphs:
       "cost_usd": 0.000042,
       "tokens": 1234,
       "nodes": [
-        {"id": "lead", "type": "manager", "status": "ok", "model": "llama-3.1-8b-instant",
+        {"id": "lead", "type": "manager", "status": "ok", "model": "openai/gpt-oss-20b",
          "runs": 2, "cost_usd": 0.00002, "tokens": 800, "duration_s": 1.2}
       ],
       "edges": [{"source": "lead", "target": "researcher", "kind": "delegation", "count": 1}]

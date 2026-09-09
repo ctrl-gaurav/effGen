@@ -46,7 +46,7 @@ client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="YOUR_KEY")
 
 # Any effGen-supported model id works directly:
 r = client.chat.completions.create(
-    model="groq/llama-3.1-8b-instant",          # or "openai/gpt-5-nano",
+    model="groq/openai/gpt-oss-20b",          # or "openai/gpt-5-nano",
     messages=[{"role": "user", "content": "What is the capital of France?"}],
 )                                                 # or a local id like
 print(r.choices[0].message.content)               # "Qwen/Qwen2.5-1.5B-Instruct"
@@ -96,7 +96,7 @@ you ask:
 
 ```python
 for ev in client.chat.completions.create(
-        model="groq/llama-3.1-8b-instant",
+        model="groq/openai/gpt-oss-20b",
         messages=[{"role": "user", "content": "Count 1 to 5."}],
         stream=True, stream_options={"include_usage": True}):
     if ev.choices and ev.choices[0].delta.content:
@@ -118,7 +118,7 @@ stream client-side `tool_calls` deltas for the client to execute.
 
 ```python
 r = client.chat.completions.create(
-    model="groq/llama-3.1-8b-instant",
+    model="groq/openai/gpt-oss-20b",
     messages=[{"role": "user", "content": "Use the calculator to compute 127 * 43."}],
     tools=[{"type": "function",
             "function": {"name": "calculator",

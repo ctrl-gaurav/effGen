@@ -88,7 +88,7 @@ async def main():
         tools = client.get_effgen_tools()          # -> list[BaseTool]
         agent = Agent(config=AgentConfig(
             name="mcp-consumer",
-            model="llama-3.1-8b-instant", provider="groq",
+            model="openai/gpt-oss-20b", provider="groq",
             tools=tools,
         ))
         result = await agent.run_async("Use the add tool to compute 23 + 19.")

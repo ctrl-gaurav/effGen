@@ -24,7 +24,7 @@ providers = list_providers()
 models = list_models("groq")
 
 # Resolve a model by provider:model_id prefix
-provider, adapter_cls, info = lookup("groq:llama-3.3-70b-versatile")
+provider, adapter_cls, info = lookup("groq:openai/gpt-oss-120b")
 
 # Check which API keys are present in the environment
 keys = check_keys()
@@ -40,10 +40,10 @@ appear in multiple providers:
 from effgen.models import load_model
 
 # Prefix syntax routes directly to Groq
-model = load_model("groq:llama-3.1-8b-instant")
+model = load_model("groq:openai/gpt-oss-20b")
 
 # Equivalent to:
-model = load_model("llama-3.1-8b-instant", provider="groq")
+model = load_model("openai/gpt-oss-20b", provider="groq")
 ```
 
 ## `effgen doctor`
@@ -169,12 +169,12 @@ from effgen.models.errors import AmbiguousModelError
 from effgen.models.registry import lookup
 
 try:
-    lookup("llama-3.3-70b-versatile")   # exists on Groq, Together, Fireworks
+    lookup("openai/gpt-oss-120b")   # served by Groq, HF, Replicate and Together
 except AmbiguousModelError as e:
-    print(e.model_id)    # "llama-3.3-70b-versatile"
-    print(e.providers)   # ["fireworks", "groq", "together"]
+    print(e.model_id)    # "openai/gpt-oss-120b"
+    print(e.providers)   # ["groq", "hf", "replicate", "together"]
     # Fix: be explicit
-    prov, cls, info = lookup("groq:llama-3.3-70b-versatile")
+    prov, cls, info = lookup("groq:openai/gpt-oss-120b")
 ```
 
 ## Supported Providers

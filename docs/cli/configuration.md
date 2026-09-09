@@ -52,7 +52,7 @@ A model id can be given three ways:
 effgen run "What is 25 * 17?" -m Qwen/Qwen2.5-1.5B-Instruct
 
 # 2. Provider-prefixed id
-effgen run "Tell me a joke" -m groq:llama-3.1-8b-instant
+effgen run "Tell me a joke" -m groq:openai/gpt-oss-20b
 
 # 3. Bare id plus --provider
 effgen run "Summarize quantum computing" -m gpt-5-nano --provider openai

@@ -334,7 +334,7 @@ result = router.route_and_execute(ctx, call_provider)
 
 for ev in events:
     print(ev.as_dict())
-    # {"from": "groq/llama-3.1-8b-instant", "to": "cerebras/gpt-oss-120b",
+    # {"from": "groq/openai/gpt-oss-20b", "to": "cerebras/gpt-oss-120b",
     #  "reason": "rate_limited", "hop": 1, ...}
 ```
 
@@ -426,7 +426,7 @@ store = SQLiteRateLimitStore()  # ~/.effgen/rate_limits.sqlite
 
 coord = RateLimitCoordinator(
     provider="groq",
-    model="llama-3.3-70b-versatile",
+    model="openai/gpt-oss-120b",
     rpm=30, rph=1800, rpd=14_400,
     tpm=6_000, tph=500_000, tpd=500_000,
     storage=store,              # <-- enables cross-process coordination
@@ -449,7 +449,7 @@ from effgen.models import SQLiteRateLimitStore, load_model
 
 store = SQLiteRateLimitStore()
 model = load_model(
-    "llama-3.1-8b-instant",
+    "openai/gpt-oss-20b",
     provider="groq",
     rate_limit_storage=store,
 )
