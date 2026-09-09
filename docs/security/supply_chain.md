@@ -187,10 +187,10 @@ pip install cosign            # or use the binary from https://github.com/sigsto
 
 # Download wheel and its .sig / .bundle from the GitHub release
 cosign verify-blob \
-    --certificate-identity "https://github.com/ctrl-gaurav/effGen/.github/workflows/release.yml@refs/tags/v1.0.0" \
+    --certificate-identity "https://github.com/ctrl-gaurav/effGen/.github/workflows/release.yml@refs/tags/v1.0.1" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-    --bundle effgen-1.0.0.whl.sigstore.bundle \
-    effgen-1.0.0-py3-none-any.whl
+    --bundle effgen-1.0.1.whl.sigstore.bundle \
+    effgen-1.0.1-py3-none-any.whl
 ```
 
 > Sigstore signing is documented here but the step is optional in the current

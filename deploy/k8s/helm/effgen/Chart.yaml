@@ -2,8 +2,8 @@ apiVersion: v2
 name: effgen
 description: Agentic AI framework for Small Language Models — API server deployment
 type: application
-version: 1.0.0
-appVersion: "1.0.0"
+version: 1.0.1
+appVersion: "1.0.1"
 
 keywords:
   - ai

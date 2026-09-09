@@ -10,7 +10,7 @@ import type { SiteData } from '@data/siteData.types'
 
 export const siteData = raw as unknown as SiteData
 
-/** `1.0.0` — what the package on PyPI is at the moment this was generated. */
+/** `1.0.1` — what the package on PyPI is at the moment this was generated. */
 export const version = siteData.version
 
 /** 66 built-in tools, across 8 categories. */

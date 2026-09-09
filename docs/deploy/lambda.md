@@ -52,7 +52,7 @@ Expected output:
 {
   "event_path": "/health",
   "response_status_code": 200,
-  "response_body_parsed": {"status": "ok", "version": "1.0.0"},
+  "response_body_parsed": {"status": "ok", "version": "1.0.1"},
   "test": "PASS"
 }
 ```
@@ -99,7 +99,7 @@ ENDPOINT=$(aws cloudformation describe-stacks \
   --output text)
 
 curl "$ENDPOINT/health"
-# {"status":"ok","version":"1.0.0"}
+# {"status":"ok","version":"1.0.1"}
 ```
 
 ---

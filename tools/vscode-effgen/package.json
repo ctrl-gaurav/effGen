@@ -2,7 +2,7 @@
   "name": "vscode-effgen",
   "displayName": "effGen",
   "description": "effGen — Efficient Agent Framework: prompt-template completion, run code lens, hover docs",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "effgen",
   "repository": {
     "type": "git",
@@ -52,7 +52,7 @@
         "effgen.defaultModel": {
           "type": "string",
           "default": "gpt-5-nano",
-          "description": "Default model id sent to the effGen server when running prompts from the editor (e.g. gpt-5-nano, groq:llama-3.1-8b-instant, or a local HF repo id)"
+          "description": "Default model id sent to the effGen server when running prompts from the editor (e.g. gpt-5-nano, groq:openai/gpt-oss-20b, or a local HF repo id)"
         },
         "effgen.enableCompletion": {
           "type": "boolean",

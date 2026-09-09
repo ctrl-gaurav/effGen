@@ -3,8 +3,8 @@
 #
 # Build (from repo root):
 #   docker build -f deploy/docker/Dockerfile \
-#     --build-arg VERSION=1.0.0 \
-#     -t effgen:1.0.0 -t effgen:1.0 -t effgen:latest .
+#     --build-arg VERSION=1.0.1 \
+#     -t effgen:1.0.1 -t effgen:1.0 -t effgen:latest .
 #
 # Run (dev mode, no auth):
 #   docker run --rm -p 8080:8080 \
@@ -25,7 +25,7 @@
 # ─────────────────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -71,7 +71,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 # ─────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 
 LABEL org.opencontainers.image.title="effGen" \
       org.opencontainers.image.description="Agentic AI framework for Small Language Models" \

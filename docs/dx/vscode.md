@@ -38,7 +38,7 @@ Then install the generated `.vsix` via **Extensions → Install from VSIX…**
 
 ### Pre-built .vsix
 
-Download `vscode-effgen-1.0.0.vsix` from the release page and install via **Extensions → Install from VSIX…**
+Download `vscode-effgen-1.0.1.vsix` from the release page and install via **Extensions → Install from VSIX…**
 
 ## Configuration
 
