@@ -123,3 +123,54 @@ class TestEnginePrefixParsing:
             assert classify_provider_error(exc).category == "invalid_request"
         else:
             raise AssertionError("expected ValueError")
+
+
+class TestAProviderPrefixBesideAnExplicitProvider:
+    """An id that already names its provider, passed with ``provider=`` too.
+
+    A caller that is handed ``(model_id, provider)`` together — the CLI's
+    model suggestion is the shipped example — naturally forwards both. The
+    prefix used to be stripped only when ``provider`` was ``None``, so the
+    provider's adapter was asked for the whole ``"groq:openai/gpt-oss-20b"``
+    string and answered "unknown model". Passing the same provider twice
+    means one thing, not two.
+    """
+
+    def _groq_loader(self, monkeypatch):
+        loader = _stubbed_loader()
+        adapter = MagicMock(name="groq-adapter-class")
+        monkeypatch.setattr(
+            "effgen.models.model_loader_routing._get_groq_adapter",
+            lambda: adapter,
+        )
+        return loader, adapter
+
+    def test_a_redundant_prefix_is_dropped(self, monkeypatch):
+        loader, adapter = self._groq_loader(monkeypatch)
+        loader.load_model("groq:openai/gpt-oss-20b", provider="groq")
+        assert adapter.call_args.kwargs["model_name"] == "openai/gpt-oss-20b"
+
+    def test_the_bare_id_is_unchanged(self, monkeypatch):
+        loader, adapter = self._groq_loader(monkeypatch)
+        loader.load_model("openai/gpt-oss-20b", provider="groq")
+        assert adapter.call_args.kwargs["model_name"] == "openai/gpt-oss-20b"
+
+    def test_the_prefix_alone_still_works(self, monkeypatch):
+        loader, adapter = self._groq_loader(monkeypatch)
+        loader.load_model("groq:openai/gpt-oss-20b")
+        assert adapter.call_args.kwargs["model_name"] == "openai/gpt-oss-20b"
+
+    def test_a_provider_alias_matches_its_canonical_name(self, monkeypatch):
+        # "google" normalizes to "gemini"; a "gemini:" prefix beside
+        # provider="google" is the same redundancy, not a disagreement.
+        loader = _stubbed_loader()
+        loader._load_gemini_model = MagicMock(return_value=MagicMock(name="gemini-model"))
+        loader.load_model("gemini:gemini-3.1-flash-lite", provider="google")
+        assert loader._load_gemini_model.call_args[0][0] == "gemini-3.1-flash-lite"
+
+    def test_a_prefix_naming_a_different_provider_is_left_alone(self, monkeypatch):
+        # A real disagreement is not silently resolved: the provider the
+        # caller asked for is used, and its error names what was asked for.
+        loader, adapter = self._groq_loader(monkeypatch)
+        loader.load_model("openai:gpt-5-nano", provider="groq")
+        assert adapter.call_args.kwargs["model_name"] == "openai:gpt-5-nano"

@@ -110,6 +110,19 @@ class ModelLoaderRoutingMixin:
                 )
             provider = _p
 
+            # An id may already carry the provider the caller passed
+            # separately: a suggestion is reported as a qualified id *and* as
+            # the provider it came from, and a caller that forwards both means
+            # one thing, not two. Drop the redundant prefix so the adapter is
+            # asked for the id its own catalog publishes. A prefix naming a
+            # different provider is a real disagreement and is left in place,
+            # so the error names what was actually asked for.
+            if isinstance(model_name, str) and ":" in model_name:
+                _dup_prefix, _dup_rest = model_name.split(":", 1)
+                _dup = _dup_prefix.strip().lower()
+                if _dup_rest and _aliases.get(_dup, _dup) == provider:
+                    model_name = _dup_rest
+
         # Support "provider:model_id" prefix syntax via ProviderRegistry
         if provider is None and isinstance(model_name, str) and ":" in model_name:
             _prefix, _rest = model_name.split(":", 1)
@@ -176,7 +189,7 @@ class ModelLoaderRoutingMixin:
 
         # Route / disambiguate bare cloud model ids by consulting the model
         # catalog directly.  Without this, a documented
-        # provider id such as ``gpt-oss-120b`` or ``llama-3.3-70b-versatile``
+        # provider id such as ``gpt-oss-120b`` or ``allam-2-7b``
         # falls through to the local HuggingFace path and fails with a confusing
         # download error instead of calling the provider.  Bare ids that no cloud
         # catalog knows (the normal case for local HF repos / paths) are left
@@ -184,7 +197,7 @@ class ModelLoaderRoutingMixin:
         # A "/" in a bare id means an org/model HuggingFace-style repo (also how
         # Together/Fireworks/Replicate/HF list their models), so it stays on the
         # local/HF path; only slash-free cloud slugs (gpt-oss-120b,
-        # llama-3.3-70b-versatile, zai-glm-4.7, …) are candidates for routing.
+        # allam-2-7b, zai-glm-4.7, …) are candidates for routing.
         if (
             provider is None
             and isinstance(model_name, str)
