@@ -40,6 +40,20 @@ allowing the model to emit structured tool calls rather than parsing free text. 
 Providers supporting native tools: Cerebras, Groq, Together, Fireworks, HF (Qwen models),
 Gemini, OpenAI, Anthropic.
 
+### The message protocol
+
+Taking tool *definitions* as a request parameter is a separate question from carrying a
+*conversation* that holds a tool call and its result. `AgentConfig.prompt_protocol="messages"`
+sends the run as the conversation it was — a system turn, the task, the model's own reasoning
+on the same assistant turn as the call it made, and each tool result answering that call id —
+and it reaches only an adapter whose `supports_message_protocol()` says it carries both parts
+through to the provider.
+
+Carrying the message protocol today: the OpenAI adapter and every OpenAI-compatible endpoint
+built on it (a served model, vLLM, and any provider exposing the same request schema). Every
+other adapter answers `False`, so a run that asks for `"messages"` there gets the flat
+transcript and one log line saying which model and why — never a rejected request.
+
 ## Switching Providers
 
 All providers share the same `Agent` API. To switch, simply swap the adapter:

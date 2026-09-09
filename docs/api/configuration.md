@@ -21,6 +21,7 @@
 | `cite_sources` | `bool` | `False` | Ask for inline `[1]` citation markers when answering from retrieved passages |
 | `tool_contract` | `str \| None` | `None` | What the model is told about the attached tools. `None` selects it from the tools' declared categories; a string is stated verbatim; `""` states nothing |
 | `tool_use` | `ToolUsePolicy \| str \| None` | `None` | Whether a run holding these tools has to call one. `None` reads it from the tools' declared categories; `"required"` refuses an answer written with no call; `"auto"` leaves it to the model; `"sparing"` adds that a run which already has the answer should give it |
+| `prompt_protocol` | `str` | `"flat"` | How the run's conversation reaches the model. `"flat"` sends one string carrying the transcript; `"messages"` sends a system turn, the task, the model's reasoning beside the tool call it made, and each result answering that call; `"auto"` sends messages wherever the model declares it carries them. Falls back to `"flat"`, with a logged reason, on a model, a loop or a turn that cannot carry the shape. The protocol a run used comes back on `response.metadata["prompt_protocol"]` |
 
 ## Memory Config
 
