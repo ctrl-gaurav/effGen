@@ -202,9 +202,12 @@ process, so at most one turn is spent on it.
 
 ## Streaming
 
-`agent.stream(task)` yields successive **answer-text** `str` chunks; joining them
-reconstructs the (sanitized) answer. The iterator ending is the "done" signal; a
-provider failure raises a typed error rather than silently ending the stream.
+`agent.stream(task)` yields successive **answer-text** `str` chunks. On a tool
+agent, joining them reconstructs the sanitized answer; an agent with no tools has
+one turn and nothing to decide, so its chunks are the model's own text as it is
+written, and the sanitized form of it is what `run()` returns. The iterator
+ending is the "done" signal; a provider failure raises a typed error rather than
+silently ending the stream.
 
 ```python
 for chunk in agent.stream("Write a haiku about the sea"):
@@ -229,35 +232,42 @@ for event in agent.stream(task, include_events=True):
 `thought`, `tool_call`, `observation`, `status`, or `usage`; concatenating the
 `answer` events still reconstructs the final answer.
 
-### Streaming with native tool calling
+### Streaming and tool calling
 
-A tool-using stream takes one of two paths, chosen from the model:
+`stream()` and `run()` drive the same loop. The prompt frame, the tool
+definitions, the sampling settings, the repeat guards and the terminal contract
+are the agent's, not the method's, so the same agent asks the model the same
+question whichever one the caller used. What streaming decides is only *when*
+the answer reaches the consumer:
 
-- **The provider's tool calling.** When the adapter records the tool calls it
-  streams — openai, gemini, groq, together, fireworks and cerebras do — the loop
-  dispatches those calls the same way `agent.run()` does, and the assistant's
-  text streams through as it is written. This is the same loop, the same repeat
-  guards and the same failure vocabulary as a non-streamed run.
-- **The ReAct text protocol.** Every other model — the local chat-template
-  engines, and any provider whose stream drops its tool calls — keeps the
-  prompt-based scaffold, where the answer arrives once the turn is parsed.
+- **A turn is streamed** when its tool definitions travel to the provider and
+  the adapter records the calls it streams — openai, gemini, groq, together,
+  fireworks and cerebras do. The assistant's text arrives as it is written.
+- **A turn is accumulated** otherwise, and delivered in one piece: a model whose
+  stream drops its tool calls, a caller's own `system_prompt_template`, the
+  text scaffold, and any turn a later check can still revise (see below).
 
 `agent.model.streams_tool_calls()` reports whether an adapter records what it
-streams. The path is chosen per turn and needs no configuration.
+streams, and `agent._can_stream_native_tools()` answers the same question for
+the whole agent — a presentation layer reads it to decide whether to render tool
+events. Neither chooses a prompt or a loop; the decision is per turn and needs
+no configuration.
 
-On the native path a turn's text is held back until the turn can no longer
-become a tool call: once a call has been declared the text is delivered as a
-`thought` and never enters the answer, and once a text delta has arrived with no
-call declared the turn is committed to answering. Text is also sanitized before
-it is emitted, so what reaches the screen is what the answer ends up being.
+On a streamed turn the text is held back until the turn can no longer become a
+tool call: once a call has been declared the text is delivered as a `thought`
+and never enters the answer, and once a text delta has arrived with no call
+declared the turn is committed to answering. Text is also sanitized before it is
+emitted, so what reaches the screen is what the answer ends up being.
 
 ### The record a streamed turn leaves
 
-After a stream that took the native path, `agent.last_stream_response` holds the
+After any stream that entered the loop, `agent.last_stream_response` holds the
 `AgentResponse` the same task would have produced through `run()` — `output`,
-`success`, `iterations`, `tool_calls`, `tokens_used`, `execution_time`, and the
-`reason` / `error` / `partial` metadata described under [Results](#results). It
-is `None` after a stream that did not take that path.
+`success`, `stop_reason`, `iterations`, `tool_calls`, `tokens_used`,
+`execution_time`, and the `reason` / `error` / `partial` / `thread` /
+`prompt_protocol` metadata described under [Results](#results). It is `None`
+only after a stream that never entered the loop, which is a stream from an agent
+with no tools.
 
 ```python
 events = list(agent.stream(task, include_events=True))
@@ -266,19 +276,23 @@ response = agent.last_stream_response
 assert answer == response.output          # a turn that answered
 ```
 
-For a turn that answered, joining the `answer` events reproduces
+For a run that answered, joining the `answer` events reproduces
 `response.output` exactly. A turn that could still be sent back to search — one
 that follows a retrieval call, on a run that has not searched again yet — is
-held back until the turn is complete and then delivered all at once, as the
-same deltas it would have streamed, so a turn that is discarded and re-asked
-never reaches the screen; that raises
-`usage["ttft_ms"]` on at most one turn per run and leaves every other turn
-streaming as it did. A turn the loop stopped — at its iteration cap, on a
-repeated call, on a tool that reproduced its own result — and a turn whose model
-wrote its tool call out as text instead of making it both have no answer to
-stream: `output` carries the typed outcome and it arrives as a `status` event,
-not as answer deltas. `response.outcome`, `response.stop_reason` and
-`response.partial` read the same as they do after `run()`.
+accumulated and delivered in one piece, so a turn that is discarded and re-asked
+never reaches the screen; that raises `usage["ttft_ms"]` on at most one turn per
+run and leaves every other turn streaming as it did. A run the loop stopped — at
+its iteration cap, on a repeated call, on a tool that reproduced its own result
+— and one whose model wrote its tool call out as text instead of making it both
+have no answer to stream: `output` carries the typed outcome, and it arrives as
+a `status` event in event mode and as the stream's only text in the default
+mode, so both modes carry the same words. `response.outcome`,
+`response.stop_reason` and `response.partial` read the same as they do after
+`run()`.
+
+A provider failure raises from the iterator, as it always has. An agent built
+with `raise_on_error=False` asked not to be raised at, and that now holds on the
+streamed path too: the failure is reported on `last_stream_response` instead.
 
 ### Usage after a stream
 
