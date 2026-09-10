@@ -546,28 +546,38 @@ def test_the_split_rendering_leaves_an_ordinary_turn_alone() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The streamed loops are excluded by declaration, not by omission
+# A streamed run resolves the protocol exactly as a blocking one does
 # ---------------------------------------------------------------------------
 
 
-def test_the_streamed_loops_say_they_do_not_send_messages() -> None:
+def test_a_streamed_run_resolves_the_protocol_like_a_blocking_one() -> None:
+    """The ask reaches a streamed run instead of being logged and dropped.
+
+    Both streamed loops used to declare that they could not carry the
+    conversation, so ``prompt_protocol="messages"`` was answered ``"flat"``
+    whenever the caller streamed. There is one loop now, and it sends messages.
+    """
+    blocking = _agent(ScriptedNative(), "messages")
+    blocking.run(TASK)
+
+    streamed_model = ScriptedNative()
+    streamed = _agent(streamed_model, "messages")
+    list(streamed.stream(TASK))
+
+    assert isinstance(streamed_model.prompts[0], list), streamed_model.prompts[0]
+    assert (
+        streamed.last_stream_response.metadata["prompt_protocol"] == "messages"
+    )
+
+
+def test_the_declaration_that_excluded_the_streamed_loops_is_gone() -> None:
+    """No path may opt out of the protocol resolution by declaration."""
     import inspect
 
-    from effgen.core import agent_stream_native, agent_streaming
+    from effgen.core import agent_loop, agent_runtime, agent_stream_native, agent_streaming
 
-    for module in (agent_stream_native, agent_streaming):
-        source = inspect.getsource(module)
-        assert "carried_by_this_loop=False" in source, module.__name__
-
-
-def test_a_loop_that_does_not_carry_the_shape_answers_flat(caplog) -> None:
-    agent = _agent(ScriptedNative(), "messages")
-    with caplog.at_level("INFO"):
-        resolved = agent._resolve_prompt_protocol(
-            tools_travel_as_parameter=True, carried_by_this_loop=False,
-        )
-    assert resolved == "flat"
-    assert "this loop does not send the conversation as messages" in caplog.text
+    for module in (agent_loop, agent_runtime, agent_stream_native, agent_streaming):
+        assert "carried_by_this_loop" not in inspect.getsource(module), module.__name__
 
 
 # ---------------------------------------------------------------------------

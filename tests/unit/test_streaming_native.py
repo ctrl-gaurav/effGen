@@ -195,13 +195,35 @@ def test_an_agent_without_tools_keeps_the_direct_path():
     assert agent._can_stream_native_tools() is False
 
 
-def test_the_react_stream_still_runs_for_a_non_capable_model():
-    model = _ScriptedModel(
+def test_a_model_that_does_not_stream_its_calls_answers_as_run_does():
+    """The prompt frame no longer depends on which method the caller used.
+
+    A model that can be handed tool definitions but whose adapter does not
+    stream them used to be prompted with the text scaffold when streamed and
+    with the native frame when run. It is prompted the same way now, so the two
+    entry points reach the same outcome — the turn is accumulated and delivered
+    whole rather than shown as it is written.
+    """
+    streamed_model = _ScriptedModel(
         [_turn("Thought: I can do this\nFinal Answer: 42")], streams_calls=False
     )
-    agent = _agent(model)
-    assert "".join(agent.stream("What is 6*7?")) == "42"
-    assert agent.last_stream_response is None
+    streamed = _agent(streamed_model)
+    streamed.config.raise_on_error = False
+    text = "".join(streamed.stream(TASK))
+
+    blocking_model = _ScriptedModel(
+        [_turn("Thought: I can do this\nFinal Answer: 42")], streams_calls=False
+    )
+    blocking = _agent(blocking_model)
+    blocking.config.raise_on_error = False
+    response = blocking.run(TASK)
+
+    record = streamed.last_stream_response
+    assert record is not None
+    assert record.output == response.output
+    assert record.stop_reason == response.stop_reason
+    assert record.success == response.success
+    assert text == record.output
 
 
 # --------------------------------------------------------------------------- #
@@ -335,10 +357,29 @@ def test_the_record_feeds_the_coding_engine_the_same_shape_a_run_does(tmp_path):
     assert isinstance(b["cost_usd"], float | type(None))
 
 
-def test_a_stream_that_did_not_take_the_native_path_leaves_no_record():
+def test_every_stream_that_entered_the_loop_leaves_a_record():
+    """A stream that could not be streamed still reports how the run ended.
+
+    ``last_stream_response is None`` used to mean "this stream did not take the
+    native path", which a caller could not act on. It now means "this stream
+    never entered the loop", which is exactly a tool-free stream.
+    """
     model = _ScriptedModel([_turn("Final Answer: 42")], streams_calls=False)
     agent = _agent(model)
-    list(agent.stream("What is 6*7?"))
+    list(agent.stream(TASK))
+    record = agent.last_stream_response
+    assert record is not None
+    assert record.output == "42"
+    assert record.metadata["reason"] == "final_answer"
+    assert "thread" in record.metadata
+    assert record.metadata["prompt_protocol"] == "flat"
+
+
+def test_a_tool_free_stream_still_leaves_no_record():
+    """The one stream that never enters the loop, and the way to test for it."""
+    model = _ScriptedModel([_turn("42")], streams_calls=False)
+    agent = _agent(model, tools=[])
+    assert "".join(agent.stream(TASK)) == "42"
     assert agent.last_stream_response is None
 
 
@@ -365,17 +406,29 @@ def test_the_iteration_cap_reports_the_typed_outcome():
     assert not _answers(events)
 
 
-def test_a_written_out_tool_call_is_reported_not_answered():
-    model = _ScriptedModel([
+def _written_call_model():
+    return _ScriptedModel([
         _turn('<tool_call>{"name": "calculator", "arguments": {"expression": "6*7"}}</tool_call>'),
         _turn('<tool_call>{"name": "calculator", "arguments": {"expression": "6*7"}}</tool_call>'),
     ])
-    agent = _agent(model, max_iterations=4)
-    _events(agent)
-    response = agent.last_stream_response
-    assert response.success is False
-    assert response.metadata["reason"] == "written_tool_call"
-    assert response.metadata["error"]["tool"] == "calculator"
+
+
+def test_a_written_out_tool_call_ends_the_stream_as_it_ends_a_run():
+    """Whatever the loop makes of a call written into the text, both agree.
+
+    The streamed loop used to reach its own verdict on this turn while the
+    blocking one reached another; there is one verdict now.
+    """
+    streamed = _agent(_written_call_model(), max_iterations=4)
+    _events(streamed)
+    blocking = _agent(_written_call_model(), max_iterations=4)
+    blocking.config.raise_on_error = False
+    response = blocking.run(TASK)
+
+    record = streamed.last_stream_response
+    assert record.metadata["reason"] == response.metadata["reason"]
+    assert record.success is response.success
+    assert record.output == response.output
 
 
 def test_a_failure_before_the_first_delta_falls_back_to_the_blocking_path():

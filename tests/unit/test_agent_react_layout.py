@@ -19,11 +19,14 @@ Three invariants make that split safe:
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
+import pathlib
 
 import pytest
 
 import effgen.core.agent_citations as agent_citations
+import effgen.core.agent_loop as agent_loop
 import effgen.core.agent_native_tools as agent_native_tools
 import effgen.core.agent_react as agent_react
 import effgen.core.agent_react_parsing as agent_react_parsing
@@ -151,6 +154,7 @@ def _imported_modules(module) -> set[str]:
         agent_react_parsing,
         agent_native_tools,
         agent_tool_loop,
+        agent_loop,
         agent_stream_native,
         result_relay,
         retrieval_requery,
@@ -163,19 +167,30 @@ def test_new_modules_do_not_import_the_agent_module(module) -> None:
 
 @pytest.mark.parametrize("nudge", NUDGES)
 def test_every_nudge_is_injected_from_the_loop(nudge: str) -> None:
-    """A nudge is appended by the loop or by the policy both loops share.
+    """A nudge is appended by the loop or by the policy every path shares.
 
     ``test_answer_sanitization`` compares the injected nudges against the
     strip-list by reading those sources; a nudge injected from somewhere else
-    would escape that comparison.
+    would escape that comparison. The loop is ``agent_loop``: a nudge appended
+    from a second copy of it, or from a rendering layer, fails here.
     """
     from effgen.core.agent_tool_loop import NativeToolLoop
 
     sources = (
-        inspect.getsource(Agent._run_single_agent),
+        inspect.getsource(agent_loop),
         inspect.getsource(NativeToolLoop),
     )
     assert any(nudge in src for src in sources)
+
+
+def test_no_nudge_is_injected_from_a_rendering_module() -> None:
+    """The modules that render a run must not add to the conversation."""
+    import effgen.core.agent_streaming as agent_streaming
+
+    for module in (agent_streaming, agent_stream_native):
+        source = inspect.getsource(module)
+        for nudge in NUDGES:
+            assert nudge not in source, f"{nudge} is injected from {module.__name__}"
 
 
 def test_the_react_module_no_longer_defines_the_moved_members() -> None:
@@ -184,15 +199,61 @@ def test_the_react_module_no_longer_defines_the_moved_members() -> None:
         assert f"    def {name}(" not in src, f"{name!r} is still defined in agent_react.py"
 
 
-def test_the_native_stream_no_longer_builds_its_own_prompt() -> None:
-    """The streamed native loop calls the shared builder instead of copying it.
+#: Every module under ``effgen/core`` that a run's prompt could be assembled in.
+_CORE_MODULES = sorted(
+    p.stem for p in pathlib.Path(agent_react.__file__).parent.glob("*.py")
+    if p.stem != "__init__"
+)
 
-    The two assemblies were line-for-line copies, and a line added to one of
-    them reached only that path. Nothing prevents that drift while both exist.
+
+def test_the_prompt_is_assembled_at_exactly_one_call_site() -> None:
+    """One loop builds the prompt, so there is nothing to drift from.
+
+    The assembly used to be called from both loop modules, and a line added to
+    one of them reached only that path. Extracting the builder moved that drift
+    into which *frame* each loop chose; the fix is that only one module chooses
+    at all. This is a stronger claim than "both loops call the shared builder"
+    and it fails on the tree before the change, where two modules call it.
     """
     assert _defining_class("_native_tool_prompt").__module__ == "effgen.core.agent_runtime"
-    assert "self._native_tool_prompt(" in inspect.getsource(agent_stream_native)
-    assert "self._native_tool_prompt(" in inspect.getsource(agent_react)
+    callers = []
+    for name in _CORE_MODULES:
+        module = importlib.import_module(f"effgen.core.{name}")
+        try:
+            source = inspect.getsource(module)
+        except OSError:  # pragma: no cover - a module with no file
+            continue
+        if "self._native_tool_prompt(" in source or "._native_tool_prompt(" in source:
+            if name in ("agent_runtime", "agent_prompting"):
+                continue  # where it is defined
+            callers.append(name)
+    assert callers == ["agent_loop"], callers
+
+
+#: Modules that build a ``GenerationConfig`` for something other than a turn of
+#: the reasoning loop: the blocking generation path itself, the two
+#: provider-hosted tool loops, and the re-prompt that repairs a declared shape.
+_OTHER_GENERATORS = ("agent_generation", "agent_native_tools", "structured_output")
+
+
+def test_the_generation_settings_are_resolved_at_exactly_one_call_site() -> None:
+    """The nine sampling settings are built in one place, for every path.
+
+    A second site is how ``stream()`` came to send ``top_p=0.9`` to an agent
+    configured with ``top_p=0.31``.
+    """
+    builders = []
+    for name in _CORE_MODULES:
+        module = importlib.import_module(f"effgen.core.{name}")
+        try:
+            source = inspect.getsource(module)
+        except OSError:  # pragma: no cover - a module with no file
+            continue
+        if "GenerationConfig(" in source:
+            builders.append(name)
+    assert [b for b in builders if b not in _OTHER_GENERATORS] == ["agent_loop"], (
+        builders
+    )
 
 
 def test_a_bare_react_subclass_keeps_the_moved_methods() -> None:

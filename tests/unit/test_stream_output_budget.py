@@ -12,7 +12,7 @@ import inspect
 
 import pytest
 
-from effgen.core import agent_stream_native, agent_streaming
+from effgen.core import agent_loop, agent_stream_native, agent_streaming
 from effgen.core.agent_runtime import resolve_output_budget
 
 
@@ -39,23 +39,53 @@ class TestPrecedence:
 
 
 class TestEveryPathUsesIt:
-    """The three call sites drifting apart is how this defect arose."""
+    """The call sites drifting apart is how this defect arose.
+
+    There are two left, and both go through the shared helper: the loop every
+    run takes, and the direct stream a tool-free agent takes.
+    """
 
     @pytest.mark.parametrize(
-        "module", [agent_streaming, agent_stream_native], ids=["streaming", "native"]
+        "module", [agent_loop, agent_streaming], ids=["loop", "direct-stream"]
     )
     def test_the_module_resolves_through_the_shared_helper(self, module):
         source = inspect.getsource(module)
-        assert "resolve_output_budget(" in source
+        assert "resolve_output_budget(" in source or "resolve_turn_config(" in source
 
     @pytest.mark.parametrize(
-        "module", [agent_streaming, agent_stream_native], ids=["streaming", "native"]
+        "module",
+        [agent_loop, agent_streaming, agent_stream_native],
+        ids=["loop", "streaming", "native"],
     )
     def test_no_path_reaches_for_the_model_default_directly(self, module):
         """Calling `default_max_output_tokens` here is what skipped the config."""
         source = inspect.getsource(module)
         assert "default_max_output_tokens(" not in source
 
-    def test_both_streaming_sites_were_converted(self):
-        source = inspect.getsource(agent_streaming)
-        assert source.count("resolve_output_budget(") == 2
+    def test_the_budget_is_resolved_once_for_every_turn(self):
+        """One resolver, called from the one place a turn's settings are built."""
+        assert inspect.getsource(agent_loop).count("resolve_output_budget(") == 1
+
+    def test_a_streamed_run_and_a_blocking_run_ask_for_the_same_budget(self):
+        """The same agent, both entry points, one number."""
+        from effgen.core.agent_loop import resolve_turn_config
+
+        class _Agent:
+            model = _Model()
+
+            class config:
+                temperature = 0.2
+                max_tokens = 333
+                top_p = 0.31
+                top_k = 17
+                seed = 4242
+                presence_penalty = 0.5
+                frequency_penalty = 0.25
+                repetition_penalty = 1.15
+
+            def _interleaves_reasoning(self, model):
+                return False
+
+        cfg, _ = resolve_turn_config(_Agent(), {})
+        assert cfg.max_tokens == 333
+        assert cfg.top_p == 0.31 and cfg.seed == 4242 and cfg.top_k == 17

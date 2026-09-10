@@ -325,18 +325,18 @@ def test_injection_sites_use_the_shared_nudges():
     """Every injection site must reference the shared NUDGE_* values.
 
     Reading the source keeps the files in sync: every literal a loop appends
-    should be one of the named constants (so it is also on the strip-list). The
-    sites are the blocking loop, the streamed loop, and the repeat policy they
-    share.
+    should be one of the named constants (so it is also on the strip-list).
+    There is one loop, and the repeat policy it shares with nothing else, so
+    the sites are those two modules.
     """
     import inspect
 
-    import effgen.core.agent_react as ar
+    import effgen.core.agent_loop as al
     import effgen.core.agent_runtime as rt
     import effgen.core.agent_stream_native as sn
     import effgen.core.agent_tool_loop as tl
 
-    src = "\n".join(inspect.getsource(m) for m in (ar, tl, sn))
+    src = "\n".join(inspect.getsource(m) for m in (al, tl))
     for name in ("NUDGE_CONTINUE", "NUDGE_HAVE_ANSWER", "NUDGE_HAVE_RESULTS",
                  "NUDGE_ALREADY_COMPUTED", "NUDGE_NO_TOOLS", "NUDGE_NOT_USABLE",
                  "NUDGE_SEARCH_AGAIN"):
@@ -349,11 +349,13 @@ def test_injection_sites_use_the_shared_nudges():
     import effgen.core.agent_streaming as st
 
     assert callable(getattr(rt, "unknown_tool_observation", None))
-    for module in (ar, st, sn):
-        # The call, not the import — a module that keeps the import but writes
-        # its own observation text is exactly the drift this guards.
-        assert "unknown_tool_observation(" in inspect.getsource(module), (
-            f"{module.__name__} no longer builds the shared unknown-tool observation"
+    # The call, not the import — a module that keeps the import but writes its
+    # own observation text is exactly the drift this guards. One loop means one
+    # call site; a second module writing one is the drift coming back.
+    assert "unknown_tool_observation(" in inspect.getsource(al)
+    for module in (st, sn):
+        assert "unknown_tool_observation(" not in inspect.getsource(module), (
+            f"{module.__name__} writes its own unknown-tool observation again"
         )
 
 

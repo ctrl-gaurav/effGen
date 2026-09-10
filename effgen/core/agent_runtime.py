@@ -1266,7 +1266,6 @@ class AgentRuntimeMixin:
         self,
         *,
         tools_travel_as_parameter: bool,
-        carried_by_this_loop: bool = True,
     ) -> str:
         """Whether this turn sends messages or the flat transcript.
 
@@ -1276,19 +1275,19 @@ class AgentRuntimeMixin:
         2. this turn's tool definitions do not travel as a request parameter —
            the ReAct-text branch, a caller's own template, a turn whose tools
            the guards suppressed — so there is no protocol call to express;
-        3. this loop does not send messages yet;
-        4. the model does not declare
+        3. the model does not declare
            :meth:`~effgen.models.base.BaseModel.supports_message_protocol`;
-        5. a real request on this model already came back refusing the shape.
+        4. a real request on this model already came back refusing the shape.
 
-        Nothing here reads a model id, a provider name or anything about the
-        task: steps 4 and 5 are a declared capability and a measured one.
+        There is one loop and it sends messages, so a streamed run resolves
+        exactly as a blocking one does; the ask is honoured rather than logged
+        and dropped. Nothing here reads a model id, a provider name or anything
+        about the task: steps 3 and 4 are a declared capability and a measured
+        one.
 
         Args:
             tools_travel_as_parameter: Whether this turn's tool definitions go
                 to the provider as a request parameter rather than as prose.
-            carried_by_this_loop: Whether the loop asking can send messages at
-                all. The streamed loops cannot yet and pass ``False``.
 
         Returns:
             ``"flat"`` or ``"messages"``.
@@ -1308,13 +1307,6 @@ class AgentRuntimeMixin:
                 "request parameter; the turn sends the flat transcript"
             )
             return "flat"
-        if not carried_by_this_loop:
-            say(
-                "[protocol] this loop does not send the conversation as "
-                "messages; the run sends the flat transcript"
-            )
-            return "flat"
-
         model = getattr(self, "model", None)
         supports = getattr(model, "supports_message_protocol", None)
         if not (callable(supports) and supports()):

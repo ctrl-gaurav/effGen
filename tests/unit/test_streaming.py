@@ -45,6 +45,9 @@ class _StreamModel(BaseModel):
         pass
 
     def generate(self, prompt, config=None, **kwargs):
+        self.last_prompt = prompt
+        if self._raise_after is not None:
+            raise self._exc
         return GenerationResult(
             text="".join(self._tokens), tokens_used=len(self._tokens),
             finish_reason="stop", model_name=self.model_name, metadata={},
@@ -138,15 +141,36 @@ def test_immediate_stream_error_raises_with_no_chunks():
 
 
 def test_react_path_stream_error_raises():
-    """The tool/ReAct streaming path also fails explicitly (raises)."""
+    """The tool path also fails explicitly (raises), never as a chunk."""
     from effgen.tools.builtin.calculator import Calculator
 
     model = _StreamModel(["Thought:"], raise_after=0, exc=RuntimeError("react boom"))
     received: list[str] = []
-    with pytest.raises(RuntimeError, match="react boom"):
+    with pytest.raises(Exception, match="react boom"):
         for tok in _agent(model, tools=[Calculator()]).stream("15 squared?"):
             received.append(tok)
     assert not any("[Error" in c for c in received)
+
+
+def test_a_tool_path_failure_is_suppressed_when_raise_on_error_is_off():
+    """`raise_on_error=False` governs a streamed provider failure too.
+
+    The text path used to raise whatever the caller asked for. A caller who
+    explicitly asked not to be raised at meant it on every path, and the run's
+    record carries the typed failure instead.
+    """
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _StreamModel(["Thought:"], raise_after=0, exc=RuntimeError("react boom"))
+    agent = Agent(config=AgentConfig(
+        name="stream-test", model=model, tools=[Calculator()],
+        raise_on_error=False,
+    ))
+    chunks = list(agent.stream("15 squared?"))
+    record = agent.last_stream_response
+    assert record is not None and record.success is False
+    assert record.metadata["reason"] == "generation_failed"
+    assert "".join(chunks) == record.output
 
 
 # --------------------------------------------------------------------------- #
@@ -171,6 +195,8 @@ class _ScriptedReActModel(BaseModel):
 
     def generate(self, prompt, config=None, **kwargs):
         text = "".join(self._turns[min(self._call, len(self._turns) - 1)])
+        self._call += 1
+        self.last_prompt = prompt
         return GenerationResult(
             text=text, tokens_used=1, finish_reason="stop",
             model_name=self.model_name, metadata={},
@@ -212,7 +238,19 @@ def test_tool_stream_default_has_no_scaffolding_and_joins_to_answer():
     joined = "".join(chunks)
     for marker in _SCAFFOLD:
         assert marker not in joined, f"scaffolding leaked: {marker!r}"
-    assert joined == "The square of 15 is 225."
+    # The same answer `run()` gives for this agent and this task: a tool that
+    # computed the answer itself is reported rather than summarised, which the
+    # streamed path used to skip.
+    blocking = _agent(
+        _ScriptedReActModel([
+            ["Thought: I should compute it.\n",
+             "Action: calculator\n", "Action Input: 15*15\n"],
+            ["Thought: I have the result.\n",
+             "Final Answer: The square of 15 is 225.\n"],
+        ]),
+        tools=[Calculator()],
+    ).run("What is 15 squared?")
+    assert joined == blocking.output
 
 
 def test_tool_stream_multiword_answer_not_truncated():
@@ -346,8 +384,9 @@ def test_tool_stream_redacts_input_before_model_call():
         guardrails="phi",
     ))
     list(agent.stream("My SSN is 219-09-9999", include_events=False))
-    assert model.last_prompt is not None
-    assert "219-09-9999" not in model.last_prompt
+    prompt = model.last_prompt
+    assert prompt is not None
+    assert "219-09-9999" not in prompt
 
 
 def test_compat_stream_emits_usage_when_requested():

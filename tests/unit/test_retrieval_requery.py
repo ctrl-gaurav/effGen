@@ -480,8 +480,13 @@ def test_the_native_stream_re_queries_and_yields_one_answer():
     assert streamed == agent.last_stream_response.output
 
 
-def test_the_native_stream_holds_back_only_a_turn_it_might_re_query():
-    """A turn that cannot be re-queried streams as it always did."""
+def test_a_turn_that_might_be_re_queried_is_delivered_whole():
+    """A turn a later check can still revise is accumulated, not streamed.
+
+    The decision needs the whole answer, and a delta cannot be withdrawn once
+    it is on screen — so the turn is taken in one piece and emitted in one
+    piece. The cost is the first token of at most one turn per run.
+    """
     tool = _Search([CARRIES_THE_FACT])
     model = _NativeScripted([
         ("", [FIRST_QUERY]),
@@ -491,7 +496,22 @@ def test_the_native_stream_holds_back_only_a_turn_it_might_re_query():
     answers = [e.text for e in agent.stream(QUESTION, include_events=True)
                if e.kind == "answer"]
     assert len(tool.queries) == 1
-    assert len(answers) > 1        # delivered as deltas, not as one block
+    assert answers == [agent.last_stream_response.output]
+
+
+def test_a_turn_no_check_can_revise_still_streams_as_deltas():
+    """Nothing else is held back: an ordinary turn arrives as it is written."""
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _NativeScripted([
+        ("", [("calculator", {"expression": "4817*236"})]),
+        ("The product is one million, one hundred and thirty six thousand.", []),
+    ])
+    agent = _agent(model, [Calculator()], tool_calling_mode="native")
+    answers = [e.text for e in agent.stream("Multiply 4817 by 236 and explain",
+                                            include_events=True)
+               if e.kind == "answer"]
+    assert len(answers) > 1, answers
     assert "".join(answers) == agent.last_stream_response.output
 
 

@@ -223,7 +223,7 @@ def test_a_resume_text_that_is_not_a_transcript_says_so(caplog):
     """Every transcript effGen writes opens at a step boundary. One that does
     not is read for what it says, and the run reports that it did so."""
     agent = _agent(["Thought: done.\nFinal Answer: 4"])
-    with caplog.at_level("INFO", logger="effgen.core.agent_react"):
+    with caplog.at_level("INFO", logger="effgen.core.agent_loop"):
         agent.run(
             "What is 2+2? Explain the steps.",
             _resume_scratchpad="Thought: earlier turn.\nObservation: 4",

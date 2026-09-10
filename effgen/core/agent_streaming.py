@@ -16,26 +16,27 @@ import time
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
-from ..models.base import GenerationConfig
+from ..models._adapter_utils import apply_stop_sequences
 from .agent_config import AgentMode
-from .agent_response import StreamEvent
-from .agent_runtime import (
-    NUDGE_NO_TOOLS,
-    NUDGE_SEARCH_AGAIN,
-    resolve_output_budget,
-    sanitize_final_answer,
-    unknown_tool_observation,
+from .agent_loop import (
+    _Deltas,
+    _LoopPolicy,
+    drive,
+    resolve_turn_config,
 )
-from .agent_tool_loop import NativeToolLoop
-from .result_relay import unrelayed_result
-from .retrieval_requery import should_requery
-from .tool_call_record import ToolCall, truncate_result
+from .agent_response import StreamEvent
+from .agent_runtime import sanitize_final_answer
 
 if TYPE_CHECKING:
     from .agent_config import AgentConfig
     from .messages import Message
 
 logger = logging.getLogger(__name__)
+
+#: Set once a streamed run was given a ``mode``. Routing sub-agents through a
+#: streamed loop is not supported yet, and saying so on every call would drown
+#: the log of a chat session.
+_STREAM_MODE_WARNED: set[bool] = set()
 
 
 def _chunk_answer_text(answer: str) -> Iterator[str]:
@@ -68,27 +69,13 @@ class AgentStreamingMixin:
         # mixins declare their own.
         config: AgentConfig
         tools: dict[str, Any]
+        model: Any
+        name: str
+        _guardrail_chain: Any
 
-        def _tool_contract(self) -> str: ...
-
-        def _citation_prompt_state(self) -> tuple[bool, int]: ...
-
-        def _answer_shape_instruction(self) -> str: ...
-
-        def _context_answer_instruction(
-            self,
-            previous_actions: list[tuple[str, str]],
-            *,
-            cite_sources: bool = False,
-            numbered_passages: int = 0,
-        ) -> str: ...
-
-        def _is_context_retrieval_tool(self, action: str) -> bool: ...
-
-        def _resolve_prompt_protocol(
-            self, *, tools_travel_as_parameter: bool,
-            carried_by_this_loop: bool = True,
-        ) -> str: ...
+        def _reconstruct_error(
+            self, metadata: dict[str, Any] | None, response: Any = None,
+        ) -> Exception: ...
 
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
@@ -144,18 +131,12 @@ class AgentStreamingMixin:
         conversation_history = self._format_conversation_history()
         prompt = self._direct_prompt(task, conversation_history)
 
-        # No ReAct stop sequences here: there is no scaffold to trim, and the
-        # GPT-5/reasoning families reject `stop`. reasoning_effort is threaded
-        # through so callers can request "minimal" for trivial prompts.
-        gen_config = GenerationConfig(
-            temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=resolve_output_budget(
-                kwargs.get("max_tokens"), self.config.max_tokens, self.model
-            ),
-            top_p=kwargs.get("top_p", 0.9),
-            stop_sequences=kwargs.get("stop_sequences"),
-            reasoning_effort=kwargs.get("reasoning_effort"),
-        )
+        # The same nine settings ``run()`` resolves, from the same place: a
+        # value pinned on the call, then one configured on the agent, then the
+        # model's own default. A model that matches stop sequences against its
+        # own reasoning chain is sent none and has them applied to the text it
+        # returns, which is what the blocking path does with them too.
+        gen_config, local_stops = resolve_turn_config(self, kwargs)
 
         from ..models.base import clear_stream_usage
 
@@ -178,6 +159,8 @@ class AgentStreamingMixin:
         if _usage_acc is not None:
             self._fold_stream_usage(_usage_acc, prompt, accumulated)
 
+        if local_stops:
+            accumulated = apply_stop_sequences(accumulated, list(local_stops))
         answer = sanitize_final_answer(accumulated) or accumulated.strip()
         if answer:
             self.short_term_memory.add_user_message(task)
@@ -202,14 +185,16 @@ class AgentStreamingMixin:
         Streaming contract (stable):
 
         - **Default (text mode).** Iterating yields successive **answer-text**
-          ``str`` deltas. Joining every chunk
+          ``str`` deltas. On a tool agent, joining every chunk
           (``"".join(agent.stream(task))``) reconstructs the *sanitized* final
-          answer — on both the no-tool and the tool path. Internal ReAct
-          scaffolding (``Thought:``/``Action:``/``Observation:``/
-          ``Final Answer:``) is **never** part of the text payload; on a tool
-          agent the intermediate steps are delivered to the ``on_thought`` /
-          ``on_tool_call`` / ``on_observation`` callbacks (and, with
-          ``include_events=True``, as typed events) — not as text.
+          answer, and internal ReAct scaffolding
+          (``Thought:``/``Action:``/``Observation:``/``Final Answer:``) is
+          **never** part of the text payload: the intermediate steps are
+          delivered to the ``on_thought`` / ``on_tool_call`` /
+          ``on_observation`` callbacks (and, with ``include_events=True``, as
+          typed events) — not as text. An agent with **no tools** has one turn
+          and nothing to decide, so its text is the model's own, delivered as it
+          is written; the sanitized form of it is what :meth:`run` returns.
         - **Typed events (opt-in).** ``stream(..., include_events=True)`` yields
           :class:`StreamEvent` objects instead of plain text — ``answer`` deltas
           plus ``thought`` / ``tool_call`` / ``observation`` / ``status`` events
@@ -225,8 +210,18 @@ class AgentStreamingMixin:
           only, so ``"".join(agent.stream(task))`` is unchanged.
         - The iterator simply **ending** is the terminal "done" signal; there is
           no sentinel value to test for.
+        - **The run's record.** After any stream that entered the loop,
+          :attr:`last_stream_response` holds the
+          :class:`~effgen.core.agent_response.AgentResponse` the same task would
+          have produced through :meth:`run` — the same ``output``,
+          ``success``, ``stop_reason`` and metadata. A run that ends without an
+          answer (its step limit, a repeated call, a call the model wrote out
+          instead of making) reports the same typed outcome ``run()`` reports,
+          delivered as a terminal notice rather than as answer text.
         - A provider/model failure raises a typed error from the iterator (it is
-          not silently swallowed into an empty stream).
+          not silently swallowed into an empty stream) unless the agent was
+          built with ``raise_on_error=False``, which suppresses it here as it
+          does on :meth:`run`.
 
         Args:
             task: Task description. Accepts a ``str``, a ``Message``, or a
@@ -250,9 +245,9 @@ class AgentStreamingMixin:
         usage_acc: dict[str, Any] = {}
         started = time.perf_counter()
         ttft: float | None = None
-        # Cleared up front so a stream that does not reconstruct a response —
-        # a tool-free stream, or a model whose calls are not streamed — never
-        # leaves the previous stream's record readable as if it were this one's.
+        # Cleared up front so a stream that does not reach the loop — a
+        # tool-free stream — never leaves the previous stream's record readable
+        # as if it were this one's.
         self._last_stream_response = None
         for item in self._stream_impl(
             task,
@@ -298,6 +293,8 @@ class AgentStreamingMixin:
                     response.metadata[key] = usage[key]
             response.metadata["latency_ms"] = usage["latency_ms"]
             response.metadata["ttft_ms"] = usage["ttft_ms"]
+            response.execution_time = usage["latency_ms"] / 1000.0
+            response.metadata["duration_s"] = round(response.execution_time, 4)
             response.tokens_used = int(
                 usage.get("total_tokens") or response.tokens_used or 0
             )
@@ -331,7 +328,12 @@ class AgentStreamingMixin:
                      include_events: bool = False,
                      _usage_acc: dict[str, Any] | None = None,
                      **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
-        """Produce the stream payload; :meth:`stream` adds the usage accounting."""
+        """Produce the stream payload; :meth:`stream` adds the usage accounting.
+
+        The loop is the one :meth:`run` drives. The only difference is the
+        emitter: this one hands the consumer each step as it happens and the
+        answer as it settles, where ``run()``'s collects and returns.
+        """
         # Accept str | Message | list[ContentPart]; streaming is text-only, so
         # surface a clear error if media is supplied rather than dropping it.
         task, _stream_inputs = self._coerce_task_input(task, inputs)
@@ -364,13 +366,17 @@ class AgentStreamingMixin:
                 task = gr.modified_content
 
         context = context or {}
+        if mode is not None and not _STREAM_MODE_WARNED:
+            _STREAM_MODE_WARNED.add(True)
+            logger.warning(
+                "[loop] stream() ignores mode=%s; sub-agent routing is not "
+                "streamed and the task runs on this agent alone", mode,
+            )
 
-        # Fast path: with no tools there is nothing for the ReAct loop to do, so
-        # stream the model's answer directly. The ReAct scaffold otherwise forces
-        # the model to emit Thought/Action/Final Answer bookkeeping that wastes
-        # latency (acute on reasoning models) and leaks into the streamed output —
-        # and small models that write "Action: Final Answer" instead of
-        # "Final Answer:" loop to max-iterations and never surface an answer.
+        # Fast path: with no tools there is nothing for the loop to do, so
+        # stream the model's answer directly. The scaffold otherwise forces the
+        # model to emit bookkeeping that wastes latency (acute on reasoning
+        # models) and leaks into the streamed output.
         if not self.tools:
             yield from self._stream_direct(
                 task, on_answer=on_answer, include_events=include_events,
@@ -378,271 +384,91 @@ class AgentStreamingMixin:
             )
             return
 
-        # With a model whose adapter records the tool calls it streams, the loop
-        # can dispatch those calls natively while the assistant's text streams
-        # through as it arrives — the same loop ``run()`` drives, rather than the
-        # ReAct text scaffold below. Every other model keeps that scaffold.
-        if self._can_stream_native_tools():
-            yield from self._stream_native_tools(
-                task,
-                on_thought=on_thought,
-                on_tool_call=on_tool_call,
-                on_observation=on_observation,
-                on_answer=on_answer,
-                include_events=include_events,
-                _usage_acc=_usage_acc,
-                **kwargs,
-            )
-            return
+        from ..utils.structured_logging import LogRunContext, generate_run_id
 
-        max_iterations = self.config.max_iterations
-        scratchpad = ""
-        iterations = 0
-        tool_calls = 0
-        # ``(action, normalized_input)`` for every call this stream dispatched,
-        # in the shape the blocking loop keeps. The closing instruction is
-        # chosen from the last call's tool, so without this the streamed prompt
-        # could not state it and the two paths asked the model different
-        # questions about the same observations.
-        previous_actions: list[tuple[str, str]] = []
-        # What each dispatched call returned, in the shape the blocking loop's
-        # records take, so both paths decide from the same evidence whether the
-        # answer dropped a result a tool computed.
-        executed_calls: list[ToolCall] = []
-        # Whether this stream has already been sent back to search again. This
-        # path keeps its own loop state rather than a ``NativeToolLoop``, so the
-        # one-shot bound is a flag here; the decision itself is the same one the
-        # blocking loop makes, from the same records.
-        requery_spent = False
-
-        # Build conversation history
-        conversation_history = self._format_conversation_history()
-
-        default_stop_sequences = [
-            "\nObservation:",
-            "\nQuestion:",
-            "\nHuman:",
-            "\nUser:",
-        ]
-
-        gen_config = GenerationConfig(
-            temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=resolve_output_budget(
-                kwargs.get("max_tokens"), self.config.max_tokens, self.model
-            ),
-            top_p=kwargs.get("top_p", 0.9),
-            stop_sequences=kwargs.get("stop_sequences", default_stop_sequences),
+        run_id = str(kwargs.pop("_run_id", "") or "") or generate_run_id()
+        kwargs["_run_id"] = run_id
+        prompt_task: Any = task
+        policy = _LoopPolicy.for_run(self, kwargs, emit_deltas=True)
+        emitter = _Deltas(
+            self,
+            include_events=include_events,
+            on_thought=on_thought,
+            on_tool_call=on_tool_call,
+            on_observation=on_observation,
+            usage_acc=_usage_acc,
         )
+        with LogRunContext(run_id=run_id, agent_name=self.name):
+            driver = drive(self, prompt_task, policy, emitter)
+            while True:
+                try:
+                    item = next(driver)
+                except StopIteration as stop:
+                    response = stop.value
+                    break
+                yield item
 
-        while iterations < max_iterations:
-            iterations += 1
-
-            # Build prompt. This loop carries its conversation as a string
-            # and the tools as prose, so a caller who asked for the message
-            # protocol gets the flat transcript and a line saying why.
-            self._resolve_prompt_protocol(
-                tools_travel_as_parameter=False, carried_by_this_loop=False,
+            response.metadata["run_id"] = run_id
+            response.metadata.setdefault("streamed", True)
+            if emitter.turns_retaken:
+                # A turn the stream could not finish was taken again on the
+                # blocking path. The key is what a caller has always read to
+                # tell a fallback from a clean stream.
+                response.metadata["stream_fallback"] = True
+            self._last_stream_response = response
+            yield from self._finish_stream(
+                prompt_task, response, emitter, on_answer=on_answer,
             )
-            tools_desc = self._get_tools_description()
-            if self.config.system_prompt_template:
-                prompt = self.config.system_prompt_template.format(
-                    tools_description=tools_desc,
-                    task=task,
-                    scratchpad=scratchpad,
-                    conversation_history=conversation_history,
-                )
-            else:
-                cite_sources, numbered_passages = self._citation_prompt_state()
-                prompt = self._tool_prompt_generator.generate_react_prompt(
-                    task=task,
-                    scratchpad=scratchpad,
-                    conversation_history=conversation_history,
+
+    def _finish_stream(
+        self,
+        task: Any,
+        response: Any,
+        emitter: Any,
+        *,
+        on_answer: Callable[[str], None] | None = None,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """Deliver what the loop ended with, and screen it on the way out.
+
+        An answer is put through the OUTPUT guardrail before it is finished —
+        the same screening ``run()`` applies — then handed to the consumer, the
+        callback and short-term memory. A run that ended without an answer has
+        the typed outcome ``run()`` reports, delivered as a terminal notice
+        rather than as answer text.
+        """
+        if response.success and response.output:
+            if self._guardrail_chain is not None:
+                from ..guardrails.base import GuardrailPosition as _GP
+                gr = self._guardrail_chain.check(
+                    response.output, position=_GP.OUTPUT,
                     system_prompt=self.config.system_prompt,
-                    verbose=self._verbose_tools,
-                    closing_instruction=self._context_answer_instruction(
-                        previous_actions,
-                        cite_sources=cite_sources,
-                        numbered_passages=numbered_passages,
-                    ),
-                    answer_shape=self._answer_shape_instruction(),
-                    tool_contract=self._tool_contract(),
                 )
-
-            # Stream tokens from the model into a buffer. The raw ReAct
-            # scaffolding (Thought/Action/Observation/Final Answer) is internal
-            # bookkeeping and is NEVER yielded as the user-facing payload — only
-            # the parsed, sanitized final answer is (text deltas in the default
-            # mode; an "answer" StreamEvent in event mode). Stop sequences and an
-            # early Final-Answer break still bound generation so a small model
-            # that ignores `stop` cannot run away.
-            accumulated = ""
-            from ..models.base import clear_stream_usage
-            clear_stream_usage(self.model)
-            stream_iter = self.model.generate_stream(prompt, config=gen_config)
-            try:
-                for token in stream_iter:
-                    accumulated += token
-
-                    hit_stop = False
-                    for stop_seq in default_stop_sequences:
-                        if stop_seq in accumulated:
-                            accumulated = accumulated[:accumulated.index(stop_seq)]
-                            hit_stop = True
-                            break
-
-                    # Break early once the Final Answer line is *complete* to
-                    # avoid runaway generation (transformers streaming ignores
-                    # stop_sequences). "Complete" means the model ended the
-                    # answer line (a newline after non-empty answer text) or
-                    # started a new ReAct block — NOT merely "a few characters
-                    # appeared", which would truncate a multi-word answer.
-                    if not hit_stop and "Final Answer:" in accumulated:
-                        fa_pos = accumulated.rindex("Final Answer:")
-                        after_fa = accumulated[fa_pos + len("Final Answer:"):]
-                        if after_fa.lstrip("\n").strip() and (
-                            "\n" in after_fa.lstrip("\n")
-                            or any(
-                                m in after_fa
-                                for m in ("Thought:", "Observation:", "Question:")
-                            )
-                        ):
-                            hit_stop = True
-
-                    if hit_stop:
-                        break
-
-            except Exception:
-                # Fail explicitly: raise the typed (already-redacted) provider error
-                # at the iterator boundary so a consumer iterating stream() can tell
-                # success from failure, instead of receiving the error text as a
-                # normal chunk that looks like model output.
-                logger.debug("Streaming generation failed", exc_info=True)
-                raise
-            finally:
-                close_stream = getattr(stream_iter, "close", None)
-                if close_stream is not None:
-                    close_stream()
-
-            if _usage_acc is not None:
-                self._fold_stream_usage(_usage_acc, prompt, accumulated)
-
-            # Parse the accumulated response
-            parsed = self._parse_react_response(accumulated)
-            thought = parsed.get("thought", "")
-            scratchpad += f"\nThought: {thought}"
-
-            if thought:
-                if on_thought:
-                    on_thought(thought)
-                if include_events:
-                    yield StreamEvent(kind="thought", text=thought)
-
-            # Check for final answer
-            if parsed.get("final_answer"):
-                answer = sanitize_final_answer(parsed["final_answer"]) or parsed["final_answer"]
-                # A run whose search came back without what the question asked
-                # for spends one more query before this answer is taken. The
-                # turn is accumulated before it is parsed, so nothing has
-                # reached the consumer yet and the second search is invisible
-                # to it. Tools are never withdrawn on this path, so the
-                # condition the blocking loop reads from its guards is fixed.
-                if not requery_spent and should_requery(
-                    answer,
-                    executed_calls,
-                    self._is_context_retrieval_tool,
-                    tools_suppressed=False,
-                    iterations_left=max_iterations - iterations,
-                    requery_spent=False,
-                ):
-                    requery_spent = True
-                    scratchpad += "\nObservation: " + NUDGE_SEARCH_AGAIN
-                    continue
-                # A tool that computed the answer itself is answered by
-                # summarising it far too often, and the result the run is still
-                # holding is then lost. Put it back, exactly as run() does.
-                appended = unrelayed_result(answer, executed_calls, self.tools)
-                if appended is not None:
-                    answer = f"{answer.rstrip()}\n\n{appended}"
-                if on_answer:
-                    on_answer(answer)
-                # Store in memory
-                if answer:
-                    self.short_term_memory.add_user_message(task)
-                    self.short_term_memory.add_assistant_message(answer)
-                # Emit the sanitized answer as the user-facing payload. Text mode
-                # re-chunks it character-preservingly so joining the deltas
-                # reproduces the answer exactly; event mode emits one answer event.
-                if answer:
-                    if include_events:
-                        yield StreamEvent(kind="answer", text=answer)
-                    else:
-                        yield from _chunk_answer_text(answer)
-                return
-
-            # Execute tool if present
-            if parsed.get("action") and parsed.get("action_input"):
-                action = parsed["action"]
-                action_input = parsed["action_input"]
-
-                if on_tool_call:
-                    on_tool_call(action, action_input)
-                if include_events:
-                    yield StreamEvent(
-                        kind="tool_call", tool=action, tool_input=str(action_input)
+                if not gr.passed:
+                    response.metadata["guardrail_blocked"] = True
+                    response.metadata["guardrail_reason"] = gr.reason
+                    response.success = False
+                    raise RuntimeError(
+                        f"Output blocked by guardrail: {gr.reason}. "
+                        "An iterator has no blocked answer to hand back, so "
+                        "relax the guardrail or call agent.run(), which "
+                        "returns the blocked outcome as a response."
                     )
-                previous_actions.append(
-                    (action, NativeToolLoop.normalize_input(action_input))
-                )
-
-                if action in self.tools:
-                    tool_result = self._execute_tool(action, action_input)
-                    tool_calls += 1
-                    executed_calls.append(ToolCall(
-                        name=action,
-                        arguments=action_input,
-                        result=truncate_result(tool_result),
-                        iteration=iterations,
-                    ))
-
-                    scratchpad += f"\nAction: {action}"
-                    scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: {tool_result}"
-
-                    if on_observation:
-                        on_observation(str(tool_result))
-                    if include_events:
-                        yield StreamEvent(
-                            kind="observation", tool=action, text=str(tool_result)
-                        )
-                else:
-                    # Same observation the non-streaming loop uses, so run() and
-                    # stream() tell the model the same thing about the same text.
-                    observation = (
-                        unknown_tool_observation(action, list(self.tools))
-                        if self.tools
-                        else NUDGE_NO_TOOLS
-                    )
-                    scratchpad += f"\nAction: {action}"
-                    scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: {observation}"
-                    if on_observation:
-                        on_observation(observation)
-                    if include_events:
-                        yield StreamEvent(
-                            kind="observation",
-                            tool=action,
-                            text=observation,
-                        )
-            else:
-                scratchpad += "\nAction: (continue reasoning)"
-
-        # Step limit reached without a Final Answer: surface a clear terminal
-        # notice (never raw scaffolding) so the stream is not silently empty.
-        limit_msg = (
-            "I wasn't able to finish this within the step limit. "
-            "Try simplifying the request or raising max_iterations."
-        )
-        if include_events:
-            yield StreamEvent(kind="status", text=limit_msg)
-        else:
-            yield limit_msg
+                if gr.modified_content is not None:
+                    response.output = gr.modified_content
+                    response.metadata["guardrail_modified"] = True
+            text = str(response.output)
+            if on_answer:
+                on_answer(text)
+            if text:
+                self.short_term_memory.add_user_message(task)
+                self.short_term_memory.add_assistant_message(text)
+            yield from emitter.answer(text)
+            return
+        # A provider that never answered has no result to report, so a caller
+        # who left ``raise_on_error`` at its default gets the typed error rather
+        # than a notice. A caller who turned it off asked not to be raised at,
+        # on this path as much as on the blocking one.
+        reason = str((response.metadata or {}).get("reason") or "")
+        if reason == "generation_failed" and self.config.raise_on_error:
+            raise self._reconstruct_error(response.metadata, response)
+        yield from emitter.status(str(response.output or ""))
