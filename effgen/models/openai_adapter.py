@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
@@ -182,6 +182,11 @@ class OpenAIAdapter(FunctionCallingModel):
     #: False for a self-hosted server, whose ids are its own (see
     #: :class:`~effgen.models.openai_compatible_adapter.OpenAICompatibleAdapter`).
     _catalog_backed = True
+
+    #: Whether this model takes images, when no catalog here can say. ``None``
+    #: leaves the question to the endpoint; a subclass serving a model the
+    #: caller named sets it from what the caller declared.
+    _declared_vision: bool | None = None
 
     def __init__(
         self,
@@ -487,6 +492,19 @@ class OpenAIAdapter(FunctionCallingModel):
 
         return " ".join(transcripts).strip()
 
+    def _vision_support(self) -> bool | Callable[[str], bool] | None:
+        """Whether this model takes images: yes, no, or nothing here knows.
+
+        The catalog describes this vendor's own models, so its answer holds for
+        them. A model served at an endpoint the caller supplied is in no
+        catalog here, and the catalog's rule is about *these* model ids — so
+        the answer is ``None`` unless the caller declared one when they built
+        the adapter, and the request goes to the server to answer for itself.
+        """
+        if self._catalog_backed:
+            return supports_vision
+        return self._declared_vision
+
     def _validate_media_support(self, prompt: Any) -> None:
         """Reject image/audio/video inputs the current model cannot handle.
 
@@ -495,11 +513,12 @@ class OpenAIAdapter(FunctionCallingModel):
         sending. Video is handled via frame-sampling + vision, so it requires a
         vision-capable model.
         """
+        vision = self._vision_support()
         require_vision_support(
             prompt,
             provider="openai",
             model_name=self.model_name,
-            supports_vision=supports_vision,
+            supports_vision=vision,
             hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
         )
         require_audio_support(
@@ -513,7 +532,10 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt,
             provider="openai",
             model_name=self.model_name,
-            supports_video=supports_vision(self.model_name),
+            supports_video=(
+                None if vision is None
+                else (vision(self.model_name) if callable(vision) else vision)
+            ),
             hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
         )
 
@@ -1098,7 +1120,7 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt,
             provider="openai",
             model_name=self.model_name,
-            supports_vision=supports_vision,
+            supports_vision=self._vision_support(),
             hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
         )
 

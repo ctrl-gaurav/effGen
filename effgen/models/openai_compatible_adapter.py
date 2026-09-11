@@ -62,6 +62,9 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
             servers that check nothing.
         context_length: The window to plan against, since the server does not
             publish one over this protocol.
+        supports_vision: Whether this server's model takes image input. ``None``
+            — the default — sends the request and lets the server answer, since
+            no catalog here describes a model somebody else is serving.
     """
 
     #: Provider label used for metrics/error reporting (see Agent._model_provider).
@@ -80,6 +83,7 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         max_retries: int = 3,
         timeout: int = 60,
         supports_reasoning: bool = False,
+        supports_vision: bool | None = None,
         **kwargs: Any,
     ) -> None:
         resolved = resolve_base_url(base_url)
@@ -123,6 +127,10 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         # accepts and OpenAI's own reasoning models do not.
         self._is_reasoning_model = supports_reasoning
         self._supports_sampling_params = True
+        # Whether this server's model takes images is the server's to answer.
+        # ``None`` sends the request and reports whatever it says; a caller who
+        # knows can say so and get the refusal before the call is billed.
+        self._declared_vision = supports_vision
 
     # ------------------------------------------------------------------
     # Discovery

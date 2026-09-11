@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from effgen.core.messages import Message
 from effgen.errors import CapabilityNotSupportedError
 from effgen.models.capabilities import Capability
+
+logger = logging.getLogger(__name__)
 
 
 def has_image_input(prompt: Any) -> bool:
@@ -42,20 +45,33 @@ def require_vision_support(
     *,
     provider: str,
     model_name: str,
-    supports_vision: bool | Callable[[str], bool],
+    supports_vision: bool | Callable[[str], bool] | None,
     hint: str = "",
 ) -> None:
     """Raise CapabilityNotSupportedError if image input targets a non-vision model.
+
+    ``None`` means this side cannot know — a model served at an endpoint the
+    caller supplied is not in any catalog here, and a rule about another
+    vendor's model ids says nothing about it. The request is sent and the
+    server answers for itself, which is both a truer answer and a better error
+    than a guess. It is logged whenever it happens.
 
     Args:
         prompt: The prompt to inspect for image parts.
         provider: The provider named in the error.
         model_name: The model id named in the error.
-        supports_vision: Whether the model accepts images, or a predicate taking
-            the model id.
+        supports_vision: Whether the model accepts images, a predicate taking
+            the model id, or ``None`` when nothing here knows.
         hint: An extra line appended to the error, such as a model to use instead.
     """
     if not has_image_input(prompt):
+        return
+
+    if supports_vision is None:
+        logger.info(
+            "[capability] nothing here knows whether '%s' takes images; "
+            "sending the request and letting the endpoint answer", model_name,
+        )
         return
 
     supported = supports_vision(model_name) if callable(supports_vision) else supports_vision
@@ -108,7 +124,7 @@ def require_video_support(
     *,
     provider: str,
     model_name: str,
-    supports_video: bool | Callable[[str], bool],
+    supports_video: bool | Callable[[str], bool] | None,
     hint: str = "",
 ) -> None:
     """Raise CapabilityNotSupportedError if video input targets a non-video model.
@@ -126,6 +142,13 @@ def require_video_support(
         hint: An extra line appended to the error, such as a model to use instead.
     """
     if not has_video_input(prompt):
+        return
+
+    if supports_video is None:
+        logger.info(
+            "[capability] nothing here knows whether '%s' takes video; "
+            "sending the request and letting the endpoint answer", model_name,
+        )
         return
 
     supported = supports_video(model_name) if callable(supports_video) else supports_video
