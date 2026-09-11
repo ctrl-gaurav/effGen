@@ -61,7 +61,15 @@ def test_multimodal_preset_tags():
 
 
 class _FakeModel(BaseModel):
-    """Minimal model stub that satisfies the Agent.__init__ checks."""
+    """Minimal model stub that satisfies the Agent.__init__ checks.
+
+    It answers the way a model answers an agent that holds tools: with a final
+    answer rather than a bare number. An agent with tools runs the reasoning
+    loop whether or not the task carries a picture, and a reply that names
+    neither an action nor an answer is a reply the loop has to ask about again —
+    so a stub that never finishes would spend the whole iteration budget saying
+    the same thing.
+    """
 
     def __init__(self):
         super().__init__(model_name="fake-model", model_type=ModelType.OPENAI)
@@ -75,7 +83,7 @@ class _FakeModel(BaseModel):
         from effgen.models.base import GenerationResult
         self.last_prompt = messages
         return GenerationResult(
-            text="42",
+            text="Final Answer: 42",
             tokens_used=5,
             finish_reason="stop",
             model_name=self.model_name,
@@ -83,7 +91,7 @@ class _FakeModel(BaseModel):
         )
 
     def generate_stream(self, messages, config=None, **kwargs):
-        yield "42"
+        yield "Final Answer: 42"
 
     @property
     def loaded(self):
@@ -158,6 +166,50 @@ def test_multimodal_agent_run_accepts_structured_inputs_with_tools():
     assert isinstance(model.last_prompt, list)
     assert all(isinstance(message, Message) for message in model.last_prompt)
     assert model.last_prompt[-1].has_image
+
+
+def test_multimodal_agent_with_tools_runs_the_loop_with_or_without_a_picture():
+    """An agent holding tools reasons the same way whichever the task carries.
+
+    A task carrying a picture used to skip the reasoning loop and answer from
+    the model's first reply; it does not any more. This pins the two against
+    each other, so the picture path cannot drift away from the plain one again.
+    """
+    from effgen.core.messages import ImagePart
+    from effgen.presets import create_agent
+
+    image = ImagePart(image=b"\x89PNG\r\n\x1a\n" + b"0" * 16, mime="image/png")
+
+    with_picture = create_agent("multimodal", _FakeModel())
+    without = create_agent("multimodal", _FakeModel())
+
+    framed = with_picture.run("Count visible people.", inputs=[image])
+    plain = without.run("Count visible people.")
+
+    assert framed.success and plain.success
+    assert framed.output == plain.output == "42"
+    assert framed.iterations == plain.iterations
+
+
+def test_a_run_says_it_carried_media_whichever_path_answered_it():
+    """`multimodal_inputs` is the caller's key, not one path's key.
+
+    It used to be stamped only by the tool-free path, so an agent holding tools
+    answered a picture without saying it had been given one. A caller reading
+    the key should not have to know which path answered.
+    """
+    from effgen.core.agent import Agent, AgentConfig
+    from effgen.core.messages import ImagePart
+    from effgen.presets import create_agent
+
+    image = ImagePart(image=b"\x89PNG\r\n\x1a\n" + b"0" * 16, mime="image/png")
+
+    with_tools = create_agent("multimodal", _FakeModel())
+    without_tools = Agent(AgentConfig(name="mm-plain", model=_FakeModel()))
+
+    assert with_tools.run("Count them.", inputs=[image]).metadata["multimodal_inputs"] is True
+    assert without_tools.run("Count them.", inputs=[image]).metadata["multimodal_inputs"] is True
+    assert with_tools.run("Count them.").metadata["multimodal_inputs"] is False
 
 
 def test_gemini_3_flash_lite_alias_resolves():
