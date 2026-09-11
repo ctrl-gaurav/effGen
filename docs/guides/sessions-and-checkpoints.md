@@ -148,8 +148,9 @@ memory.
 
 ## Checkpoints & resume
 
-A checkpoint snapshots an in-progress run (scratchpad, iteration, memory, the
-model id) so it can be resumed. Write checkpoints by passing a directory:
+A checkpoint snapshots an in-progress run — the run's own steps, its iteration,
+its memory and the model id — so it can be resumed. Write checkpoints by passing
+a directory:
 
 ```bash
 effgen run --checkpoint-dir ./checkpoints --checkpoint-interval 1 "Long task..."
@@ -184,6 +185,36 @@ Checkpoints are **JSON only** (no pickle). A truncated or corrupt checkpoint
 raises a clear `CorruptStateError` that names the file rather than a stack
 trace; a missing one raises `FileNotFoundError`. A SQLite backend is also
 available: `CheckpointManager(dir, backend="sqlite")`.
+
+### What a checkpoint carries
+
+A checkpoint holds the run's conversation under `thread`, as the same data
+`response.metadata["thread"].to_dict()` produces, carrying that format's own
+version number. `Checkpoint.to_thread()` hands it back:
+
+```python
+from effgen.core.checkpoint import CheckpointManager
+
+cp = CheckpointManager("./checkpoints").load_latest()
+thread = cp.to_thread()
+print(len(thread.steps), [a.tool for a in thread.actions()])
+```
+
+The transcript those steps render to is written beside them under `scratchpad`,
+so a checkpoint written here still resumes on a 1.0.x build.
+
+**A checkpoint written by 1.0.x resumes here too.** Those files carry only the
+transcript, so the steps are read back out of it — which recovers the order of
+thoughts, calls, rendered inputs and answers, and renders byte for byte to the
+text it was read from. Five things were never in that text and do not come back:
+a tool call's id (the recovered call is named from its position); the argument
+names behind an input the model did not write as JSON, which comes back whole
+under one key; a line the framework injected after an observation, which comes
+back as part of that observation; the step the run ended on, with the answer it
+reached and the reason it stopped; and the frame the run was asked in — the
+persona, the tool contract, the session's earlier turns and the task.
+The run resumes and completes; what it loses is structure underneath text it
+still has.
 
 ## Resuming a workflow
 

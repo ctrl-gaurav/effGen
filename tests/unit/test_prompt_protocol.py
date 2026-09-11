@@ -176,7 +176,14 @@ def _forget_what_a_model_taught_this_process():
 
 
 def test_a_run_sends_the_flat_transcript_unless_asked_otherwise() -> None:
-    assert AgentConfig(model="x").prompt_protocol == "flat"
+    """The default decides per conversation; a run continuing nothing is flat."""
+    config = AgentConfig(model="x")
+    assert config.prompt_protocol == "auto"
+    agent = object.__new__(Agent)
+    agent.config = config
+    assert Agent._resolve_prompt_protocol(
+        agent, tools_travel_as_parameter=True,
+    ) == "flat"
 
 
 def test_a_protocol_nobody_named_is_a_construction_error() -> None:

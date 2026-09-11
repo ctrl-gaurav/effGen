@@ -1,0 +1,45 @@
+{
+  "checkpoint_id": "ledger-1789150480184-674a26f8",
+  "agent_name": "ledger",
+  "task": "Multiply 17 by 23 and add 8.",
+  "iteration": 3,
+  "model": "mock-model",
+  "scratchpad": "\nThought: I should multiply the two numbers.\nAction: calculator\nAction Input: {\"expression\": \"17 * 23\"}\nObservation: 391\nThought: Now I add the offset the question asked for.\nAction: calculator\nAction Input: {\"expression\": \"391 + 8\"}\nObservation: 399\n[You have the answer from the tool. Please respond with 'Final Answer:' now.]",
+  "partial_output": null,
+  "tool_calls": 2,
+  "tokens_used": 33,
+  "memory": {
+    "short_term": {
+      "config": {
+        "max_tokens": 4096,
+        "max_messages": 100,
+        "summarization_threshold": 0.8,
+        "summary_length_ratio": 0.3,
+        "keep_recent_messages": 4,
+        "summary_budget_ratio": 0.4
+      },
+      "messages": [],
+      "summaries": [],
+      "statistics": {
+        "current_messages": 0,
+        "current_tokens": 0,
+        "max_tokens": 4096,
+        "utilization": 0.0,
+        "total_messages_added": 0,
+        "total_summarizations": 0,
+        "summaries_count": 0
+      }
+    }
+  },
+  "tool_states": {
+    "calculator": {
+      "name": "calculator",
+      "class": "Calculator",
+      "module": "effgen.tools.builtin.calculator"
+    }
+  },
+  "metadata": {
+    "interval": 1
+  },
+  "created_at": "2026-09-11T14:14:40.184139"
+}
