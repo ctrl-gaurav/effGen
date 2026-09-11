@@ -134,6 +134,7 @@ class AgentResultMixin:
                 provider=provider,
                 session_id=self._session_id,
                 agent=self.name,
+                thread=metadata.get("thread"),
             )
         except Exception:  # noqa: BLE001 - run history must not break runs
             logger.debug("Run history logging failed", exc_info=True)

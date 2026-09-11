@@ -153,6 +153,10 @@ class _LoopPolicy:
     checkpoint_interval: int
     checkpoint_dir: Any
     resume_scratchpad: str | None
+    #: The run's steps as a resumed checkpoint stored them. Preferred over
+    #: *resume_scratchpad*, which is the same conversation with its structure
+    #: rendered away.
+    resume_thread: Any
     debug: bool
     run_id: str
     raise_on_error: bool
@@ -182,6 +186,7 @@ class _LoopPolicy:
         checkpoint_interval = kwargs.pop("checkpoint_interval", 0) or 0
         checkpoint_dir = kwargs.pop("checkpoint_dir", None)
         resume = kwargs.pop("_resume_scratchpad", None)
+        resume_thread = kwargs.pop("_resume_thread", None)
         # Content parts belong to the conversation, not to the model call, so
         # they are taken out of the caller's keyword arguments here and put on
         # the thread's task step instead.
@@ -212,6 +217,7 @@ class _LoopPolicy:
             checkpoint_interval=checkpoint_interval,
             checkpoint_dir=checkpoint_dir,
             resume_scratchpad=resume,
+            resume_thread=resume_thread,
             debug=debug,
             run_id=run_id,
             raise_on_error=bool(agent.config.raise_on_error),
@@ -904,6 +910,7 @@ def _note_debug_turn(state: _RunState, response: dict[str, Any], **fields: Any) 
         tokens_used=response.get("tokens_used", 0),
         latency=time.time() - state.iter_start,
         scratchpad_snapshot=state.thread.to_text(),
+        thread_snapshot=state.thread.to_dict(),
         **fields,
     ))
 
@@ -1004,6 +1011,7 @@ def step(
         flat_prompt = prompt
         turn_protocol = agent._resolve_prompt_protocol(
             tools_travel_as_parameter="tools" in gen_kwargs,
+            conversation_carries_earlier_turns=bool(thread.prior_turns()),
         )
         if turn_protocol == "messages":
             if not state.resolved_to_messages:
@@ -1024,6 +1032,7 @@ def step(
     elif turn_frame == "custom_template":
         turn_protocol = agent._resolve_prompt_protocol(
             tools_travel_as_parameter=False,
+            conversation_carries_earlier_turns=bool(thread.prior_turns()),
         )
         # User-provided custom template
         tools_description = agent._get_tools_description()
@@ -1036,6 +1045,7 @@ def step(
     else:
         turn_protocol = agent._resolve_prompt_protocol(
             tools_travel_as_parameter=False,
+            conversation_carries_earlier_turns=bool(thread.prior_turns()),
         )
         # ReAct mode: use enhanced ToolPromptGenerator
         prompt = agent._tool_prompt_generator.generate_react_prompt(
@@ -1802,13 +1812,16 @@ def drive(
             state.checkpoints = _CM(policy.checkpoint_dir)
         except Exception as _e:
             logger.warning("Failed to init CheckpointManager: %s", _e)
-    # A run resumed from a checkpoint written before a run's steps were kept
-    # starts from the transcript that checkpoint holds. Reading it back is lossy
-    # — a call id and an argument's type are not in the text — but it renders
-    # the same bytes, so the resumed run sees the prompt it would have seen.
-    if policy.resume_scratchpad:
-        state.thread.extend(AgentThread.from_scratchpad(policy.resume_scratchpad).steps)
-        if state.thread.to_text() != policy.resume_scratchpad:
+    # A resumed run continues from the steps its checkpoint stored. The frame
+    # this run built stays at the front; only the steps the earlier run took are
+    # carried over, so a resume onto a different agent is framed by that agent.
+    resumed = _resumed_steps(policy)
+    if resumed:
+        state.thread.extend(resumed)
+        logger.info("[thread] resumed a run from %d saved steps", len(resumed))
+        if policy.resume_thread is None and state.thread.to_text() != (
+            policy.resume_scratchpad or ""
+        ):
             logger.info(
                 "[thread] resumed transcript does not begin at a step "
                 "boundary; the run continues from what could be read"
@@ -1984,6 +1997,34 @@ def _requery(agent: Any, state: _RunState, policy: _LoopPolicy, answer: str) -> 
     return True
 
 
+def _resumed_steps(policy: _LoopPolicy) -> list[Any]:
+    """The steps a resumed run carries over, from whichever shape it was given.
+
+    A checkpoint this release writes carries the run's steps, so they come back
+    as they were. One written before a run's steps were kept carries only the
+    transcript; it is read back, which is lossy in the ways
+    :func:`effgen.core._compat.thread_from_saved` documents but renders the same
+    bytes, so the resumed run sees the prompt it would have seen.
+
+    The frame steps a saved thread opens with are left behind: the run being
+    resumed builds its own frame from the agent it is resuming onto, and two
+    personas in one prompt is not the conversation either run had.
+    """
+    from .thread import ActionStep, NudgeStep, ObservationStep, ThoughtStep
+
+    saved: Any = None
+    if policy.resume_thread is not None:
+        from ._compat import thread_from_saved
+
+        saved = thread_from_saved({"thread": policy.resume_thread}, label="resume")
+    elif policy.resume_scratchpad:
+        saved = AgentThread.from_scratchpad(policy.resume_scratchpad)
+    if saved is None:
+        return []
+    carried = (ThoughtStep, ActionStep, ObservationStep, NudgeStep)
+    return [step for step in saved.steps if isinstance(step, carried)]
+
+
 def _write_periodic_checkpoint(
     agent: Any, task: str, policy: _LoopPolicy, state: _RunState
 ) -> None:
@@ -1999,7 +2040,7 @@ def _write_periodic_checkpoint(
             agent,
             task=task,
             iteration=state.iterations,
-            scratchpad=state.thread.to_text(),
+            thread=state.thread,
             tool_calls=state.tool_calls,
             tokens_used=state.tokens_used,
             metadata={"interval": interval},

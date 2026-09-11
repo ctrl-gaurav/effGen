@@ -67,6 +67,16 @@ _slog = get_structured_logger("effgen.core.agent")
 _obs_log = _get_obs_logger("effgen.core.agent")
 
 
+
+def _turn_thread(response: Any) -> dict[str, Any]:
+    """The run's steps as session-turn metadata, or nothing when it kept none."""
+    thread = (getattr(response, "metadata", None) or {}).get("thread")
+    to_dict = getattr(thread, "to_dict", None)
+    if callable(to_dict):
+        return {"thread": to_dict()}
+    return {"thread": dict(thread)} if isinstance(thread, dict) else {}
+
+
 class AgentOrchestrationMixin:
     """The run entry points and the work that surrounds a single task run."""
 
@@ -516,7 +526,16 @@ class AgentOrchestrationMixin:
                     if self.session is not None:
                         turn_meta = self._session_turn_metadata(response, run_id=run_id)
                         self.session.add_message("user", task, **turn_meta)
-                        self.session.add_message("assistant", response.output, **turn_meta)
+                        # The reply carries the run's own steps as well, so a
+                        # later turn can continue from the conversation the run
+                        # had rather than from a reading of its text. The
+                        # question does not: one copy per turn is the record.
+                        self.session.add_message(
+                            "assistant",
+                            response.output,
+                            **turn_meta,
+                            **_turn_thread(response),
+                        )
                         if turn_meta.get("model"):
                             self.session.metadata["model"] = turn_meta["model"]
                         self.session.metadata.setdefault("agent_name", self.name)
@@ -535,11 +554,13 @@ class AgentOrchestrationMixin:
                             self,
                             task=task,
                             iteration=getattr(response, "iterations", 0),
-                            scratchpad="",
-                            # A stopped run's ``output`` states what stopped
-                            # it; resuming from that prose would re-seed the
-                            # run with a report about itself, so the progress
-                            # it had reached is checkpointed instead.
+                            # The run's own steps, so resuming continues the
+                            # conversation the run had. A stopped run's
+                            # ``output`` states what stopped it, and re-seeding
+                            # from that prose would restart the run with a
+                            # report about itself, so the progress it reached is
+                            # checkpointed beside the steps rather than instead.
+                            thread=(response.metadata or {}).get("thread"),
                             partial_output=(
                                 response.partial.text
                                 if getattr(response, "partial", None)
@@ -686,7 +707,12 @@ class AgentOrchestrationMixin:
         mgr = CheckpointManager(checkpoint_dir)
         cp = mgr.load(checkpoint_id) if checkpoint_id else mgr.load_latest()
         CheckpointManager.restore_to_agent(self, cp)
-        # Seed the next run with the saved scratchpad
+        # Seed the next run with the steps the checkpoint stored. A checkpoint
+        # written before a run's steps were kept carries only the transcript;
+        # ``to_thread()`` reads that back, so either resumes.
+        thread = cp.to_thread()
+        if thread.steps:
+            kwargs.setdefault("_resume_thread", thread.to_dict())
         kwargs.setdefault("_resume_scratchpad", cp.scratchpad)
         kwargs.setdefault("checkpoint_dir", checkpoint_dir)
         return self.run(cp.task, **kwargs)
