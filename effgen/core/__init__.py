@@ -35,6 +35,7 @@ from .thread import (
     Step,
     SystemStep,
     TaskStep,
+    TurnStep,
     ThoughtStep,
 )
 
@@ -144,6 +145,7 @@ __all__ = [
     "Step",
     "SystemStep",
     "TaskStep",
+    "TurnStep",
     "ThoughtStep",
     "ActionStep",
     "ObservationStep",

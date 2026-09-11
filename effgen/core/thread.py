@@ -68,6 +68,15 @@ _SUMMARY_OBSERVATION_CHARS = 200
 #: A thought shorter than this is bookkeeping, not an answer worth returning.
 _SUBSTANTIVE_THOUGHT_CHARS = 20
 
+#: Line :meth:`AgentThread.history_text` opens the earlier turns with, for a
+#: frame that can only take one string.
+_HISTORY_HEADER = "Earlier in this conversation:"
+
+#: How much of an earlier reply that flat rendering keeps. The message
+#: rendering keeps all of it; a text frame restates the whole history on every
+#: turn, so a long earlier answer would crowd out the run itself.
+_HISTORY_REPLY_CHARS = 300
+
 __all__ = [
     "THREAD_SCHEMA_VERSION",
     "ActionStep",
@@ -79,6 +88,7 @@ __all__ = [
     "SystemStep",
     "TaskStep",
     "ThoughtStep",
+    "TurnStep",
 ]
 
 
@@ -188,6 +198,54 @@ class TaskStep:
         """Rebuild the step from :meth:`to_dict` output."""
         return cls(
             text=data.get("text", ""),
+            parts=[_part_from_dict(part) for part in data.get("parts", []) or []],
+        )
+
+
+@dataclass
+class TurnStep:
+    """One message from earlier in the session, before this run started.
+
+    Renders as nothing in the flat transcript — an earlier turn is not a step
+    of *this* run — and as the ``user`` or ``assistant`` message it was
+    otherwise, so a conversation reaches the model as turns instead of as a
+    block of text pasted into the current question.
+    :meth:`AgentThread.history_text` is the rendering for a frame that can only
+    take one string.
+    """
+
+    text: str
+    role: Literal["user", "assistant"] = "user"
+    parts: list[ContentPart] = field(default_factory=list)
+    kind: str = field(default="turn", init=False)
+
+    def to_text(self) -> str:
+        """The empty string: earlier turns are framing, not this run's steps."""
+        return ""
+
+    def to_messages(self, *, summary: bool = False) -> list[Message]:
+        """One message in the role the turn was spoken in."""
+        role = Role.ASSISTANT if self.role == "assistant" else Role.USER
+        return [Message(role=role, content=_text_parts(self.text) + list(self.parts))]
+
+    def to_dict(self) -> dict[str, Any]:
+        """The step as plain data. Non-text parts are kept by type name."""
+        return {
+            "kind": self.kind,
+            "text": self.text,
+            "role": self.role,
+            "parts": [_part_to_dict(part) for part in self.parts],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TurnStep:
+        """Rebuild the step from :meth:`to_dict` output."""
+        role: Literal["user", "assistant"] = (
+            "assistant" if data.get("role") == "assistant" else "user"
+        )
+        return cls(
+            text=data.get("text", ""),
+            role=role,
             parts=[_part_from_dict(part) for part in data.get("parts", []) or []],
         )
 
@@ -464,6 +522,7 @@ class _StepReader(Protocol):
 _STEP_TYPES: dict[str, _StepReader] = {
     "system": SystemStep,
     "task": TaskStep,
+    "turn": TurnStep,
     "thought": ThoughtStep,
     "action": ActionStep,
     "observation": ObservationStep,
@@ -643,13 +702,11 @@ class AgentThread:
             The messages, in order, with the system message first.
         """
         call_ids = self._call_ids()
-        system_texts = [
-            step.text for step in self.steps if isinstance(step, SystemStep) and step.text
-        ]
+        system_text = self.system_text()
         messages: list[Message] = []
-        if system_texts:
+        if system_text:
             messages.append(
-                Message(role=Role.SYSTEM, content=[TextPart(text="\n\n".join(system_texts))])
+                Message(role=Role.SYSTEM, content=[TextPart(text=system_text)])
             )
 
         pending_thought: str | None = None
@@ -830,6 +887,85 @@ class AgentThread:
         close_pending_action()
         logger.info("[thread] recovered %d steps from a flat transcript", len(steps))
         return cls(steps=steps)
+
+    # ------------------------------------------------------------------
+    # The frame the run is asked in
+    # ------------------------------------------------------------------
+
+    def system_text(self) -> str:
+        """Every :class:`SystemStep`\'s text, in order, as one instruction.
+
+        The persona, the tool contract and any format specification a run was
+        framed by. Empty when the run was framed by none of them, which is what
+        an agent left on the default persona with no tools reports.
+
+        Returns:
+            The instruction, or ``""``.
+        """
+        return "\n\n".join(
+            step.text for step in self.steps
+            if isinstance(step, SystemStep) and step.text
+        )
+
+    def persona_text(self) -> str:
+        """The caller's own persona, or ``""``.
+
+        A subset of :meth:`system_text`: only the steps a caller's
+        ``system_prompt`` put there, not the tool contract or a format
+        specification the framework added. A run carrying one has something to
+        say in a system turn that a text frame cannot express.
+
+        Returns:
+            The persona, or ``""``.
+        """
+        return "\n\n".join(
+            step.text for step in self.steps
+            if isinstance(step, SystemStep) and step.source == "persona" and step.text
+        )
+
+    def prior_turns(self) -> list[TurnStep]:
+        """The turns that happened before this run, in order.
+
+        Returns:
+            The session's earlier messages, or an empty list for a first turn.
+        """
+        return [step for step in self.steps if isinstance(step, TurnStep)]
+
+    def task(self) -> TaskStep | None:
+        """The question this run is answering, with any parts it arrived with.
+
+        Returns:
+            The task step, or ``None`` for a thread that carries no frame —
+            one recovered from a flat transcript, for instance.
+        """
+        for step in self.steps:
+            if isinstance(step, TaskStep):
+                return step
+        return None
+
+    def history_text(self) -> str:
+        """The earlier turns as text, for a frame that can only take a string.
+
+        The message rendering sends each turn in the role it was spoken in;
+        this is what a prompt template's conversation-history field receives
+        instead, when the model is reached with one string. An earlier reply is
+        shortened to :data:`_HISTORY_REPLY_CHARS`, because a text frame
+        restates the whole history on every turn.
+
+        Returns:
+            The rendering, or ``""`` when the run has no earlier turns.
+        """
+        turns = self.prior_turns()
+        if not turns:
+            return ""
+        lines = [_HISTORY_HEADER, ""]
+        for turn in turns:
+            text = turn.text
+            if turn.role == "assistant" and len(text) > _HISTORY_REPLY_CHARS:
+                text = text[:_HISTORY_REPLY_CHARS] + "..."
+            speaker = "Assistant" if turn.role == "assistant" else "User"
+            lines.append(f"{speaker}: {text}")
+        return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------
     # Reading the run back — what a regex over the transcript used to do

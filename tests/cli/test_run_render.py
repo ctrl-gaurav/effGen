@@ -372,4 +372,4 @@ def test_public_surface_anchor_unchanged():
     # step a run's conversation is made of. Growing this number is a
     # deliberate act — update it in the same commit that widens the surface,
     # and say why.
-    assert len(effgen.__all__) == 234
+    assert len(effgen.__all__) == 235

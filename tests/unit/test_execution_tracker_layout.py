@@ -140,11 +140,12 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: The public-surface anchor, and the module ``effgen.ExecutionStatus`` means.
 #: 1.0.0 took this from 206 to 219: the OpenAI-compatible adapter and its
 #: BackendUnreachableError, the middleware surface, the tool-call records, and
-#: the compaction strategies. 1.1.0 took it to 234: AgentThread, the Step
-#: protocol, and the seven kinds of step a run's conversation is made of.
+#: the compaction strategies. 1.1.0 took it to 235: AgentThread, the Step
+#: protocol, and the eight kinds of step a run's conversation is made of —
+#: including the earlier session turns a run carries into its frame.
 #: Growing it is a deliberate act — move the number in the same commit that
 #: widens the surface.
-TOP_LEVEL_API_SIZE = 234
+TOP_LEVEL_API_SIZE = 235
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.
