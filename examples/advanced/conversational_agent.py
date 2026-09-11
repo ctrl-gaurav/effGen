@@ -35,8 +35,8 @@ from effgen.tools.builtin.datetime_tool import DateTimeTool
 CONVERSATIONAL_SYSTEM_PROMPT = """You are a conversational assistant with memory. Remember what the user tells you and use that context in future responses.
 
 IMPORTANT:
-1. Pay close attention to the Previous Conversation Context section — it contains facts the user shared earlier.
-2. When the user asks you to recall something, look in the conversation context for the answer.
+1. Pay close attention to the earlier turns of this conversation — they contain facts the user shared already.
+2. When the user asks you to recall something, look in those earlier turns for the answer.
 3. If the user mentions a value and then asks you to convert or calculate with it, use the Calculator tool.
 4. Always be specific — if the user said their name is Alice, say "Alice", not "you told me your name".
 
