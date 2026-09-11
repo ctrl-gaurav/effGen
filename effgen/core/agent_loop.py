@@ -2087,11 +2087,16 @@ def _decline_call(
 
 def _terminal_meta(agent: Any, thread: AgentThread, reason: str) -> dict[str, Any]:
     """The metadata every terminal response carries, whatever ended the run."""
+    task = thread.task()
     return {
         "reason": reason,
         "tool_calling_strategy": agent._tool_calling_strategy.name,
         "thread": thread,
         "prompt_protocol": _protocol_of(thread),
+        # A run that carries a picture or a recording says so whether or not the
+        # agent holds tools: a caller reading the key should not have to know
+        # which path answered it.
+        "multimodal_inputs": bool(task is not None and task.parts),
     }
 
 
