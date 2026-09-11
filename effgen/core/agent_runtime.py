@@ -1344,28 +1344,43 @@ class AgentRuntimeMixin:
         self,
         *,
         tools_travel_as_parameter: bool,
+        conversation_carries_earlier_turns: bool = False,
     ) -> str:
         """Whether this turn sends messages or the flat transcript.
 
         Read in order, and every step that answers ``"flat"`` says why:
 
         1. the caller asked for ``"flat"``;
-        2. this turn's tool definitions do not travel as a request parameter —
+        2. the caller left it at ``"auto"`` and the run does not continue a
+           conversation — see below;
+        3. this turn's tool definitions do not travel as a request parameter —
            the ReAct-text branch, a caller's own template, a turn whose tools
            the guards suppressed — so there is no protocol call to express;
-        3. the model does not declare
+        4. the model does not declare
            :meth:`~effgen.models.base.BaseModel.supports_message_protocol`;
-        4. a real request on this model already came back refusing the shape.
+        5. a real request on this model already came back refusing the shape.
+
+        **What ``"auto"`` decides is that a run's conversation goes out in one
+        protocol.** A session's earlier exchanges travel as the ``user`` and
+        ``assistant`` messages they were. If the run's own steps then travelled
+        as text inside the current user message, the model would be shown its
+        own tool call as something the user narrated, and would make it again —
+        which the repeat guard then stops, costing the caller that turn. So a
+        run continuing a conversation sends its steps as the turns they were,
+        and a run continuing nothing sends the string it always sent.
 
         There is one loop and it sends messages, so a streamed run resolves
         exactly as a blocking one does; the ask is honoured rather than logged
         and dropped. Nothing here reads a model id, a provider name or anything
         about the task: steps 3 and 4 are a declared capability and a measured
-        one.
+        one, and the rule above reads the run's own conversation.
 
         Args:
             tools_travel_as_parameter: Whether this turn's tool definitions go
                 to the provider as a request parameter rather than as prose.
+            conversation_carries_earlier_turns: Whether the run continues a
+                conversation whose earlier exchanges are already travelling as
+                turns.
 
         Returns:
             ``"flat"`` or ``"messages"``.
@@ -1375,6 +1390,13 @@ class AgentRuntimeMixin:
         )
         if declared == "flat":
             return "flat"
+        if declared == "auto":
+            if not conversation_carries_earlier_turns:
+                return "flat"
+            logger.info(
+                "[protocol] the run continues a conversation, so its own steps "
+                "travel as turns rather than as text inside one"
+            )
         # An explicit "messages" asked for something it may not get, so it is
         # told at WARNING; "auto" asked the framework to decide, so INFO.
         say = logger.warning if declared == "messages" else logger.info

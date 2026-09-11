@@ -15,12 +15,34 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Trace data structures
 # ---------------------------------------------------------------------------
+
+
+def _conversation_text(iteration: "DebugIteration") -> str:
+    """The iteration's conversation as text, from its steps where it has them.
+
+    Rendering the steps is what the run itself renders, so what the panel shows
+    is the transcript the model saw. An iteration recorded before the steps were
+    kept falls back to the snapshot it stored.
+    """
+    saved = getattr(iteration, "thread_snapshot", None)
+    if saved:
+        try:
+            from ..core.thread import AgentThread
+
+            return AgentThread.from_dict(saved).to_text()
+        except (ValueError, TypeError, KeyError):
+            logger.debug("Debug trace: stored steps could not be read", exc_info=True)
+    return iteration.scratchpad_snapshot
+
 
 @dataclass
 class DebugIteration:
@@ -36,6 +58,10 @@ class DebugIteration:
     tokens_used: int = 0
     latency: float = 0.0
     scratchpad_snapshot: str = ""
+    #: The run's conversation at the end of this iteration, as
+    #: :meth:`effgen.core.thread.AgentThread.to_dict` data. ``scratchpad_snapshot``
+    #: is the text those steps render to and is kept beside it.
+    thread_snapshot: dict[str, Any] = field(default_factory=dict)
     memory_snapshot: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -52,6 +78,7 @@ class DebugIteration:
             "final_answer": self.final_answer,
             "tokens_used": self.tokens_used,
             "latency": self.latency,
+            "thread": self.thread_snapshot,
             "metadata": self.metadata,
         }
 
@@ -239,7 +266,7 @@ def run_debug_cli(
             if action.strip().lower() == "q":
                 break
             if action.strip().lower() == "s":
-                console.print(Panel(it.scratchpad_snapshot or "(empty)", title="Scratchpad"))
+                console.print(Panel(_conversation_text(it) or "(empty)", title="Conversation"))
 
     # Summary
     summary = Table(title="Run Summary", show_lines=True)

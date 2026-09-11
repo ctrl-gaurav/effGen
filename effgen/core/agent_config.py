@@ -32,7 +32,8 @@ class AgentMode(Enum):
 
 #: The protocols :attr:`AgentConfig.prompt_protocol` accepts. ``"flat"`` is the
 #: string every release before this one sent; ``"messages"`` is the provider
-#: message list; ``"auto"`` picks per model from what the adapter declares.
+#: message list; ``"auto"`` sends the whole of one conversation in one protocol
+#: — turns for a run that continues a session, the flat string otherwise.
 PROMPT_PROTOCOLS: frozenset[str] = frozenset({"flat", "messages", "auto"})
 
 
@@ -146,14 +147,17 @@ class AgentConfig:
             then the task and ``system_prompt``. Nothing effGen appends asks for
             a shape of its own, so a task that asks for a letter gets a letter.
         prompt_protocol: How a run's conversation reaches the model.
-            ``"flat"`` (the default) sends one string carrying the whole
-            transcript. ``"messages"`` sends the conversation as the
-            conversation it was — a system turn, the task, the model's own
-            reasoning beside the tool call it made, and each tool result
-            answering the call it belongs to. ``"auto"`` sends messages
-            wherever the model declares it can carry that shape
-            (:meth:`~effgen.models.base.BaseModel.supports_message_protocol`)
-            and falls back to the flat transcript everywhere else.
+            ``"flat"`` sends one string carrying the whole transcript.
+            ``"messages"`` sends the conversation as the conversation it was —
+            a system turn, the task, the model's own reasoning beside the tool
+            call it made, and each tool result answering the call it belongs
+            to — wherever the model declares it can carry that shape
+            (:meth:`~effgen.models.base.BaseModel.supports_message_protocol`).
+            ``"auto"`` (the default) sends the whole of one conversation in one
+            protocol: a run that continues a session sends its own steps as the
+            turns they were, so the model is not shown its own tool call as
+            something the user narrated; a run that continues nothing sends the
+            flat string every release before this one sent.
 
             ``"messages"`` never fails a run that a ``"flat"`` run would have
             answered: a model, a loop or a turn that cannot carry the shape
@@ -269,9 +273,11 @@ class AgentConfig:
     # How the run's conversation reaches the model: "flat" (one string, the
     # transcript inside it), "messages" (a system turn, the task, the model's
     # reasoning beside its tool call, each result answering a call id), or
-    # "auto" (messages wherever the model declares it carries the shape). The
-    # default keeps every existing run on the string it already sent.
-    prompt_protocol: str = "flat"
+    # "auto" (one protocol for the whole conversation: turns when the run
+    # continues a conversation and the model carries them, the flat string
+    # otherwise). The default keeps a run that continues nothing on the string
+    # it already sent.
+    prompt_protocol: str = "auto"
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -286,8 +292,8 @@ class AgentConfig:
             raise ValueError(
                 f"{self.prompt_protocol!r} is not a prompt protocol. Pass "
                 f"'flat' to send the transcript as one string, 'messages' to "
-                f"send the conversation as messages, or 'auto' to send "
-                f"messages wherever the model declares it carries them."
+                f"send the conversation as messages, or 'auto' to send a "
+                f"continued conversation as messages and anything else flat."
             )
 
 

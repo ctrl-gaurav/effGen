@@ -207,6 +207,33 @@ class Session:
             # file missing a required field) — name the file, not the parser.
             raise CorruptStateError("session", path, str(e)) from e
 
+    # ------------------------------------------------------------------ threads
+    def last_thread(self) -> Any:
+        """The run's steps from the most recent turn that recorded any.
+
+        A turn stores the conversation its run had under the assistant
+        message's ``thread`` metadata, so a session can be continued with the
+        earlier run's structure rather than with a reading of its text. A
+        session whose turns were written before that — or one whose last turn
+        recorded no steps — hands back an empty thread.
+
+        Returns:
+            The thread, as :class:`~effgen.core.thread.AgentThread`.
+        """
+        from ._compat import thread_from_saved
+
+        for message in reversed(_message_list(self.messages)):
+            if not isinstance(message, dict) or message.get("role") == "user":
+                continue
+            saved = _message_metadata(message).get("thread")
+            if saved:
+                return thread_from_saved(
+                    {"thread": saved}, label=f"session {self.session_id}"
+                )
+        from .thread import AgentThread
+
+        return AgentThread()
+
     @classmethod
     def load_or_create(
         cls,

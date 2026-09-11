@@ -84,6 +84,33 @@ def _preview(text: Any, limit: int = PREVIEW_CHARS) -> str | None:
 # --------------------------------------------------------------------------
 # Writing
 # --------------------------------------------------------------------------
+def _thread_shape(thread: Any) -> dict[str, Any]:
+    """The schema version and ordered step kinds of *thread*, or nothing.
+
+    A record says which conversation a run had by its shape, so a listing can
+    tell a two-step run from a twenty-step one and can tell which release wrote
+    the steps, without this bounded store growing a transcript.
+    """
+    if thread is None:
+        return {}
+    data = thread
+    to_dict = getattr(thread, "to_dict", None)
+    if callable(to_dict):
+        data = to_dict()
+    if not isinstance(data, dict):
+        return {}
+    steps = data.get("steps")
+    if not isinstance(steps, list):
+        return {}
+    kinds = [str(s.get("kind")) for s in steps if isinstance(s, dict)]
+    return {
+        "thread_version": data.get("version"),
+        "thread_steps": len(kinds),
+        "thread_kinds": kinds,
+    }
+
+
+
 def record_run(
     *,
     model: str = "unknown",
@@ -105,6 +132,7 @@ def record_run(
     execution_name: str | None = None,
     parent_agent: str | None = None,
     role: str | None = None,
+    thread: Any = None,
 ) -> dict[str, Any]:
     """Append a run record to the ring buffer and the daily history file.
 
@@ -156,6 +184,13 @@ def record_run(
     role:
         Role the agent played in the execution (``"manager"``, ``"worker"``,
         ``"node"``, …); defaults from the current execution.
+    thread:
+        The run's conversation, as an :class:`~effgen.core.thread.AgentThread`
+        or as the data one serialises to. The record keeps its schema version
+        and the kinds of its steps in order — the shape of the conversation,
+        not a truncated rendering of its text. This store is a bounded ring of
+        previews; the conversation itself lives on the run's checkpoint, on the
+        session turn and on ``response.metadata["thread"]``.
 
     Returns the record that was stored.
     """
@@ -190,6 +225,7 @@ def record_run(
         "duration_s": duration_s,
         "cost_usd": cost_usd,
         "error": _preview(error),
+        **_thread_shape(thread),
     }
     with _lock:
         _runs.append(record)
