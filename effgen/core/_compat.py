@@ -14,7 +14,9 @@ unloadable. The helpers here load forgivingly instead:
 * a genuinely missing *required* field raises a clear, named error.
 
 This keeps v0.2.x files loadable on newer builds (and vice-versa) without silently
-losing data.
+losing data. :func:`thread_from_saved` is the same idea one level up: it returns the
+run's steps from a document that carries them, and reconstructs them from the flat
+transcript of a document written before they were kept.
 """
 
 from __future__ import annotations
@@ -241,3 +243,62 @@ def load_from_dict(
                 f"({msg}). The file may be from an incompatible version or corrupt."
             ) from exc
         raise
+
+
+#: Logged once per reconstruction, so a run that resumed a pre-thread checkpoint
+#: is greppable in a log file.
+_REBUILT_FROM_TRANSCRIPT = (
+    "[compat] rebuilt a thread from a flat transcript written before a run's "
+    "steps were kept"
+)
+
+
+def thread_from_saved(data: Mapping[str, Any], *, label: str = "checkpoint") -> Any:
+    """Return the :class:`~effgen.core.thread.AgentThread` a saved document carries.
+
+    A document written by a build that kept a run's steps carries them under
+    ``thread``; one written before that carries only the flat transcript under
+    ``scratchpad``. Both load, so a saved run resumes on either build.
+
+    **What the reconstruction from a transcript loses.** The transcript is the
+    text the run's steps rendered to, and four things never reached it:
+
+    * a tool call's id — the reconstructed call is renamed from its position, so
+      it answers its own observation but no longer names what the provider named;
+    * a tool's argument names, when the call's input was not written as JSON —
+      the text carries what was sent, so an input the model wrote as prose comes
+      back whole under one key rather than as the arguments it stood for. An
+      input that rendered as JSON is read back as JSON, types and all;
+    * a line the framework injected after an observation — it comes back as part
+      of that observation rather than as the step it was, so nothing afterwards
+      can tell which half the run wrote;
+    * the step the run ended on: the answer it reached and the reason it stopped
+      are not in the transcript and do not return;
+    * every step field the text does not render: the run's frame (the persona,
+      the tool contract, the session's earlier turns and the task), a turn's
+      reasoning alongside a provider-native call, whether a call was declined,
+      whether an observation was an error, and the thread's own metadata.
+
+    Rendering the reconstruction gives back the transcript it was read from, so a
+    resumed run sees the prompt it would have seen. What it does not get back is
+    the structure underneath that text.
+
+    Args:
+        data: A saved document, as a checkpoint or a session turn stores one.
+        label: Name used in the log line about a reconstruction.
+
+    Returns:
+        The thread the document carries, reconstructed when it carries only text.
+    """
+    from .thread import AgentThread
+
+    if not isinstance(data, Mapping):
+        return AgentThread()
+    saved = data.get("thread")
+    if isinstance(saved, Mapping) and saved.get("steps") is not None:
+        return AgentThread.from_dict(dict(saved))
+    transcript = data.get("scratchpad")
+    if not isinstance(transcript, str) or not transcript:
+        return AgentThread()
+    logger.info("%s (%s)", _REBUILT_FROM_TRANSCRIPT, label)
+    return AgentThread.from_scratchpad(transcript)

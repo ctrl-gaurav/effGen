@@ -2,8 +2,15 @@
 Agent checkpointing for effGen framework.
 
 Provides CheckpointManager which can serialize agent execution state
-(scratchpad, iterations, tool history, partial results, memory) to disk
+(the run's steps, iterations, tool history, partial results, memory) to disk
 as human-readable JSON. Supports filesystem (default) and SQLite backends.
+
+A checkpoint carries the run's conversation as :class:`~effgen.core.thread.AgentThread`
+data under ``thread``, versioned by that thread's own schema version, and the
+transcript that thread renders to under ``scratchpad``. Both are written, so a
+checkpoint this build writes still resumes on a build that only knows the
+transcript, and a checkpoint an older build wrote still resumes here — see
+:func:`effgen.core._compat.thread_from_saved` for what the second direction loses.
 
 Checkpoints are JSON-serializable only (no pickle) for security.
 """
@@ -52,6 +59,37 @@ def _load_checkpoint(source: str, data: Any) -> "Checkpoint":
         raise CorruptStateError("checkpoint", source, str(e)) from e
 
 
+def _thread_fields(thread: Any) -> tuple[dict[str, Any], str]:
+    """Return ``(serialised thread, the transcript it renders)`` for *thread*.
+
+    Accepts a thread, the data one serialises to, or nothing at all, so a caller
+    that has either shape — or neither — gets a checkpoint it can resume.
+    """
+    if thread is None:
+        return {}, ""
+    if isinstance(thread, dict):
+        try:
+            from .thread import AgentThread
+
+            return dict(thread), AgentThread.from_dict(thread).to_text()
+        except (ValueError, TypeError, KeyError) as e:
+            logger.warning(
+                "Checkpoint: saved thread data could not be read back (%s); "
+                "storing it as given, with no transcript beside it.", e
+            )
+            return dict(thread), ""
+    to_dict = getattr(thread, "to_dict", None)
+    to_text = getattr(thread, "to_text", None)
+    if callable(to_dict) and callable(to_text):
+        return to_dict(), to_text()
+    logger.warning(
+        "Checkpoint: thread=%s is neither a thread nor thread data; the "
+        "checkpoint records no steps. Pass response.metadata['thread'].",
+        type(thread).__name__,
+    )
+    return {}, ""
+
+
 @dataclass
 class Checkpoint:
     """A single checkpoint snapshot."""
@@ -62,6 +100,7 @@ class Checkpoint:
     iteration: int
     model: str = ""
     scratchpad: str = ""
+    thread: dict[str, Any] = field(default_factory=dict)
     partial_output: str | None = None
     tool_calls: int = 0
     tokens_used: int = 0
@@ -73,6 +112,21 @@ class Checkpoint:
     def to_dict(self) -> dict[str, Any]:
         """Return the checkpoint as a JSON-serializable dict."""
         return asdict(self)
+
+    def to_thread(self) -> Any:
+        """Return the run's conversation as an :class:`~effgen.core.thread.AgentThread`.
+
+        A checkpoint written by this build hands back exactly the steps it was
+        given. One written before a run's steps were kept is reconstructed from
+        its transcript, which is lossy in the ways
+        :func:`effgen.core._compat.thread_from_saved` documents.
+
+        Returns:
+            The thread, empty when the checkpoint recorded no progress.
+        """
+        from ._compat import thread_from_saved
+
+        return thread_from_saved(self.to_dict(), label=f"checkpoint {self.checkpoint_id}")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Checkpoint":
@@ -295,6 +349,7 @@ class CheckpointManager:
         tool_calls: int = 0,
         tokens_used: int = 0,
         metadata: dict[str, Any] | None = None,
+        thread: Any = None,
     ) -> Checkpoint:
         """Build a Checkpoint by snapshotting an Agent's serializable state.
 
@@ -305,15 +360,24 @@ class CheckpointManager:
             agent: The agent whose state is captured.
             task: The task the agent is working on.
             iteration: The reasoning iteration reached so far.
-            scratchpad: The reasoning transcript accumulated so far.
+            scratchpad: The reasoning transcript accumulated so far. Left out
+                when *thread* is given, which renders it.
             partial_output: Any answer text produced before the snapshot.
             tool_calls: How many tool calls the run has made.
             tokens_used: Tokens the run has consumed.
             metadata: Extra context to store with the checkpoint.
+            thread: The run's conversation, as an
+                :class:`~effgen.core.thread.AgentThread` or as the data one
+                serialises to. Stored whole, so resuming gets the run's steps
+                back rather than a reading of their text.
 
         Returns:
             The checkpoint, ready to persist.
         """
+        thread_data, rendered = _thread_fields(thread)
+        if not scratchpad:
+            scratchpad = rendered
+
         memory_dict: dict[str, Any] = {}
         try:
             stm = getattr(agent, "short_term_memory", None)
@@ -341,6 +405,7 @@ class CheckpointManager:
             iteration=iteration,
             model=model_id,
             scratchpad=scratchpad,
+            thread=thread_data,
             partial_output=partial_output,
             tool_calls=tool_calls,
             tokens_used=tokens_used,
