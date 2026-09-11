@@ -207,8 +207,14 @@ class AgentResponse:
             on a stopped run that had reached nothing. Its ``text`` is also
             carried as ``metadata["partial_output"]``.
         routing_decision: Routing decision (if sub-agents used)
-        metadata: Additional metadata. Always includes ``reason``, which is
-            :attr:`stop_reason` under its original key, one of:
+        metadata: Additional metadata. It holds objects as well as plain
+            values — ``metadata["thread"]`` is the run's
+            :class:`~effgen.core.thread.AgentThread`, ``metadata["parsed"]`` a
+            model instance on a structured-output run — so
+            ``json.dumps(response.metadata)`` raises. :meth:`to_dict` is the
+            way to get a document: it writes every one of them as data.
+            Always includes ``reason``, which is :attr:`stop_reason` under its
+            original key, one of:
 
             - ``"final_answer"`` — the model produced an answer (``success=True``).
               A finer ``answer_source`` may also be present (e.g.

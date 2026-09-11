@@ -209,7 +209,7 @@ class AgentConfig:
     tool_calling_mode: str = "auto"  # "auto", "native", "react", "hybrid"
     output_format: str | None = None  # Global default: "json", "yaml", "csv", or None
     output_schema: dict[str, Any] | None = None  # Global default JSON Schema
-    guardrails: Any = None  # GuardrailChain, preset name (str), or None
+    guardrails: Any = None  # GuardrailChain, preset name, or a list of either
     memory_config: dict[str, Any] = field(default_factory=lambda: {
         "short_term_max_tokens": 4096,
         "short_term_max_messages": 100,

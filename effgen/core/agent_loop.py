@@ -96,6 +96,9 @@ from .thread import (
     AnswerStep,
     NudgeStep,
     ObservationStep,
+    Step,
+    SystemStep,
+    TaskStep,
     ThoughtStep,
 )
 from .tool_call_record import ToolCallList
@@ -153,6 +156,11 @@ class _LoopPolicy:
     debug: bool
     run_id: str
     raise_on_error: bool
+    #: The task's non-text content parts — an image, a clip — validated once,
+    #: before the first turn. They ride on the thread's task step, so a run
+    #: holding both a picture and a tool drives the loop instead of falling out
+    #: of it into a single direct call.
+    task_parts: tuple[Any, ...] = ()
 
     @property
     def tools_travel_as_parameter(self) -> bool:
@@ -174,6 +182,14 @@ class _LoopPolicy:
         checkpoint_interval = kwargs.pop("checkpoint_interval", 0) or 0
         checkpoint_dir = kwargs.pop("checkpoint_dir", None)
         resume = kwargs.pop("_resume_scratchpad", None)
+        # Content parts belong to the conversation, not to the model call, so
+        # they are taken out of the caller's keyword arguments here and put on
+        # the thread's task step instead.
+        raw_inputs = kwargs.pop("inputs", None)
+        task_parts = (
+            tuple(agent._content_parts_from_inputs(raw_inputs))
+            if raw_inputs is not None else ()
+        )
         # A ``max_tokens`` configured on the agent is the default budget for
         # every run. ``run()`` already writes it into its kwargs; doing it here
         # as well means a streamed run resolves the same budget rather than
@@ -199,6 +215,7 @@ class _LoopPolicy:
             debug=debug,
             run_id=run_id,
             raise_on_error=bool(agent.config.raise_on_error),
+            task_parts=task_parts,
         )
         logger.info(
             "[loop] frame=%s tools_as_parameter=%s streamed=%s max_iterations=%d",
@@ -309,6 +326,7 @@ class _RunState:
     tool_calls: int = 0
     tokens_used: int = 0
     resolved_to_messages: bool = False
+    frame_carried_by_messages: bool = False
     debug_trace: Any = None
     checkpoints: Any = None
     iter_start: float = 0.0
@@ -936,18 +954,49 @@ def step(
     flat_prompt = ""
     prompt: Any
 
+    # Whether the persona and the session's earlier turns can travel as their
+    # own messages this turn. A string frame has one role, so on a model whose
+    # adapter does not take a conversation they stay in the text, exactly as
+    # they were.
+    carry_roles = agent._model_carries_a_conversation()
+    # The tool contract is not a reason on its own: the string frame already
+    # states it, in its own place. What a string frame cannot express is the
+    # caller's own persona and the turns of a session that happened before this
+    # run — those are what move the request onto roles.
+    frame_roles = carry_roles and bool(
+        thread.persona_text() or thread.prior_turns()
+    )
+    task_step = thread.task()
+    frame_parts = bool(task_step.parts) if task_step is not None else False
+
     if turn_frame == "native":
         # Native/hybrid mode: use a simple user message and pass tool
         # definitions via the chat template's tools parameter. The model then
         # writes its calls as the tokens its own template declares.
         prompt = agent._native_tool_prompt(
-            task, transcript, conversation_history, guards.previous_actions,
+            task, transcript,
+            "" if frame_roles else conversation_history,
+            guards.previous_actions,
+            frame_owns_roles=frame_roles,
         )
         tool_defs = agent._tool_calling_strategy.format_tools_for_prompt(
             list(agent.tools.values())
         )
         if isinstance(tool_defs, list):
             gen_kwargs["tools"] = tool_defs
+        if frame_roles or frame_parts:
+            if not state.frame_carried_by_messages:
+                state.frame_carried_by_messages = True
+                logger.info(
+                    "[frame] the run's frame travels as messages: "
+                    "persona=%s earlier turns=%d content parts=%d",
+                    bool(thread.persona_text()) if frame_roles else False,
+                    len(thread.prior_turns()) if frame_roles else 0,
+                    len(task_step.parts) if task_step is not None else 0,
+                )
+            prompt = agent._frame_as_messages(
+                prompt, thread, carry_roles=frame_roles,
+            )
         # The same turn, said as the conversation it was, when the caller asked
         # for that and the model declares it carries the shape. The flat prompt
         # above stays built either way: it is what a refusal falls back to, and
@@ -961,7 +1010,7 @@ def step(
                 state.resolved_to_messages = True
                 logger.info("[protocol] the run sends the conversation as messages")
             prompt = agent._native_tool_messages(
-                task, thread, conversation_history, guards.previous_actions,
+                thread, guards.previous_actions,
                 split_reasoning=(
                     agent._message_protocol_probe() == PROTOCOL_SPLIT
                 ),
@@ -1003,6 +1052,17 @@ def step(
             answer_shape=_answer_shape,
             tool_contract=agent._tool_contract(),
         )
+    if frame_parts and not isinstance(prompt, list):
+        # A picture cannot ride in a string. The template already states the
+        # persona and the earlier turns, so only the parts are added here.
+        if not state.frame_carried_by_messages:
+            state.frame_carried_by_messages = True
+            logger.info(
+                "[frame] the run's frame travels as messages: "
+                "persona=False earlier turns=0 content parts=%d",
+                len(task_step.parts) if task_step is not None else 0,
+            )
+        prompt = agent._frame_as_messages(prompt, thread, carry_roles=False)
     state.prompt = prompt
 
     # A turn that answered while holding a tool doing work the model cannot do
@@ -1065,8 +1125,8 @@ def step(
                     response = yield from emitter.model_turn(
                         agent,
                         agent._native_tool_messages(
-                            task, thread, conversation_history,
-                            guards.previous_actions, split_reasoning=True,
+                            thread, guards.previous_actions,
+                            split_reasoning=True,
                         ),
                         policy, gen_kwargs, streamable=streamable,
                     )
@@ -1654,6 +1714,42 @@ def step(
 # --- The driver --------------------------------------------------------------
 
 
+def _frame_steps(agent: Any, task: str, policy: _LoopPolicy) -> list[Step]:
+    """The steps a run starts with: how it is framed, and what it was asked.
+
+    The persona and the tool contract are system steps, the session's earlier
+    messages are the turns they were, and the question is a task step carrying
+    any content parts it arrived with. None of them renders into the flat
+    transcript, so a run that carries none of them sends the bytes it always
+    did; a run that carries some of them can state them as roles instead of
+    pasting them into the question.
+
+    Args:
+        agent: The agent the run belongs to.
+        task: The task, as the caller wrote it.
+        policy: The run's policy, which holds the task's content parts.
+
+    Returns:
+        The steps, in the order they belong in.
+    """
+    steps: list[Step] = []
+    persona = getattr(agent, "_custom_persona", None)
+    if persona:
+        steps.append(SystemStep(text=str(persona), source="persona"))
+    if agent.tools:
+        contract = agent._tool_contract()
+        if contract:
+            steps.append(SystemStep(text=contract, source="contract"))
+    prior = agent._prior_turn_steps()
+    if prior:
+        logger.info(
+            "[thread] the run carries %d earlier turn(s) of this session", len(prior)
+        )
+        steps.extend(prior)
+    steps.append(TaskStep(text=task, parts=list(policy.task_parts)))
+    return steps
+
+
 def drive(
     agent: Any,
     task: str,
@@ -1676,7 +1772,7 @@ def drive(
         The run's terminal response.
     """
     state = _RunState(
-        thread=AgentThread(),
+        thread=AgentThread(steps=_frame_steps(agent, task, policy)),
         # The repeat guards — which calls have been dispatched, which results
         # have already come back, when to stop offering tools and when a
         # written-out call has been seen once too often. One construction site
@@ -1696,7 +1792,10 @@ def drive(
         state.debug_trace = DebugTrace(
             task=task, agent_name=agent.name, run_id=policy.run_id,
         )
-    state.conversation_history = agent._format_conversation_history()
+    # The earlier turns as text, for a frame that can only take one string.
+    # They are steps on the thread either way; this is the rendering a prompt
+    # template's conversation-history field receives.
+    state.conversation_history = state.thread.history_text()
     if policy.checkpoint_interval and policy.checkpoint_dir:
         try:
             from .checkpoint import CheckpointManager as _CM
@@ -1708,7 +1807,7 @@ def drive(
     # — a call id and an argument's type are not in the text — but it renders
     # the same bytes, so the resumed run sees the prompt it would have seen.
     if policy.resume_scratchpad:
-        state.thread = AgentThread.from_scratchpad(policy.resume_scratchpad)
+        state.thread.extend(AgentThread.from_scratchpad(policy.resume_scratchpad).steps)
         if state.thread.to_text() != policy.resume_scratchpad:
             logger.info(
                 "[thread] resumed transcript does not begin at a step "

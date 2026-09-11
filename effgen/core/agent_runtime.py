@@ -780,18 +780,61 @@ class AgentRuntimeMixin:
 
     @staticmethod
     def _resolve_guardrails(guardrails: Any):
-        """Resolve guardrails config to a GuardrailChain or None."""
+        """Resolve a guardrails configuration to a chain, or ``None``.
+
+        Accepts a :class:`~effgen.guardrails.base.GuardrailChain`, a preset
+        name, or a sequence of guardrails and preset names, which is what
+        ``AgentConfig(guardrails=[PIIGuardrail()])`` reads as. A value that is
+        none of those raises rather than being dropped: an agent that was
+        configured with guardrails and then runs without them is the one
+        failure the caller cannot see.
+
+        Args:
+            guardrails: What the caller configured.
+
+        Returns:
+            The chain, or ``None`` when nothing was configured.
+
+        Raises:
+            TypeError: If the value is not a chain, a preset name, or a
+                sequence of those.
+        """
+        from ..guardrails.base import Guardrail, GuardrailChain
+
         if guardrails is None:
             return None
-        # Already a GuardrailChain
-        from ..guardrails.base import GuardrailChain
         if isinstance(guardrails, GuardrailChain):
             return guardrails
-        # Preset name string
         if isinstance(guardrails, str):
             from ..guardrails.presets import get_guardrail_preset
             return get_guardrail_preset(guardrails)
-        return None
+        if isinstance(guardrails, list | tuple):
+            if not guardrails:
+                return None
+            resolved: list[Guardrail] = []
+            for index, entry in enumerate(guardrails):
+                if isinstance(entry, Guardrail):
+                    resolved.append(entry)
+                    continue
+                if isinstance(entry, GuardrailChain):
+                    resolved.extend(entry.guardrails)
+                    continue
+                if isinstance(entry, str):
+                    from ..guardrails.presets import get_guardrail_preset
+                    resolved.extend(get_guardrail_preset(entry).guardrails)
+                    continue
+                raise TypeError(
+                    f"AgentConfig(guardrails=[...]) item {index} is "
+                    f"{type(entry).__name__}, which is not a guardrail. "
+                    "Pass Guardrail instances, preset names, or a "
+                    "GuardrailChain."
+                )
+            return GuardrailChain(resolved)
+        raise TypeError(
+            f"AgentConfig(guardrails=...) got {type(guardrails).__name__}. "
+            "Pass a GuardrailChain, a preset name such as 'strict', or a list "
+            "of Guardrail instances."
+        )
 
     @staticmethod
     def _warn_tool_output_injection_gap(guardrail_chain: Any, has_tools: bool) -> None:
@@ -1029,9 +1072,25 @@ class AgentRuntimeMixin:
 
         return text_task, (merged or None)
 
-    def _build_multimodal_prompt(self, task: str, inputs: Any) -> list[Any]:
-        """Build structured Messages for adapter-native multimodal input."""
-        from effgen.core.messages import ContentPart, Message, Role, TextPart
+    def _content_parts_from_inputs(self, inputs: Any) -> list[Any]:
+        """Validate ``run(inputs=[...])`` into content parts.
+
+        One place decides what a caller may pass, so a part reaches the model
+        the same way whether the run answers directly or drives the reasoning
+        loop.
+
+        Args:
+            inputs: What the caller passed as ``inputs=``: parts, paths, URLs,
+                or one of those on its own.
+
+        Returns:
+            The parts, in the order they were given.
+
+        Raises:
+            TypeError: If an item is neither an effGen content part nor a path
+                or URL naming a media file.
+        """
+        from effgen.core.messages import ContentPart
 
         if isinstance(inputs, tuple):
             inputs = list(inputs)
@@ -1040,7 +1099,7 @@ class AgentRuntimeMixin:
 
         from pathlib import Path as _Path
 
-        content: list[ContentPart] = [TextPart(text=task)]
+        content: list[ContentPart] = []
         for index, part in enumerate(inputs):
             # Convenience: a bare path or URL string (or Path) is auto-wrapped
             # by extension into the matching image/audio/video part, so
@@ -1070,6 +1129,14 @@ class AgentRuntimeMixin:
                     "Import them with: from effgen import image_from, audio_from, video_from"
                 )
             content.append(part)
+        return content
+
+    def _build_multimodal_prompt(self, task: str, inputs: Any) -> list[Any]:
+        """Build structured Messages for adapter-native multimodal input."""
+        from effgen.core.messages import ContentPart, Message, Role, TextPart
+
+        content: list[ContentPart] = [TextPart(text=task)]
+        content.extend(self._content_parts_from_inputs(inputs))
 
         messages: list[Message] = []
         if self.config.system_prompt:
@@ -1090,12 +1157,12 @@ class AgentRuntimeMixin:
     def _persona_prefix(self) -> str:
         """Return the user's custom persona as a prompt prefix, or ``""``.
 
-        When the user set a custom ``system_prompt`` (anything other than the
-        default assistant prompt), the no-tool direct path and the native/hybrid
-        tool path prepend it to the user turn so the persona actually steers the
-        model — matching the ReAct-text and Gemini-native paths, which already
-        embed it. Adapters that take a string prompt have no separate system
-        slot, so prepending is the universal, family-agnostic way to deliver it.
+        A persona belongs in the system slot, and on the reasoning loop it is
+        there: a run carries it as a :class:`~effgen.core.thread.SystemStep`
+        and sends it as a system turn wherever the adapter takes a
+        conversation. This is the rendering for the paths that reach the model
+        with one string and have no system slot at all — the no-tool direct
+        path, and the tool path on an adapter that converts no conversation.
         Returns an empty string for the default persona so default agents are
         byte-for-byte unchanged.
         """
@@ -1176,7 +1243,7 @@ class AgentRuntimeMixin:
 
     def _native_tool_prompt(
         self, task: str, scratchpad: str, conversation_history: str,
-        previous_actions: list[tuple[str, str]],
+        previous_actions: list[tuple[str, str]], *, frame_owns_roles: bool = False,
     ) -> str:
         """Build one turn's prompt for the native/hybrid tool path.
 
@@ -1190,6 +1257,21 @@ class AgentRuntimeMixin:
         where the model first sees them; later turns close with a continuation
         or retrieval instruction of their own, which a second statement would
         compete with.
+
+        Args:
+            task: The question this run is answering.
+            scratchpad: The run's transcript so far, or ``""``.
+            conversation_history: Earlier turns of the session as text, or
+                ``""``. Ignored when *frame_owns_roles* is set.
+            previous_actions: What the run has called so far.
+            frame_owns_roles: The persona and the earlier turns travel as their
+                own messages around this string, so leave both out of it. The
+                tool contract is not one of them: it keeps the place it has
+                here, on the opening turn, so that moving to roles moves the
+                persona and the history and nothing else.
+
+        Returns:
+            The prompt.
         """
         cite_sources, numbered_passages = self._citation_prompt_state()
         closing = self._compose_closing(
@@ -1210,20 +1292,16 @@ class AgentRuntimeMixin:
             prompt = f"{task}\n\n{closing}"
         else:
             prompt = task
-        # Carry prior conversation turns into the native tool-calling prompt.
-        # Without this the model only sees the latest task and forgets earlier
-        # turns, so a multi-turn *session* loses its context the moment any tool
-        # is attached (the ReAct/template branches inject this history too).
-        if conversation_history:
-            prompt = f"{conversation_history}\n\n{prompt}"
-        # Steer the model with the user's custom persona. This path sends a bare
-        # user message (the chat template owns the system slot for tools), so
-        # prepend the persona — otherwise a custom persona is dropped the moment
-        # a tool is attached, even though the ReAct-text and Gemini-native paths
-        # honor it. The persona leads and the contract follows: the persona is
-        # who the model is, the contract describes machinery the framework
-        # attached.
-        prompt = f"{self._persona_prefix()}{prompt}"
+        if not frame_owns_roles:
+            # This string is the whole request, so the earlier turns and the
+            # persona have nowhere else to go: the history leads and the
+            # persona leads that. A model whose adapter carries a conversation
+            # is sent them as their own messages instead
+            # (:meth:`_frame_as_messages`), which is what *frame_owns_roles*
+            # says has already happened.
+            if conversation_history:
+                prompt = f"{conversation_history}\n\n{prompt}"
+            prompt = f"{self._persona_prefix()}{prompt}"
         if not scratchpad and self.tools:
             contract = self._tool_contract()
             if contract:
@@ -1327,16 +1405,18 @@ class AgentRuntimeMixin:
         return "messages"
 
     def _native_tool_messages(
-        self, task: str, thread: Any, conversation_history: str,
-        previous_actions: list[tuple[str, str]], *, split_reasoning: bool = False,
+        self, thread: Any, previous_actions: list[tuple[str, str]],
+        *, split_reasoning: bool = False,
     ) -> list[Message]:
         """One turn's conversation for the native tool path, as messages.
 
         The same sentences :meth:`_native_tool_prompt` assembles, in the same
         order, split across the roles they belong to: the persona and the tool
-        contract as one system turn, any earlier conversation and the task as
-        user turns, the run so far as the assistant/tool exchange it actually
-        was, and the closing instruction as its own user turn.
+        contract as one system turn, the session's earlier messages and the
+        task as user turns, the run so far as the assistant/tool exchange it
+        actually was, and the closing instruction as its own user turn. All of
+        that lives on the thread, so this renders it and adds only what belongs
+        to *this* turn.
 
         Two differences from the flat rendering are deliberate. The tool
         contract is stated every turn rather than only on the first, which is
@@ -1346,9 +1426,8 @@ class AgentRuntimeMixin:
         result is rejected by the request schema.
 
         Args:
-            task: The question this run is answering.
-            thread: The run's :class:`~effgen.core.thread.AgentThread`.
-            conversation_history: Earlier turns of a session, or ``""``.
+            thread: The run's :class:`~effgen.core.thread.AgentThread`, which
+                carries the frame as well as the run's own steps.
             previous_actions: What the run has called so far, for the
                 continuation instruction.
             split_reasoning: Send the model's reasoning as its own assistant
@@ -1375,28 +1454,13 @@ class AgentRuntimeMixin:
         def _user(text: str) -> Message:
             return Message(role=Role.USER, content=[TextPart(text=text)])
 
-        frame: list[str] = []
-        persona = self._persona_prefix().strip()
-        if persona:
-            frame.append(persona)
-        if self.tools:
-            contract = self._tool_contract()
-            if contract:
-                frame.append(contract)
-
-        messages: list[Message] = []
-        if frame:
-            messages.append(
-                Message(role=Role.SYSTEM, content=[TextPart(text="\n\n".join(frame))])
-            )
-        if conversation_history:
-            messages.append(_user(conversation_history))
-        messages.append(_user(task))
-
-        body = thread.to_messages()
+        # The thread already carries the frame — the persona and the tool
+        # contract as system steps, the session's earlier messages as the turns
+        # they were, the question with any parts it arrived with — so the
+        # conversation is rendered rather than reassembled here.
+        messages: list[Message] = list(thread.to_messages())
         if split_reasoning:
-            body = _split_reasoning_from_calls(body)
-        messages.extend(body)
+            messages = _split_reasoning_from_calls(messages)
 
         # A call with no result is a conversation the provider will not accept.
         # Say what happened rather than dropping the call: a turn the run could
@@ -1413,6 +1477,70 @@ class AgentRuntimeMixin:
 
         if closing:
             messages.append(_user(closing))
+        return messages
+
+    def _model_carries_a_conversation(self) -> bool:
+        """Whether this run's adapter turns a message list into a request.
+
+        Declared by the adapter (``BaseModel.supports_conversation``), never
+        inferred from a model id. A model reached with one string still gets
+        the persona and the earlier turns — as text, the way it always has —
+        so a ``False`` here costs a run nothing it had before.
+        """
+        model = getattr(self, "model", None)
+        declared = getattr(model, "supports_conversation", None)
+        if not callable(declared):
+            return False
+        try:
+            return bool(declared())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a run
+            logger.debug("conversation-support probe failed", exc_info=True)
+            return False
+
+    def _frame_as_messages(
+        self, frame_text: str, thread: Any, *, carry_roles: bool,
+    ) -> list[Message]:
+        """This turn's frame as messages rather than as one string.
+
+        A string frame has one role and no place for a picture, so a run that
+        carries a persona, earlier turns or non-text content parts is sent as a
+        conversation instead: the persona and the tool contract as the system
+        turn, the session's earlier messages in the roles they were spoken in,
+        and this turn's assembled frame as the user turn — with the task's own
+        parts on it, which is how an image rides along with the tools.
+
+        Args:
+            frame_text: The turn's assembled prompt, already free of anything
+                that travels as its own message.
+            thread: The run's :class:`~effgen.core.thread.AgentThread`.
+            carry_roles: Send the persona and the earlier turns as their own
+                messages. ``False`` when the frame's own template already
+                states them, which is what the text scaffold and a caller's
+                template do.
+
+        Returns:
+            The messages, in order.
+        """
+        from .messages import ContentPart, Message, Role, TextPart
+
+        messages: list[Message] = []
+        if carry_roles:
+            # The persona only. The tool contract stays where the string frame
+            # puts it — on the opening turn — so that a run moving to roles
+            # moves who the model is and what was said earlier, and changes
+            # nothing about when the tools are described.
+            persona = thread.persona_text()
+            if persona:
+                messages.append(
+                    Message(role=Role.SYSTEM, content=[TextPart(text=persona)])
+                )
+            for turn in thread.prior_turns():
+                messages.extend(turn.to_messages())
+        content: list[ContentPart] = [TextPart(text=frame_text)]
+        task_step = thread.task()
+        if task_step is not None:
+            content.extend(task_step.parts)
+        messages.append(Message(role=Role.USER, content=content))
         return messages
 
     def _direct_prompt(self, task: str, conversation_history: str = "") -> str:

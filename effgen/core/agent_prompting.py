@@ -9,7 +9,12 @@ nothing from ``agent.py``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
 from ..memory.short_term import MessageRole
+
+if TYPE_CHECKING:
+    from .thread import TurnStep
 
 
 class AgentPromptingMixin:
@@ -134,52 +139,57 @@ Question: {task}
         use_verbose = verbose if verbose is not None else self._verbose_tools
         return self._tool_prompt_generator.generate_tools_section(verbose=use_verbose)
 
-    def _format_conversation_history(self, max_turns: int = 25) -> str:
-        """
-        Format conversation history for inclusion in prompt.
+    def _prior_turn_steps(self, max_turns: int = 25) -> "list[TurnStep]":
+        """The session's earlier messages, as steps this run's thread carries.
 
-        Uses ShortTermMemory to retrieve recent messages, including
-        summaries of older messages when available.
+        Read from :class:`~effgen.memory.short_term.ShortTermMemory`, newest
+        ``max_turns`` exchanges, with any summary of the turns that were
+        dropped stated first. Each message keeps the role it was spoken in, so
+        a model that takes a conversation is sent one instead of a block of
+        text pasted into the current question.
 
         Args:
-            max_turns: Maximum number of previous turns (user+assistant pairs)
+            max_turns: How many user/assistant exchanges to carry.
 
         Returns:
-            Formatted conversation history string
+            The steps, oldest first, or an empty list for a first turn.
         """
-        # Include summaries of older messages first
+        from .thread import TurnStep
+
         summaries = self.short_term_memory.summaries
         messages = self.short_term_memory.get_recent_messages(n=max_turns * 2)
-        if not messages and not summaries:
+        steps: list[TurnStep] = []
+        for summary in summaries:
+            steps.append(
+                TurnStep(text=f"Earlier context summary: {summary.summary}", role="user")
+            )
+        for message in messages:
+            if message.role not in (MessageRole.USER, MessageRole.ASSISTANT):
+                continue
+            role: Literal["user", "assistant"] = (
+                "assistant" if message.role == MessageRole.ASSISTANT else "user"
+            )
+            steps.append(TurnStep(text=str(message.content), role=role))
+        return steps
+
+    def _format_conversation_history(self, max_turns: int = 25) -> str:
+        """The session's earlier turns rendered for a frame that takes a string.
+
+        The turns themselves are :class:`~effgen.core.thread.TurnStep` steps
+        (:meth:`_prior_turn_steps`); this is
+        :meth:`~effgen.core.thread.AgentThread.history_text` over them, which
+        is what a prompt template's conversation-history field receives when
+        the model is reached with one string rather than a conversation.
+
+        Args:
+            max_turns: How many user/assistant exchanges to carry.
+
+        Returns:
+            The rendering, or ``""`` when the session has no earlier turns.
+        """
+        from .thread import AgentThread
+
+        steps = self._prior_turn_steps(max_turns)
+        if not steps:
             return ""
-
-        history = "\n\n=== Previous Conversation Context ===\n"
-
-        # Add summaries if they exist (these cover older, summarized turns)
-        if summaries:
-            for summary in summaries:
-                history += f"[Earlier context summary: {summary.summary}]\n\n"
-
-        turn_num = 0
-        i = 0
-        while i < len(messages):
-            msg = messages[i]
-            if msg.role == MessageRole.USER:
-                turn_num += 1
-                history += f"[Turn {turn_num}]\n"
-                history += f"User: {msg.content}\n"
-                # Check if next message is assistant
-                if i + 1 < len(messages) and messages[i + 1].role == MessageRole.ASSISTANT:
-                    # Truncate long assistant responses to save tokens
-                    assistant_content = messages[i + 1].content
-                    if len(assistant_content) > 300:
-                        assistant_content = assistant_content[:300] + "..."
-                    history += f"Assistant: {assistant_content}\n\n"
-                    i += 2
-                    continue
-                else:
-                    history += "\n"
-            i += 1
-
-        history += "=== End of Previous Context ===\n"
-        return history if turn_num > 0 or summaries else ""
+        return AgentThread(steps=list(steps)).history_text()

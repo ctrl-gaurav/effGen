@@ -117,9 +117,17 @@ def test_the_run_hands_back_the_thread_it_built():
     thread = response.metadata["thread"]
     assert isinstance(thread, AgentThread)
     kinds = [step.kind for step in thread]
-    assert kinds == ["thought", "action", "observation", "thought", "answer"]
-    assert thread.steps[1].tool == "calculator"
-    assert thread.steps[2].text.strip() == "36"
+    # The frame the run was asked in leads: the tool contract as a system step
+    # and the question as a task step. Neither renders into the transcript.
+    assert kinds == [
+        "system", "task",
+        "thought", "action", "observation", "thought", "answer",
+    ]
+    assert thread.steps[0].to_text() == ""
+    assert thread.steps[1].to_text() == ""
+    assert thread.task() is not None
+    assert thread.steps[3].tool == "calculator"
+    assert thread.steps[4].text.strip() == "36"
     assert thread.steps[-1].stop_reason == "final_answer"
 
 
@@ -137,7 +145,7 @@ def test_the_thread_renders_the_transcript_the_prompt_carried():
     # The frame is unchanged: the prompt still ends with the transcript as it
     # stood when that turn was assembled, and the transcript is exactly what the
     # steps render.
-    assembled = "".join(step.to_text() for step in thread.steps[:3])
+    assembled = "".join(step.to_text() for step in thread.steps[:-2])
     assert second_prompt.endswith(assembled)
 
 
@@ -198,7 +206,7 @@ def test_a_custom_template_still_receives_the_transcript():
     response = agent.run("What is 5*5? Explain the steps.")
 
     thread = response.metadata["thread"]
-    assembled = "".join(step.to_text() for step in thread.steps[:3])
+    assembled = "".join(step.to_text() for step in thread.steps[:-2])
     second_prompt = agent.model.prompts[1]
     assert second_prompt.startswith("TOOLS ")
     assert f"PAD[{assembled}]" == second_prompt[second_prompt.index("PAD[") :]
@@ -216,7 +224,9 @@ def test_a_resumed_run_continues_from_the_transcript_it_was_given():
     assert seed in first_prompt
     thread = response.metadata["thread"]
     assert thread.to_text().startswith(seed)
-    assert [step.kind for step in thread][:3] == ["thought", "action", "observation"]
+    kinds = [step.kind for step in thread]
+    assert kinds[:2] == ["system", "task"]
+    assert kinds[2:5] == ["thought", "action", "observation"]
 
 
 def test_a_resume_text_that_is_not_a_transcript_says_so(caplog):
