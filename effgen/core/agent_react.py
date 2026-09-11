@@ -91,10 +91,12 @@ class AgentReActMixin(
                          **kwargs) -> AgentResponse:
         """Run *task* on this agent alone, through the loop or directly.
 
-        The early returns pick the run path — multimodal input and a tool-free
-        agent go straight to the model, a provider-hosted tool set goes to its
-        own loop — and everything else is the one reasoning loop, driven here
-        with the emitter that collects rather than streams.
+        The early returns pick the run path — a tool-free agent goes straight
+        to the model, a provider-hosted tool set goes to its own loop — and
+        everything else is the one reasoning loop, driven here with the emitter
+        that collects rather than streams. Content parts travel with the
+        conversation, so an agent given a picture *and* tools drives the loop
+        like any other run.
 
         Args:
             task: Task description
@@ -104,14 +106,16 @@ class AgentReActMixin(
         Returns:
             AgentResponse
         """
-        # Structured multimodal inputs must reach adapters as Message parts.
-        # The ReAct prompt is text-only, so use direct inference for these calls
-        # even when the preset includes tools.
-        if kwargs.get("inputs") is not None:
-            return self._run_direct_inference(task, context, **kwargs)
-
         # If no tools available, use direct inference instead of ReAct
         if not self.tools:
+            return self._run_direct_inference(task, context, **kwargs)
+
+        # A provider-hosted tool set drives its own iteration inside the
+        # provider, so a run carrying content parts goes straight to the model
+        # there as it always has.
+        if kwargs.get("inputs") is not None and (
+            self._has_native_tools() or self._has_gemini_native_tools()
+        ):
             return self._run_direct_inference(task, context, **kwargs)
 
         # If any native OpenAI tools are present and the model supports it,
