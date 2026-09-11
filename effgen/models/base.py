@@ -832,6 +832,25 @@ class BaseModel(ABC):
         """
         return "api" if self.supports_tool_calling() else "none"
 
+    def supports_conversation(self) -> bool:
+        """Whether this adapter turns a list of messages into a request.
+
+        An adapter says so by answering the ``_create_messages`` seam: the one
+        place a conversation becomes the provider's own message array. An
+        adapter that does not — a local engine that takes one string of text
+        and renders it through a chat template itself — is sent a string, and a
+        run's persona and earlier turns reach it as text instead of as roles.
+
+        This is a weaker question than :meth:`supports_message_protocol`, which
+        also asks whether a tool call and its result survive the conversion. A
+        conversation of plain user and assistant turns needs only this one.
+
+        Returns:
+            bool: True if a ``list[Message]`` prompt reaches the provider as a
+            conversation.
+        """
+        return hasattr(type(self), "_create_messages")
+
     def supports_message_protocol(self) -> bool:
         """Whether this adapter carries a tool call and a tool result through.
 

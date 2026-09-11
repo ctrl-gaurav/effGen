@@ -136,6 +136,10 @@ class LazyModel(BaseModel):
         """Delegate to the wrapped model."""
         return self._inner.tool_call_support()
 
+    def supports_conversation(self) -> bool:
+        """Delegate to the wrapped model."""
+        return self._inner.supports_conversation()
+
     def supports_message_protocol(self) -> bool:
         """Delegate to the wrapped model."""
         return self._inner.supports_message_protocol()

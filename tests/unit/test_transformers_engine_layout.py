@@ -195,6 +195,7 @@ ENGINE_MEMBERS = (
     # Also inherited from BaseModel, and also False: this engine hands a
     # prompt to a local chat template, so an assistant turn carrying a tool
     # call and a tool turn carrying a result have nowhere to go.
+    "supports_conversation",
     "supports_message_protocol",
     "supports_tool_calling",
     "tool_call_support",
