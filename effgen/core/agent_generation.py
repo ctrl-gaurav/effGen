@@ -141,6 +141,23 @@ from .thread_budget import (  # noqa: E402
 from .tool_call_record import ToolCallList  # noqa: E402
 
 
+def _closed(thread: Any, answer: str, stop_reason: str) -> Any:
+    """The run's conversation with its outcome on the end.
+
+    Args:
+        thread: The run's thread, as the frame left it.
+        answer: What the run answered, or ``""`` when it did not.
+        stop_reason: What ended the run.
+
+    Returns:
+        The same thread, closed.
+    """
+    from .thread import AnswerStep
+
+    thread.append(AnswerStep(text=answer, stop_reason=stop_reason))
+    return thread
+
+
 class AgentGenerationMixin:
     """Generation / error-handling / structured-output methods for :class:`Agent`."""
 
@@ -151,6 +168,9 @@ class AgentGenerationMixin:
         config: "AgentConfig"
         model: BaseModel | None
         model_name: str | None
+
+        def _prior_turn_steps(self, max_turns: int = 25) -> list[Any]: ...
+        def _content_parts_from_inputs(self, inputs: Any) -> list[Any]: ...
 
     def _apply_structured_output(
         self,
@@ -1157,7 +1177,20 @@ class AgentGenerationMixin:
         Returns:
             AgentResponse
         """
+        from .thread import AgentThread, SystemStep, TaskStep
+
         inputs = kwargs.pop("inputs", None)
+        # Steps a parent run chose for this one to start with. A run with no
+        # tools takes one turn, so they reach the model the same way the
+        # session's own earlier turns do — as the conversation the question is
+        # asked in, stated before it rather than pasted into it.
+        prior_steps = list(kwargs.pop("_prior_steps", None) or [])
+        if prior_steps:
+            logger.info(
+                "[thread] the run opens with %d step(s) projected from its parent",
+                len(prior_steps),
+            )
+        earlier = [*self._prior_turn_steps(), *prior_steps]
         if inputs is not None:
             # The multimodal builder already adds config.system_prompt as a
             # dedicated system message, so the persona is honored there.
@@ -1169,8 +1202,25 @@ class AgentGenerationMixin:
             # instead of the framework's "answer directly" framing — without
             # this a "respond only in French" / Socratic tutor persona is
             # silently ignored on every provider. Default agents are unchanged.
-            conversation_history = self._format_conversation_history()
+            conversation_history = (
+                AgentThread(steps=list(earlier)).history_text() if earlier else ""
+            )
             prompt = self._direct_prompt(task, conversation_history)
+
+        # The run's conversation, so a tool-free run answers the same questions
+        # a looping one does: what it was framed by, what it was asked, and what
+        # it reached. It was the one shape of run that handed back no thread at
+        # all, which made a tool-free sub-agent's work unreadable from its
+        # parent's response.
+        persona = getattr(self, "_custom_persona", None)
+        frame: list[Any] = (
+            [SystemStep(text=str(persona), source="persona")] if persona else []
+        )
+        thread = AgentThread(steps=[
+            *frame, *earlier,
+            TaskStep(text=task, parts=list(self._content_parts_from_inputs(inputs))
+                     if inputs is not None else []),
+        ])
 
         # A run with no tools takes one turn, so there is no transcript to give
         # up: the whole prompt is the question, the persona and the session's
@@ -1189,6 +1239,11 @@ class AgentGenerationMixin:
         budget_meta = (
             UNBOUNDED_CONTEXT_BUDGET if budget is None else budget.as_dict()
         )
+        # The thread says what it ran under, the way a looping run's does, so a
+        # reader of a saved conversation does not have to find the response to
+        # learn what bounded it.
+        thread.metadata["context_budget"] = budget_meta
+        thread.metadata["prompt_protocol"] = "flat"
         if budget is not None and budget.exceeded(prompt):
             budget_meta = budget.as_dict()
             logger.info(
@@ -1222,6 +1277,7 @@ class AgentGenerationMixin:
                     "error": detail,
                     "prompt_protocol": "flat",
                     "context_budget": budget_meta,
+                    "thread": _closed(thread, "", "context_budget_exceeded"),
                 },
             )
 
@@ -1254,6 +1310,9 @@ class AgentGenerationMixin:
                         response, iterations=1, tool_calls=0, tokens=tokens_used,
                     )
                     failure.metadata["context_budget"] = budget_meta
+                    failure.metadata["thread"] = _closed(
+                        thread, "", "generation_failed",
+                    )
                     # The adapter reports this failure by returning, not by
                     # raising, so record it on the span explicitly.
                     mark_span_error(str(failure.output)[:300])
@@ -1276,6 +1335,7 @@ class AgentGenerationMixin:
                     # Saying so here means every run carries the key.
                     "prompt_protocol": "flat",
                     "context_budget": budget_meta,
+                    "thread": _closed(thread, answer, "final_answer"),
                 },
             )
 
@@ -1295,5 +1355,7 @@ class AgentGenerationMixin:
                     "reason": "generation_failed",
                     "error": detail,
                     "prompt_protocol": "flat",
+                    "context_budget": budget_meta,
+                    "thread": _closed(thread, "", "generation_failed"),
                 },
             )
