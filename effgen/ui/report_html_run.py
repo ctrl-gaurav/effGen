@@ -249,6 +249,8 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
             ["#", "Tool", "Input", "Status", "Result", "Duration"], rows,
         ))
 
+    parts.append(_conversation(metadata))
+
     sources = [s for s in _sequence(data.get("sources")) if s]
     if sources:
         parts.append("<h2>Sources</h2>")
@@ -276,6 +278,36 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
     subtitle = _truncate(task, 160) if task else "Agent run"
     return "Run Card", subtitle, "".join(parts)
+
+
+def _conversation(metadata: Any) -> str:
+    """The run's conversation as a table of steps, or the empty string.
+
+    A card is read to find out what the model was actually sent, so the steps
+    are rendered as themselves — the frame, the question, each thought, each
+    call with the input it was given, each result and how the run ended — with
+    secrets redacted and nothing in them that differs between two runs that
+    took the same path.
+    """
+    from ..core.thread_render import render_thread
+
+    steps = render_thread(_mapping(metadata).get("thread"), max_chars=2000)
+    if not steps:
+        return ""
+    rows = []
+    for step in steps:
+        detail = " ".join(f"{k}={v}" for k, v in step.detail.items())
+        rows.append([
+            f'<span class="num">{"&nbsp;" * (step.depth * 4)}{step.position}</span>',
+            _esc(step.label) + (f'<p class="quote">{_esc(detail)}</p>' if detail else ""),
+            f'<span class="wrap">{_esc(step.body) or _DASH}</span>',
+        ])
+    note = (
+        '<p class="empty">Every step the run took, in order — what the model '
+        'was framed by, what it was asked, what it called and what came back. '
+        "Secrets are redacted.</p>"
+    )
+    return "<h2>Conversation</h2>" + note + _table(["#", "Step", "Content"], rows)
 
 
 def _run_command(task: str, model: str) -> str:

@@ -1021,6 +1021,30 @@
     });
   }
 
+  // The steps a stored run took, in order. History keeps each run's step
+  // kinds rather than its text, so the drill-in shows the shape of the
+  // conversation — frame, question, thoughts, calls, results, answer — rather
+  // than a flattened string. The full text comes from `effgen run
+  // --show-thread` or `--card` at run time.
+  function renderRunSteps(run) {
+    const kinds = Array.isArray(run.thread_kinds) ? run.thread_kinds : [];
+    if (!kinds.length) return "";
+    const compactions = Number(run.compactions || 0);
+    const note =
+      kinds.length +
+      " step" +
+      (kinds.length === 1 ? "" : "s") +
+      (compactions ? ", " + compactions + " compaction" + (compactions === 1 ? "" : "s") : "") +
+      ". Kinds only — run with <code>--show-thread</code> for the text.";
+    return (
+      "<h3>Steps</h3>" +
+      '<ol class="run-steps">' +
+      kinds.map((k) => `<li>${esc(k)}</li>`).join("") +
+      "</ol>" +
+      `<p class="run-export-note">${note}</p>`
+    );
+  }
+
   function renderRunDetail(run) {
     const box = $("history-detail");
     if (!box) return;
@@ -1061,7 +1085,8 @@
       exportBlock +
       (run.task ? `<h3>Task</h3><pre class="run-text">${esc(run.task)}</pre>` : "") +
       (run.output ? `<h3>Answer</h3><pre class="run-text">${esc(run.output)}</pre>` : "") +
-      (run.error ? `<h3>Error</h3><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
+      (run.error ? `<h3>Error</h3><pre class="run-text run-error">${esc(run.error)}</pre>` : "") +
+      renderRunSteps(run);
     box.hidden = false;
     const copyBtn = $("run-export-copy");
     if (copyBtn) {

@@ -576,6 +576,16 @@ td.num { text-align: right; }
   color: var(--text-muted);
   flex: 1 1 18rem;
 }
+.run-steps {
+  margin: 0.2rem 0 0.4rem 1.2rem;
+  padding: 0;
+  font-size: 0.8rem;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text);
+}
+.run-steps li { margin: 0.05rem 0; }
+.run-detail + .run-steps,
+p.run-export-note { font-size: 0.75rem; color: var(--text-muted); margin: 0.1rem 0 0.6rem; }
 
 /* ---- Multi-agent topology graph ---- */
 .topo-legend {
