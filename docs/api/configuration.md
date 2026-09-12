@@ -13,7 +13,9 @@
 | `enable_sub_agents` | `bool` | `True` | Allow task decomposition |
 | `enable_memory` | `bool` | `True` | Enable conversation memory |
 | `enable_streaming` | `bool` | `False` | Enable token streaming |
-| `max_context_length` | `int \| None` | `None` | Override model context length |
+| `max_context_length` | `int \| None` | `None` | The context window to assume, overriding the one the adapter declares. Read by `context_budget` below, which is what gives it an effect |
+| `context_budget` | `int \| float \| str \| None` | `"auto"` | How many prompt tokens one run may send. `"auto"` derives it from the window the model declares, less what the run reserves for its own reply, and leaves the run unbounded when the model declares no usable window; an `int` is that many tokens; a `float` in `(0, 1]` is that share of the window; `None` is unbounded. A run that reaches the budget shortens its own conversation instead of growing until the provider refuses it, and raises `ContextBudgetExceededError` — before sending anything — when it cannot. What it did comes back on `response.metadata["context_budget"]` |
+| `compaction` | `CompactionPolicy \| str \| None` | `None` | What the run gives up when it reaches `context_budget`. `None` and `"shorten_oldest_first"` select `ShortenOldestFirst`, which makes no model call; `"summarize_with_model"` selects `SummarizeWithModel`, which has the agent's own model write a summary of what left. The question, the framing instructions, the session's earlier turns and the most recent two cycles are never given up |
 | `system_prompt_template` | `str \| None` | `None` | Custom prompt template |
 | `verbose_tools` | `bool \| None` | `None` | Verbose tool descriptions |
 | `fallback_chain` | `Dict \| None` | `None` | Tool fallback mapping |

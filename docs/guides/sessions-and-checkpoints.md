@@ -111,6 +111,34 @@ can never leave a truncated session that fails to load later.
 To cap unbounded growth, schedule `effgen sessions cleanup --days N` (e.g. from
 cron) or call `SessionManager(...).cleanup(older_than_days=N)`.
 
+### What a stored turn keeps
+
+Each assistant turn stores the conversation its run had, so a later turn can
+continue from the earlier run's structure rather than from a reading of its
+text. `Session.last_thread()` reads it:
+
+```python
+thread = session.last_thread()
+print(len(thread.steps), [a.tool for a in thread.actions()])
+```
+
+Only the **latest** turn keeps the whole of it. As a new turn arrives, each
+earlier turn's record is reduced to its shape — the format version, the number
+of steps and the kinds in order — because that is the only part of an older
+turn anything reads, and keeping every one of them made the file grow with the
+square of the conversation rather than with its length. What the turn said
+stays where it always was, in its own `content`.
+
+```python
+from effgen.core.session import Session
+
+Session(session_id="long-one", keep_thread_history=True)   # keep every one
+```
+
+Reading an older turn's record hands back an empty `AgentThread`: there is
+nothing to rebuild from a shape, and saying so is better than raising on a
+document that is exactly what it says it is.
+
 ### One agent, many conversations
 
 `session_id=` on the constructor binds a conversation to the agent for its

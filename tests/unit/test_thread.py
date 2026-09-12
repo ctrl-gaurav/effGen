@@ -382,3 +382,31 @@ def test_a_thread_is_a_sequence_of_steps():
     thread.extend([ActionStep(tool="t"), ObservationStep(text="x")])
     assert len(thread) == 3
     assert [step.kind for step in thread] == ["thought", "action", "observation"]
+
+
+def test_an_observation_says_whether_it_still_holds_the_whole_result():
+    """A shortened result is a flag on the step, not a step kind of its own.
+
+    ``step_from_dict`` raises on a kind it does not know — deliberately, so a
+    transcript is never silently short a step — which makes a new kind a
+    forward-compatibility break for every reader of this release. A field is
+    ignored by a reader that does not know it, so a thread written by a later
+    release still loads here as the observation it is.
+    """
+    whole = ObservationStep(text="4")
+    assert (whole.compacted, whole.original_chars) == (None, 0)
+    assert set(whole.to_dict()) == {
+        "kind", "text", "call_id", "is_error", "declined",
+        "compacted", "original_chars",
+    }
+
+    shortened = ObservationStep(
+        text="4444… (996 characters elided)", compacted="elided", original_chars=1000,
+    )
+    back = ObservationStep.from_dict(shortened.to_dict())
+    assert back == shortened
+    assert back.to_text() == "\nObservation: 4444… (996 characters elided)"
+
+    # A document written before the fields existed reads as a whole result.
+    old = ObservationStep.from_dict({"kind": "observation", "text": "4"})
+    assert (old.compacted, old.original_chars) == (None, 0)

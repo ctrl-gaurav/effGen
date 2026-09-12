@@ -142,10 +142,13 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: BackendUnreachableError, the middleware surface, the tool-call records, and
 #: the compaction strategies. 1.1.0 took it to 235: AgentThread, the Step
 #: protocol, and the eight kinds of step a run's conversation is made of —
-#: including the earlier session turns a run carries into its frame.
+#: including the earlier session turns a run carries into its frame — and then
+#: to 239 with the error a run raises when its conversation will not fit the
+#: tokens it may send, and the three policies that decide what it gives up
+#: first.
 #: Growing it is a deliberate act — move the number in the same commit that
 #: widens the surface.
-TOP_LEVEL_API_SIZE = 235
+TOP_LEVEL_API_SIZE = 239
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.
