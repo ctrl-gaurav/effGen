@@ -103,11 +103,18 @@ def _thread_shape(thread: Any) -> dict[str, Any]:
     if not isinstance(steps, list):
         return {}
     kinds = [str(s.get("kind")) for s in steps if isinstance(s, dict)]
-    return {
+    shape = {
         "thread_version": data.get("version"),
         "thread_steps": len(kinds),
         "thread_kinds": kinds,
     }
+    # How many rounds of compaction the run took. A listing that shows a run's
+    # step count should also show whether that count is what the run produced
+    # or what survived its budget.
+    budget = (data.get("metadata") or {}).get("context_budget")
+    if isinstance(budget, dict):
+        shape["compactions"] = int(budget.get("firings") or 0)
+    return shape
 
 
 

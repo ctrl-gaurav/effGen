@@ -295,8 +295,18 @@ def thread_from_saved(data: Mapping[str, Any], *, label: str = "checkpoint") -> 
     if not isinstance(data, Mapping):
         return AgentThread()
     saved = data.get("thread")
-    if isinstance(saved, Mapping) and saved.get("steps") is not None:
+    if isinstance(saved, Mapping) and isinstance(saved.get("steps"), list):
         return AgentThread.from_dict(dict(saved))
+    if isinstance(saved, Mapping) and saved.get("steps") is not None:
+        # A stored turn that kept the conversation's *shape* rather than its
+        # steps — what an older turn of a bounded session holds. There is
+        # nothing to rebuild, and saying so is better than raising on a
+        # document that is exactly what it says it is.
+        logger.info(
+            "[compat] %s carries the shape of a thread (%s steps), not its steps",
+            label, saved.get("steps"),
+        )
+        return AgentThread()
     transcript = data.get("scratchpad")
     if not isinstance(transcript, str) or not transcript:
         return AgentThread()

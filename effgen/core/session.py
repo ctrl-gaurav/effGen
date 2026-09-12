@@ -118,6 +118,12 @@ class Session:
         memory: Optional memory snapshot (e.g. ShortTermMemory.to_dict()).
         metadata: Free-form metadata.
         created_at / updated_at: ISO timestamps.
+        keep_thread_history: Whether every turn keeps the full conversation its
+            run had. ``False``, the default, keeps it on the latest turn only
+            and reduces each earlier one to its shape as a new turn arrives —
+            :meth:`last_thread` reads only the latest, so nothing that is read
+            is lost, and a session file grows with the conversation rather than
+            with its square. ``True`` restores keeping all of them.
     """
 
     session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -127,16 +133,23 @@ class Session:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    keep_thread_history: bool = False
 
     # ------------------------------------------------------------------ messages
     def add_message(self, role: str, content: str, **meta: Any) -> None:
         """Append a message with a timestamp and refresh ``updated_at``.
+
+        A turn arriving with the conversation its run had takes that record
+        over from the turn before it, unless :attr:`keep_thread_history` says
+        every turn keeps its own.
 
         Args:
             role: Who the message is from.
             content: The message text.
             **meta: Extra fields stored alongside the message.
         """
+        if meta.get("thread") is not None and not self.keep_thread_history:
+            self._reduce_earlier_threads()
         self.messages.append({
             "role": role,
             "content": content,
@@ -144,6 +157,34 @@ class Session:
             "metadata": meta or {},
         })
         self.updated_at = datetime.now().isoformat()
+
+    def _reduce_earlier_threads(self) -> None:
+        """Replace every stored thread with its shape, keeping the text.
+
+        The shape — the version it was written at, how many steps it had and
+        which kinds, in order — is the same reduction the run store makes and
+        is made for the same reason: a listing can tell a two-step turn from a
+        twenty-step one without the file carrying every transcript twice. What
+        the turn said is in its ``content``, where it always was.
+        """
+        for message in _message_list(self.messages):
+            if not isinstance(message, dict):
+                continue
+            metadata = message.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            saved = metadata.get("thread")
+            if not isinstance(saved, dict) or not isinstance(saved.get("steps"), list):
+                continue
+            metadata["thread"] = {
+                "version": saved.get("version"),
+                "steps": len(saved["steps"]),
+                "kinds": [
+                    str(step.get("kind"))
+                    for step in saved["steps"]
+                    if isinstance(step, dict)
+                ],
+            }
 
     def add_user_message(self, content: str) -> None:
         """Append a user message."""

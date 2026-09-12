@@ -370,12 +370,23 @@ class ObservationStep:
             the run stopped making, ``"unknown_tool"`` for a tool the agent
             does not hold. ``None`` when the reply is a tool's own result,
             including a repeat answered from the record.
+        compacted: How ``text`` came to be shorter than what the tool returned
+            — ``"elided"`` when its opening was kept, ``"summarized"`` when it
+            was rewritten. ``None`` when the step holds the whole reply.
+        original_chars: What the reply measured before it was shortened; 0
+            when it was not.
+
+    A shortened result is a flag on this step rather than a step kind of its
+    own, so a reader that does not know the flag still reads the step as the
+    observation it is and still sees the text the model was sent.
     """
 
     text: str
     call_id: str | None = None
     is_error: bool = False
     declined: str | None = None
+    compacted: str | None = None
+    original_chars: int = 0
     kind: str = field(default="observation", init=False)
 
     def to_text(self) -> str:
@@ -410,6 +421,8 @@ class ObservationStep:
             "call_id": self.call_id,
             "is_error": self.is_error,
             "declined": self.declined,
+            "compacted": self.compacted,
+            "original_chars": self.original_chars,
         }
 
     @classmethod
@@ -420,6 +433,8 @@ class ObservationStep:
             call_id=data.get("call_id"),
             is_error=bool(data.get("is_error", False)),
             declined=data.get("declined"),
+            compacted=data.get("compacted"),
+            original_chars=int(data.get("original_chars") or 0),
         )
 
 
