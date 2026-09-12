@@ -190,7 +190,21 @@ class AgentConfig:
     enable_sub_agents: bool = True
     enable_memory: bool = True
     enable_streaming: bool = False
+    # The context window to assume for this model, overriding the one the
+    # adapter declares. Read by the run's context budget below, which is what
+    # gives this field an effect.
     max_context_length: int | None = None
+    # How many prompt tokens one run may send. "auto" derives it from the
+    # window the model declares, and leaves the run unbounded when the model
+    # declares none; an int is that many tokens; a float in (0, 1] is that
+    # share of the window; None leaves the run unbounded. A run that reaches
+    # the budget compacts its own conversation rather than growing until the
+    # provider refuses it.
+    context_budget: int | float | str | None = "auto"
+    # What the run gives up when it reaches the budget: a CompactionPolicy, a
+    # policy class, "shorten_oldest_first" (the default, which makes no model
+    # call) or "summarize_with_model".
+    compaction: Any = None
     router_config: dict[str, Any] = field(default_factory=dict)
     sub_agent_config: dict[str, Any] = field(default_factory=dict)
     model_config: dict[str, Any] | None = None
@@ -295,6 +309,16 @@ class AgentConfig:
                 f"send the conversation as messages, or 'auto' to send a "
                 f"continued conversation as messages and anything else flat."
             )
+        # Same reason again: a budget nobody can resolve is a construction
+        # error naming the four forms, not a run that quietly went out
+        # unbounded or one that cannot fit a question.
+        from .thread_budget import validate_context_budget
+
+        validate_context_budget(self.context_budget)
+        if self.compaction is not None:
+            from .thread_compaction import resolve_policy
+
+            resolve_policy(self.compaction)
 
 
 # Model-loading options belong to the engine (load_model), not the agent. Passing
@@ -316,6 +340,7 @@ _RUN_KWARGS = frozenset({
     "stop_sequences", "reasoning_effort", "tools", "tool_choice",
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
     "middleware", "session", "cite_sources",
+    "context_budget", "compaction", "max_context_length",
 })
 
 

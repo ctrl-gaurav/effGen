@@ -39,6 +39,9 @@ from .thread import (
     ThoughtStep,
 )
 
+# How much of that conversation one run may send, and what it gives up
+from .thread_compaction import CompactionPolicy, ShortenOldestFirst, SummarizeWithModel
+
 # Agent
 from .agent import Agent, AgentConfig, AgentMode, AgentResponse
 from .agent_response import PartialResult
@@ -151,6 +154,11 @@ __all__ = [
     "ObservationStep",
     "NudgeStep",
     "AnswerStep",
+
+    # Keeping that conversation inside a budget
+    "CompactionPolicy",
+    "ShortenOldestFirst",
+    "SummarizeWithModel",
 
     # Multimodal message schema
     "Role",
