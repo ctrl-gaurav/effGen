@@ -69,6 +69,17 @@ AREAS: list[dict] = [
         ],
     },
     {
+        "id": "conversation",
+        "title": "The conversation a run keeps",
+        "blurb": "The steps a run took, in the order it took them: the thread itself and the step types on it, what a parent hands a child it delegates to, how a thread is shortened when it outgrows the model's window, and how it is rendered for a reader.",
+        "modules": [
+            "effgen.core.thread",
+            "effgen.core.thread_compaction",
+            "effgen.core.thread_projection",
+            "effgen.core.thread_render",
+        ],
+    },
+    {
         "id": "presets-config",
         "title": "Presets and configuration",
         "blurb": "Building an agent from a named preset, and loading, validating and inspecting configuration.",

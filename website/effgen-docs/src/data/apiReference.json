@@ -1,14 +1,14 @@
 {
- "derived_at": "2026-09-07",
+ "derived_at": "2026-09-12",
  "version": "1.0.1",
- "public_names": 225,
+ "public_names": 248,
  "kind_counts": {
   "alias": 1,
-  "class": 87,
-  "dataclass": 41,
+  "class": 96,
+  "dataclass": 52,
   "enum": 12,
-  "exception": 18,
-  "function": 65,
+  "exception": 19,
+  "function": 67,
   "module": 1
  },
  "areas": [
@@ -17,6 +17,12 @@
    "title": "Agents",
    "blurb": "The agent itself, the configuration it runs under, the state it can be saved to, the record of the tools it called, and what a run that stopped short had got done.",
    "count": 6
+  },
+  {
+   "id": "conversation",
+   "title": "The conversation a run keeps",
+   "blurb": "The steps a run took, in the order it took them: the thread itself and the step types on it, what a parent hands a child it delegates to, how a thread is shortened when it outgrows the model's window, and how it is rendered for a reader.",
+   "count": 22
   },
   {
    "id": "presets-config",
@@ -46,7 +52,7 @@
    "id": "errors",
    "title": "Errors",
    "blurb": "The typed exceptions a run raises, and what each one means about whether retrying is worth anything.",
-   "count": 17
+   "count": 18
   },
   {
    "id": "tools",
@@ -116,6 +122,94 @@
   }
  ],
  "names": [
+  {
+   "name": "ActionStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "A tool the turn asked for, with the arguments it asked for.",
+   "signature": "(tool: str, arguments: dict[str, Any] = <factory>, call_id: str | None = None, reasoning: str = '', raw: str = '') -> None",
+   "params": [
+    {
+     "name": "tool",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "arguments",
+     "type": "dict[str, Any]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "call_id",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "reasoning",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "raw",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> ActionStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `assistant` message carrying the reasoning **and** the call.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "`\"\\nAction: {tool}\\nAction Input: {raw}\"`.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
   {
    "name": "Agent",
    "kind": "class",
@@ -222,7 +316,7 @@
      "name": "last_stream_response",
      "kind": "property",
      "signature": "",
-     "summary": "The record of the most recent streamed tool loop, or `None`.",
+     "summary": "The record of the most recent streamed run, or `None`.",
      "is_async": false,
      "inherited_from": "AgentNativeStreamMixin"
     },
@@ -347,7 +441,7 @@
    "module": "effgen.core.agent_config",
    "area": "agents",
    "summary": "Agent configuration.",
-   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, cite_sources: bool = False, tool_contract: str | None = None, tool_use: ToolUsePolicy | str | None = None, *, name: str = '') -> None",
+   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, context_budget: int | float | str | None = 'auto', compaction: Any = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, cite_sources: bool = False, tool_contract: str | None = None, tool_use: ToolUsePolicy | str | None = None, prompt_protocol: str = 'auto', *, name: str = '') -> None",
    "params": [
     {
      "name": "model",
@@ -484,6 +578,22 @@
      "required": false,
      "keyword_only": false,
      "description": "Maximum context window"
+    },
+    {
+     "name": "context_budget",
+     "type": "int | float | str | None",
+     "default": "'auto'",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "compaction",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
     },
     {
      "name": "router_config",
@@ -756,6 +866,14 @@
      "required": false,
      "keyword_only": false,
      "description": ""
+    },
+    {
+     "name": "prompt_protocol",
+     "type": "str",
+     "default": "'auto'",
+     "required": false,
+     "keyword_only": false,
+     "description": "How a run's conversation reaches the model. `\"flat\"` sends one string carrying the whole transcript. `\"messages\"` sends the conversation as the conversation it was \u2014 a system turn, the task, the model's own reasoning beside the tool call it made, and each tool result answering the call it belongs to \u2014 wherever the model declares it can carry that shape (`effgen.models.base.BaseModel.supports_message_protocol`). `\"auto\"` (the default) sends the whole of one conversation in one protocol: a run that continues a session sends its own steps as the turns they were, so the model is not shown its own tool call as something the user narrated; a run that continues nothing sends the flat string every release before this one sent. `\"messages\"` never fails a run that a `\"flat\"` run would have answered: a model, a loop or a turn that cannot carry the shape falls back to the flat transcript and says so in the log. The protocol a run actually used comes back on `response.metadata[\"prompt_protocol\"]`."
     },
     {
      "name": "name",
@@ -1068,6 +1186,230 @@
    "values": []
   },
   {
+   "name": "AgentThread",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "The conversation of one run, as typed steps.",
+   "signature": "(steps: list[Step] = <factory>, version: int = 1, metadata: dict[str, Any] = <factory>) -> None",
+   "params": [
+    {
+     "name": "steps",
+     "type": "list[Step]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "The run's steps, in the order they happened."
+    },
+    {
+     "name": "version",
+     "type": "int",
+     "default": "1",
+     "required": false,
+     "keyword_only": false,
+     "description": "The serialisation version this thread was built at."
+    },
+    {
+     "name": "metadata",
+     "type": "dict[str, Any]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "Anything a caller wants to travel with the thread."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "actions",
+     "kind": "method",
+     "signature": "() -> list[ActionStep]",
+     "summary": "Every tool call the run asked for, in order.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "append",
+     "kind": "method",
+     "signature": "(step: Step) -> None",
+     "summary": "Add one step to the end of the thread.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "child_threads",
+     "kind": "method",
+     "signature": "() -> dict[str, AgentThread]",
+     "summary": "The conversation of each child this run delegated to, by child id.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "delegations",
+     "kind": "method",
+     "signature": "() -> list[DelegationStep]",
+     "summary": "Every piece of work this run handed to another agent, in order.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "extend",
+     "kind": "method",
+     "signature": "(steps: list[Step]) -> None",
+     "summary": "Add several steps, in order, settling any call id they lack.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> AgentThread",
+     "summary": "Rebuild a thread from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "from_scratchpad",
+     "kind": "classmethod",
+     "signature": "(text: str) -> AgentThread",
+     "summary": "Recover what a flat transcript still carries, as steps.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "history_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The earlier turns as text, for a frame that can only take a string.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "last_observation",
+     "kind": "method",
+     "signature": "() -> ObservationStep | None",
+     "summary": "The most recent observation, or `None` if no tool ever returned.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "last_thought",
+     "kind": "method",
+     "signature": "() -> ThoughtStep | None",
+     "summary": "The most recent non-empty thought, or `None` if there was none.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "observations",
+     "kind": "method",
+     "signature": "() -> list[ObservationStep]",
+     "summary": "Every observation in the run, in order.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "partial_answer",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "What the run had reached when it stopped without answering.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "persona_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The caller's own persona, or `\"\"`.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "prior_turns",
+     "kind": "method",
+     "signature": "() -> list[TurnStep]",
+     "summary": "The turns that happened before this run, in order.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "render",
+     "kind": "method",
+     "signature": "(protocol: Literal['flat', 'messages']) -> str | list[Message]",
+     "summary": "Render the thread in one of the two protocols.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "system_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "Every `SystemStep`'s text, in order, as one instruction.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "task",
+     "kind": "method",
+     "signature": "() -> TaskStep | None",
+     "summary": "The question this run is answering, with any parts it arrived with.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "thoughts",
+     "kind": "method",
+     "signature": "() -> list[ThoughtStep]",
+     "summary": "Every thought in the run, in order.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The thread as plain data, carrying its schema version.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "The conversation as provider messages.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The flat transcript: every step's text, concatenated and nothing else.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "unanswered_call_ids",
+     "kind": "method",
+     "signature": "() -> list[str]",
+     "summary": "The call ids no observation in this thread answers.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "unanswered_calls",
+     "kind": "method",
+     "signature": "() -> list[ActionStep]",
+     "summary": "Calls with no observation answering them.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "Alert",
    "kind": "dataclass",
    "module": "effgen.observability.alerting",
@@ -1315,6 +1657,70 @@
    "values": []
   },
   {
+   "name": "AnswerStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "How the run ended: the answer it reached, or why it stopped without one.",
+   "signature": "(text: str, stop_reason: str | None = None) -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "stop_reason",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> AnswerStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `assistant` message carrying the answer.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The empty string: an answer ends a run rather than extending it.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "AnthropicAdapter",
    "kind": "class",
    "module": "effgen.models.anthropic_adapter",
@@ -1486,6 +1892,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True when the model supports native tool/function calling.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
      "is_async": false,
      "inherited_from": null
     },
@@ -1740,10 +2154,26 @@
      "inherited_from": null
     },
     {
+     "name": "supports_conversation",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether this adapter turns a list of messages into a request.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_forced_tool_call",
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Whether a turn can be sent that *requires* the model to call a tool.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether this adapter carries a tool call and a tool result through.",
      "is_async": false,
      "inherited_from": null
     },
@@ -2409,6 +2839,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_tool_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -2806,6 +3244,70 @@
    "values": []
   },
   {
+   "name": "CompactionPolicy",
+   "kind": "class",
+   "module": "effgen.core.thread_compaction",
+   "area": "conversation",
+   "summary": "How a run's thread is brought back under its budget.",
+   "signature": "(*, observation_keep_chars: int = 200, keep_recent_cycles: int = 2) -> None",
+   "params": [
+    {
+     "name": "observation_keep_chars",
+     "type": "int",
+     "default": "200",
+     "required": false,
+     "keyword_only": true,
+     "description": "How much of a shortened tool result is kept."
+    },
+    {
+     "name": "keep_recent_cycles",
+     "type": "int",
+     "default": "2",
+     "required": false,
+     "keyword_only": true,
+     "description": "Complete cycles at the end of the run that are never touched."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "compact",
+     "kind": "method",
+     "signature": "(thread: AgentThread, budget: ContextBudget) -> bool",
+     "summary": "Give up one rung's worth of the thread.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "drop_cycles",
+     "kind": "method",
+     "signature": "(thread: AgentThread, protected: set[int], deficit: int, budget: ContextBudget) -> bool",
+     "summary": "Rung 3: drop whole answered cycles, oldest first, and say so.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "drop_thoughts",
+     "kind": "method",
+     "signature": "(thread: AgentThread, protected: set[int], deficit: int, budget: ContextBudget) -> bool",
+     "summary": "Rung 2: drop an old thought, leaving its call its own reasoning.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "shorten_observations",
+     "kind": "method",
+     "signature": "(thread: AgentThread, protected: set[int], deficit: int, budget: ContextBudget) -> bool",
+     "summary": "Rung 1: keep the opening of an old tool result, say what left.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "CompactionStrategy",
    "kind": "class",
    "module": "effgen.memory.compaction",
@@ -3148,6 +3650,95 @@
    ]
   },
   {
+   "name": "ContextBudgetExceededError",
+   "kind": "exception",
+   "module": "effgen.models.errors",
+   "area": "errors",
+   "summary": "Raised when a run's conversation will not fit the tokens it may send.",
+   "signature": "(*, budget_tokens: int, measured_tokens: int, window_tokens: int | None = None, budget_source: str = 'auto', provider: str = 'effgen', model_name: str = '', protected: str = '', response: Any = None, partial: Any = None) -> None",
+   "params": [
+    {
+     "name": "budget_tokens",
+     "type": "int",
+     "default": null,
+     "required": true,
+     "keyword_only": true,
+     "description": "What the run was allowed to send."
+    },
+    {
+     "name": "measured_tokens",
+     "type": "int",
+     "default": null,
+     "required": true,
+     "keyword_only": true,
+     "description": "What the smallest prompt it could build measured."
+    },
+    {
+     "name": "window_tokens",
+     "type": "int | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "The context window the budget came from, when it was derived from one."
+    },
+    {
+     "name": "budget_source",
+     "type": "str",
+     "default": "'auto'",
+     "required": false,
+     "keyword_only": true,
+     "description": "`\"auto\"`, `\"config\"` or `\"fraction\"` \u2014 how the budget was arrived at."
+    },
+    {
+     "name": "provider",
+     "type": "str",
+     "default": "'effgen'",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    },
+    {
+     "name": "model_name",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    },
+    {
+     "name": "protected",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    },
+    {
+     "name": "response",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "The run so far, when the caller asked for it to be kept."
+    },
+    {
+     "name": "partial",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "The progress the run had made, when there was any."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "InvalidRequestError"
+   ],
+   "members": [],
+   "values": []
+  },
+  {
    "name": "CostBasedPolicy",
    "kind": "class",
    "module": "effgen.models.routing.cost",
@@ -3287,6 +3878,110 @@
      "kind": "method",
      "signature": "(provider: str | None = None, model: str | None = None) -> dict[str, int]",
      "summary": "Return total token counts, optionally filtered.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "DelegationStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "Work this run handed to another agent, and the conversation it had.",
+   "signature": "(child_id: str, role: str = '', task: str = '', thread: AgentThread | None = None, output: str = '', success: bool = True, error: str | None = None) -> None",
+   "params": [
+    {
+     "name": "child_id",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "What the parent calls this piece of work \u2014 a subtask id, a node id or an agent name. Unique within one parent thread."
+    },
+    {
+     "name": "role",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "What the child was doing, as the parent's own pattern names it (`\"sub-agent\"`, `\"node\"`, `\"stage\"`, `\"worker\"`...). Free text, recorded rather than interpreted."
+    },
+    {
+     "name": "task",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The question the child was actually asked."
+    },
+    {
+     "name": "thread",
+     "type": "AgentThread | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The child's conversation, when the child produced one. `None` when the child never ran, or when it is not an agent at all."
+    },
+    {
+     "name": "output",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The child's answer, as the parent received it."
+    },
+    {
+     "name": "success",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": false,
+     "description": "Whether the child reported a successful run."
+    },
+    {
+     "name": "error",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "What went wrong, when the child failed."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> DelegationStep",
+     "summary": "Rebuild the step, and the child's conversation with it.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data, with the child's conversation nested in it.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `assistant` message naming the child and what it answered.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The empty string: a delegation is a record, not a prompt line.",
      "is_async": false,
      "inherited_from": null
     }
@@ -3966,6 +4661,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_native_tools",
      "kind": "property",
      "signature": "",
@@ -4443,6 +5146,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_tool_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -4681,15 +5392,15 @@
    "module": "effgen.models.groq_adapter",
    "area": "models",
    "summary": "Adapter for Groq Cloud inference API.",
-   "signature": "(model_name: str = 'llama-3.1-8b-instant', api_key: str | None = None, max_retries: int = 6, timeout: int = 60, enable_rate_limiting: bool = True, enable_cost_tracking: bool = True, rate_limit_storage: SQLiteRateLimitStore | None = None, **kwargs: Any) -> None",
+   "signature": "(model_name: str = 'openai/gpt-oss-20b', api_key: str | None = None, max_retries: int = 6, timeout: int = 60, enable_rate_limiting: bool = True, enable_cost_tracking: bool = True, rate_limit_storage: SQLiteRateLimitStore | None = None, **kwargs: Any) -> None",
    "params": [
     {
      "name": "model_name",
      "type": "str",
-     "default": "'llama-3.1-8b-instant'",
+     "default": "'openai/gpt-oss-20b'",
      "required": false,
      "keyword_only": false,
-     "description": "Groq model ID. Must be a key in `effgen.models.groq_models.GROQ_MODELS`. Defaults to `\"llama-3.1-8b-instant\"`."
+     "description": "Groq model ID. Must be a key in `effgen.models.groq_models.GROQ_MODELS`. Defaults to `\"openai/gpt-oss-20b\"`."
     },
     {
      "name": "api_key",
@@ -4839,6 +5550,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Alias for `supports_tool_calling`.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5243,6 +5962,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True when tools are offered: `tool_choice` is honoured here.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5781,6 +6508,53 @@
      "kind": "method",
      "signature": "(keywords: list[str] | str, factor: int = 10) -> list[str]",
      "summary": "Expand *keywords* into related search-query variants.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "LastCycles",
+   "kind": "class",
+   "module": "effgen.core.thread_projection",
+   "area": "conversation",
+   "summary": "Carry the parent's task and the last *n* complete cycles of its own work.",
+   "signature": "(n: int = 2, *, include_task: bool = True) -> None",
+   "params": [
+    {
+     "name": "n",
+     "type": "int",
+     "default": "2",
+     "required": false,
+     "keyword_only": false,
+     "description": "How many of the most recent complete cycles to carry."
+    },
+    {
+     "name": "include_task",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": true,
+     "description": "Whether to open with the parent's own question."
+    }
+   ],
+   "returns": null,
+   "raises": [
+    {
+     "name": "ValueError",
+     "description": "*n* is negative. A negative count has no reading that is different from zero, so it is refused rather than guessed at. Pass 0 to carry no cycles."
+    }
+   ],
+   "bases": [
+    "ThreadProjection"
+   ],
+   "members": [
+    {
+     "name": "select",
+     "kind": "method",
+     "signature": "(parent: AgentThread, *, task: str) -> list[Step]",
+     "summary": "The parent's task, then its last *n* answered cycles.",
      "is_async": false,
      "inherited_from": null
     }
@@ -7154,6 +7928,199 @@
    "values": []
   },
   {
+   "name": "NoParentContext",
+   "kind": "class",
+   "module": "effgen.core.thread_projection",
+   "area": "conversation",
+   "summary": "Carry nothing: the child sees only the question it was asked.",
+   "signature": "()",
+   "params": [],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "ThreadProjection"
+   ],
+   "members": [
+    {
+     "name": "select",
+     "kind": "method",
+     "signature": "(parent: AgentThread, *, task: str) -> list[Step]",
+     "summary": "Nothing.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "NudgeStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "A line the framework injected, not something the model or a tool said.",
+   "signature": "(text: str, render_as: Literal['raw', 'observation'] = 'raw', nudge_id: str = '') -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "render_as",
+     "type": "Literal['raw', 'observation']",
+     "default": "'raw'",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "nudge_id",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> NudgeStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `user` turn, marked as the framework's own words.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "`\"\\n{text}\"`, or `\"\\nObservation: {text}\"` when so rendered.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "ObservationStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "What a tool returned for the call before it.",
+   "signature": "(text: str, call_id: str | None = None, is_error: bool = False, declined: str | None = None, compacted: str | None = None, original_chars: int = 0) -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The reply the model reads."
+    },
+    {
+     "name": "call_id",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The call this answers."
+    },
+    {
+     "name": "is_error",
+     "type": "bool",
+     "default": "False",
+     "required": false,
+     "keyword_only": false,
+     "description": "Whether the reply reports a failure."
+    },
+    {
+     "name": "declined",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Why the framework answered in its own words rather than a tool's \u2014 `\"loop_detected\"` and `\"already_computed\"` for a call the run stopped making, `\"unknown_tool\"` for a tool the agent does not hold. `None` when the reply is a tool's own result, including a repeat answered from the record."
+    },
+    {
+     "name": "compacted",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "How `text` came to be shorter than what the tool returned \u2014 `\"elided\"` when its opening was kept, `\"summarized\"` when it was rewritten. `None` when the step holds the whole reply."
+    },
+    {
+     "name": "original_chars",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "What the reply measured before it was shortened; 0 when it was not. A shortened result is a flag on this step rather than a step kind of its own, so a reader that does not know the flag still reads the step as the observation it is and still sees the text the model was sent."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> ObservationStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `tool` message answering the call id it carries.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "`\"\\nObservation: {text}\"`.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "OpenAIAdapter",
    "kind": "class",
    "module": "effgen.models.openai_adapter",
@@ -7393,6 +8360,14 @@
      "inherited_from": null
     },
     {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_tool_calling",
      "kind": "method",
      "signature": "() -> bool",
@@ -7425,7 +8400,7 @@
    "module": "effgen.models.openai_compatible_adapter",
    "area": "models",
    "summary": "Call a model served over the OpenAI protocol at a URL you supply.",
-   "signature": "(model_name: str, base_url: str | None = None, api_key: str | None = None, context_length: int | None = None, max_retries: int = 3, timeout: int = 60, supports_reasoning: bool = False, **kwargs: Any) -> None",
+   "signature": "(model_name: str, base_url: str | None = None, api_key: str | None = None, context_length: int | None = None, max_retries: int = 3, timeout: int = 60, supports_reasoning: bool = False, supports_vision: bool | None = None, **kwargs: Any) -> None",
    "params": [
     {
      "name": "model_name",
@@ -7482,6 +8457,14 @@
      "required": false,
      "keyword_only": false,
      "description": ""
+    },
+    {
+     "name": "supports_vision",
+     "type": "bool | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Whether this server's model takes image input. `None` \u2014 the default \u2014 sends the request and lets the server answer, since no catalog here describes a model somebody else is serving."
     },
     {
      "name": "**kwargs",
@@ -7706,6 +8689,73 @@
      "kind": "method",
      "signature": "(content: str, **kwargs: Any) -> GuardrailResult",
      "summary": "Detect and redact PII/PHI; the result carries the redacted content.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "ParentAnswers",
+   "kind": "class",
+   "module": "effgen.core.thread_projection",
+   "area": "conversation",
+   "summary": "Carry the parent's task and what its finished children answered.",
+   "signature": "(*, include_task: bool = True, limit: int | None = None) -> None",
+   "params": [
+    {
+     "name": "include_task",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": true,
+     "description": "Whether to open with the parent's own question."
+    },
+    {
+     "name": "limit",
+     "type": "int | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "How many of the most recent finished children to carry, or `None` for all of them."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "ThreadProjection"
+   ],
+   "members": [
+    {
+     "name": "select",
+     "kind": "method",
+     "signature": "(parent: AgentThread, *, task: str) -> list[Step]",
+     "summary": "The parent's task, then one assistant turn per finished child.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "ParentTask",
+   "kind": "class",
+   "module": "effgen.core.thread_projection",
+   "area": "conversation",
+   "summary": "Carry the job the parent was given, as one user turn.",
+   "signature": "()",
+   "params": [],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "ThreadProjection"
+   ],
+   "members": [
+    {
+     "name": "select",
+     "kind": "method",
+     "signature": "(parent: AgentThread, *, task: str) -> list[Step]",
+     "summary": "The parent's task step, restated as a user turn.",
      "is_async": false,
      "inherited_from": null
     }
@@ -8482,6 +9532,86 @@
    "values": []
   },
   {
+   "name": "RenderedStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread_render",
+   "area": "conversation",
+   "summary": "One step of a conversation, ready to print.",
+   "signature": "(position: int, kind: str, label: str, body: str = '', detail: dict[str, str] = <factory>, depth: int = 0) -> None",
+   "params": [
+    {
+     "name": "position",
+     "type": "int",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The step's 1-based place in the thread it came from. A delegated child's steps are numbered within the child's own thread."
+    },
+    {
+     "name": "kind",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The step kind, as `effgen.core.thread.Step.to_dict` reports it \u2014 `\"system\"`, `\"task\"`, `\"turn\"`, `\"thought\"`, `\"action\"`, `\"observation\"`, `\"nudge\"`, `\"answer\"` or `\"delegation\"`."
+    },
+    {
+     "name": "label",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "A short heading for the step, naming the tool a call asked for or the role a turn was spoken in."
+    },
+    {
+     "name": "body",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The step's own text, redacted unless the caller turned that off, and truncated when a limit was given."
+    },
+    {
+     "name": "detail",
+     "type": "dict[str, str]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "Anything else worth showing that is stable across runs \u2014 a failed observation's flag, a compacted observation's original length, a delegation's outcome. Values are strings so a renderer can print them without knowing what they are."
+    },
+    {
+     "name": "depth",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "How far the step is nested. `0` for the run's own steps, `1` for the steps of a child it delegated to, and so on."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data, for a JSON document or a template.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The step as printable lines: a heading, then its body, indented.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "ReplicateAdapter",
    "kind": "class",
    "module": "effgen.models.replicate_adapter",
@@ -8645,6 +9775,14 @@
      "kind": "method",
      "signature": "() -> None",
      "summary": "Instantiate the Replicate SDK client.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether this model's input schema carries a call and its result.",
      "is_async": false,
      "inherited_from": null
     },
@@ -8905,7 +10043,7 @@
      "default": null,
      "required": true,
      "keyword_only": false,
-     "description": "Model that failed (e.g. `\"llama-3.1-8b-instant\"`)."
+     "description": "Model that failed (e.g. `\"openai/gpt-oss-20b\"`)."
     },
     {
      "name": "to_provider",
@@ -10038,6 +11176,97 @@
    "values": []
   },
   {
+   "name": "ShortenOldestFirst",
+   "kind": "class",
+   "module": "effgen.core.thread_compaction",
+   "area": "conversation",
+   "summary": "The default: the four rungs, and not one model call.",
+   "signature": "(*, observation_keep_chars: int = 200, keep_recent_cycles: int = 2) -> None",
+   "params": [
+    {
+     "name": "observation_keep_chars",
+     "type": "int",
+     "default": "200",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    },
+    {
+     "name": "keep_recent_cycles",
+     "type": "int",
+     "default": "2",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "CompactionPolicy"
+   ],
+   "members": [],
+   "values": []
+  },
+  {
+   "name": "Step",
+   "kind": "class",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "One entry in a run's conversation.",
+   "signature": "(*args, **kwargs)",
+   "params": [
+    {
+     "name": "*args",
+     "type": null,
+     "default": null,
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "**kwargs",
+     "type": null,
+     "default": null,
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "Protocol"
+   ],
+   "members": [
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data, carrying its `kind`.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "The step as provider messages; empty when it carries none of its own.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The step's fragment of the flat transcript, newline included.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "StreamChunk",
    "kind": "dataclass",
    "module": "effgen.models.anthropic_adapter",
@@ -10446,6 +11675,55 @@
    "values": []
   },
   {
+   "name": "SummarizeWithModel",
+   "kind": "class",
+   "module": "effgen.core.thread_compaction",
+   "area": "conversation",
+   "summary": "Rung 3's marker carries a model-written summary of what left.",
+   "signature": "(*, model: Any = None, max_summary_input_tokens: int = 4000, observation_keep_chars: int = 200, keep_recent_cycles: int = 2) -> None",
+   "params": [
+    {
+     "name": "model",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "The model to summarise with, or `None` for the agent's own."
+    },
+    {
+     "name": "max_summary_input_tokens",
+     "type": "int",
+     "default": "4000",
+     "required": false,
+     "keyword_only": true,
+     "description": "The most of the departing steps it reads."
+    },
+    {
+     "name": "observation_keep_chars",
+     "type": "int",
+     "default": "200",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    },
+    {
+     "name": "keep_recent_cycles",
+     "type": "int",
+     "default": "2",
+     "required": false,
+     "keyword_only": true,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "CompactionPolicy"
+   ],
+   "members": [],
+   "values": []
+  },
+  {
    "name": "SystemPromptLeakGuardrail",
    "kind": "class",
    "module": "effgen.guardrails.injection",
@@ -10489,6 +11767,70 @@
      "kind": "method",
      "signature": "(content: str, system_prompt: str | None = None, **kwargs: Any) -> GuardrailResult",
      "summary": "Fail when the output echoes a distinctive system-prompt token verbatim.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "SystemStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "Instruction the run is framed by: a persona, a contract, a format spec.",
+   "signature": "(text: str, source: Literal['persona', 'contract', 'format'] = 'persona') -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "source",
+     "type": "Literal['persona', 'contract', 'format']",
+     "default": "'persona'",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> SystemStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `system` message carrying the instruction.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The empty string: framing is not transcript.",
      "is_async": false,
      "inherited_from": null
     }
@@ -10806,12 +12148,76 @@
    ]
   },
   {
+   "name": "TaskStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "What the caller asked, with any non-text parts it arrived with.",
+   "signature": "(text: str, parts: list[ContentPart] = <factory>) -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "parts",
+     "type": "list[ContentPart]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> TaskStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data. Non-text parts are kept by type name.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `user` message: the text, then any other content parts.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The empty string: the question belongs to the frame.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "TeamConfig",
    "kind": "dataclass",
    "module": "effgen.core.orchestrator",
    "area": "orchestration",
    "summary": "Configuration for a team of agents.",
-   "signature": "(name: str, pattern: OrchestrationPattern, agents: list[Agent] = <factory>, manager_agent: Agent | None = None, voting_strategy: str = 'majority', timeout: int = 600, max_rounds: int = 3, metadata: dict[str, Any] = <factory>) -> None",
+   "signature": "(name: str, pattern: OrchestrationPattern, agents: list[Agent] = <factory>, manager_agent: Agent | None = None, voting_strategy: str = 'majority', timeout: int = 600, max_rounds: int = 3, projection: Any = None, metadata: dict[str, Any] = <factory>) -> None",
    "params": [
     {
      "name": "name",
@@ -10870,6 +12276,14 @@
      "description": "Maximum collaboration rounds"
     },
     {
+     "name": "projection",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Which of the team run's own steps each agent starts with (`effgen.core.thread_projection`). The default carries nothing, so each agent is asked exactly what it was asked before \u2014 every pattern still builds the text it has always built. Ask for `\"parent-answers\"` to have the agents that have already spoken reach the next one as turns rather than as a block pasted in front of its question."
+    },
+    {
      "name": "metadata",
      "type": "dict[str, Any]",
      "default": "<factory>",
@@ -10907,7 +12321,7 @@
    "module": "effgen.core.orchestrator",
    "area": "orchestration",
    "summary": "Response from team execution.",
-   "signature": "(output: str, success: bool = True, pattern: OrchestrationPattern = OrchestrationPattern.SEQUENTIAL, agent_responses: list[dict[str, Any]] = <factory>, execution_time: float = 0.0, rounds: int = 1, selected_response: dict[str, Any] | None = None, consensus_score: float = 0.0, metadata: dict[str, Any] = <factory>) -> None",
+   "signature": "(output: str, success: bool = True, pattern: OrchestrationPattern = OrchestrationPattern.SEQUENTIAL, agent_responses: list[dict[str, Any]] = <factory>, execution_time: float = 0.0, rounds: int = 1, selected_response: dict[str, Any] | None = None, consensus_score: float = 0.0, metadata: dict[str, Any] = <factory>, thread: Any = None) -> None",
    "params": [
     {
      "name": "output",
@@ -10980,12 +12394,28 @@
      "required": false,
      "keyword_only": false,
      "description": "Additional metadata"
+    },
+    {
+     "name": "thread",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The team run's own conversation \u2014 what the team was asked, one `effgen.core.thread.DelegationStep` per agent run carrying that agent's own thread, and the answer. It is a field of its own rather than a `metadata` key because `metadata` carries only typed, redacted summaries, and a conversation is the text as it was actually sent."
     }
    ],
    "returns": null,
    "raises": [],
    "bases": [],
    "members": [
+    {
+     "name": "agent_threads",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The conversation each agent that ran had, by the id the team gave it.",
+     "is_async": false,
+     "inherited_from": null
+    },
     {
      "name": "to_dict",
      "kind": "method",
@@ -11304,6 +12734,95 @@
    "values": []
   },
   {
+   "name": "ThoughtStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "The model's own reasoning for a turn.",
+   "signature": "(text: str = '') -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> ThoughtStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One `assistant` message, or none when there is no reasoning.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "`\"\\nThought: {text}\"`, with the label kept when the text is empty.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "ThreadProjection",
+   "kind": "class",
+   "module": "effgen.core.thread_projection",
+   "area": "conversation",
+   "summary": "Which of a parent run's steps a child run starts with.",
+   "signature": "()",
+   "params": [],
+   "returns": null,
+   "raises": [],
+   "bases": [
+    "ABC"
+   ],
+   "members": [
+    {
+     "name": "project",
+     "kind": "method",
+     "signature": "(parent: AgentThread | None, *, task: str) -> list[Step]",
+     "summary": "The steps the child opens with, ready to be framed.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "select",
+     "kind": "method",
+     "signature": "(parent: AgentThread, *, task: str) -> list[Step]",
+     "summary": "The steps to carry from *parent* into the child's thread.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "TogetherAdapter",
    "kind": "class",
    "module": "effgen.models.together_adapter",
@@ -11483,6 +13002,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Alias for `supports_tool_calling`.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_message_protocol",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True: this converter carries a tool call and a tool result through.",
      "is_async": false,
      "inherited_from": null
     },
@@ -12567,6 +14094,78 @@
    "values": []
   },
   {
+   "name": "TurnStep",
+   "kind": "dataclass",
+   "module": "effgen.core.thread",
+   "area": "conversation",
+   "summary": "One message from earlier in the session, before this run started.",
+   "signature": "(text: str, role: Literal['user', 'assistant'] = 'user', parts: list[ContentPart] = <factory>) -> None",
+   "params": [
+    {
+     "name": "text",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "role",
+     "type": "Literal['user', 'assistant']",
+     "default": "'user'",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "parts",
+     "type": "list[ContentPart]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> TurnStep",
+     "summary": "Rebuild the step from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The step as plain data. Non-text parts are kept by type name.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_messages",
+     "kind": "method",
+     "signature": "(*, summary: bool = False) -> list[Message]",
+     "summary": "One message in the role the turn was spoken in.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_text",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "The empty string: earlier turns are framing, not this run's steps.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "VLLMEngine",
    "kind": "class",
    "module": "effgen.models.vllm_engine",
@@ -13126,7 +14725,7 @@
    "module": "effgen.core.workflow_checkpoint",
    "area": "orchestration",
    "summary": "The state of one workflow run, as far as it got.",
-   "signature": "(run_id: str, workflow: str = '', node_ids: list[str] = <factory>, completed: dict[str, Any] = <factory>, skipped: dict[str, str] = <factory>, failed: dict[str, str] = <factory>, outputs: dict[str, Any] = <factory>, updated_at: float = 0.0, metadata: dict[str, Any] = <factory>) -> None",
+   "signature": "(run_id: str, workflow: str = '', node_ids: list[str] = <factory>, completed: dict[str, Any] = <factory>, skipped: dict[str, str] = <factory>, failed: dict[str, str] = <factory>, outputs: dict[str, Any] = <factory>, threads: dict[str, Any] = <factory>, tasks: dict[str, str] = <factory>, updated_at: float = 0.0, metadata: dict[str, Any] = <factory>) -> None",
    "params": [
     {
      "name": "run_id",
@@ -13185,6 +14784,22 @@
      "description": "The output map as the run had it, keyed as the run keys it."
     },
     {
+     "name": "threads",
+     "type": "dict[str, Any]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "`{node_id: thread}` as plain data \u2014 each node's own conversation, the steps it took rather than a rendering of them, so a resumed run can still say how a node it is not re-running reached its answer, and a failed node can be read back after the process that ran it is gone."
+    },
+    {
+     "name": "tasks",
+     "type": "dict[str, str]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "`{node_id: task}` \u2014 what each node was actually asked, which the task string alone does not record once upstream outputs have been folded into it."
+    },
+    {
      "name": "updated_at",
      "type": "float",
      "default": "0.0",
@@ -13222,6 +14837,14 @@
      "inherited_from": null
     },
     {
+     "name": "thread_for",
+     "kind": "method",
+     "signature": "(node_id: str) -> Any",
+     "summary": "One node's conversation, rebuilt from what was stored.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "to_dict",
      "kind": "method",
      "signature": "() -> dict[str, Any]",
@@ -13238,7 +14861,7 @@
    "module": "effgen.core.workflow",
    "area": "orchestration",
    "summary": "Directed acyclic graph of agent execution nodes.",
-   "signature": "(name: str = 'workflow') -> None",
+   "signature": "(name: str = 'workflow', *, projection: Any = None) -> None",
    "params": [
     {
      "name": "name",
@@ -13246,6 +14869,14 @@
      "default": "'workflow'",
      "required": false,
      "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "projection",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
      "description": ""
     }
    ],
@@ -13430,7 +15061,7 @@
    "module": "effgen.core.workflow",
    "area": "orchestration",
    "summary": "A single node in a workflow DAG.",
-   "signature": "(id: str, agent: Any = None, tools: list[str] = <factory>, input_keys: list[str] = <factory>, output_key: str = '', metadata: dict[str, Any] = <factory>, status: NodeStatus = NodeStatus.PENDING, output: Any = None, error: str | None = None, execution_time: float = 0.0) -> None",
+   "signature": "(id: str, agent: Any = None, tools: list[str] = <factory>, input_keys: list[str] = <factory>, output_key: str = '', metadata: dict[str, Any] = <factory>, status: NodeStatus = NodeStatus.PENDING, output: Any = None, error: str | None = None, execution_time: float = 0.0, thread: Any = None) -> None",
    "params": [
     {
      "name": "id",
@@ -13511,6 +15142,14 @@
      "required": false,
      "keyword_only": false,
      "description": ""
+    },
+    {
+     "name": "thread",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
     }
    ],
    "returns": null,
@@ -13534,7 +15173,7 @@
    "module": "effgen.core.workflow",
    "area": "orchestration",
    "summary": "Result of executing a workflow DAG.",
-   "signature": "(success: bool = True, outputs: dict[str, Any] = <factory>, node_results: list[dict[str, Any]] = <factory>, execution_time: float = 0.0, metadata: dict[str, Any] = <factory>) -> None",
+   "signature": "(success: bool = True, outputs: dict[str, Any] = <factory>, node_results: list[dict[str, Any]] = <factory>, execution_time: float = 0.0, metadata: dict[str, Any] = <factory>, threads: dict[str, Any] = <factory>, thread: Any = None) -> None",
    "params": [
     {
      "name": "success",
@@ -13575,12 +15214,44 @@
      "required": false,
      "keyword_only": false,
      "description": "Extra info"
+    },
+    {
+     "name": "threads",
+     "type": "dict[str, Any]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "thread",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
     }
    ],
    "returns": null,
    "raises": [],
    "bases": [],
    "members": [
+    {
+     "name": "failed_nodes",
+     "kind": "method",
+     "signature": "() -> list[dict[str, Any]]",
+     "summary": "Which nodes failed, why, and what each one's conversation held.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "node_thread",
+     "kind": "method",
+     "signature": "(node_id: str) -> Any",
+     "summary": "The conversation one node's agent had.",
+     "is_async": false,
+     "inherited_from": null
+    },
     {
      "name": "to_dict",
      "kind": "method",
@@ -14860,6 +16531,65 @@
    "is_async": false
   },
   {
+   "name": "render_thread",
+   "kind": "function",
+   "module": "effgen.core.thread_render",
+   "area": "conversation",
+   "summary": "Render a conversation as steps.",
+   "signature": "(source: Any, *, redact: bool = True, include_ids: bool = False, max_chars: int | None = None, depth: int = 0) -> list[RenderedStep]",
+   "params": [
+    {
+     "name": "source",
+     "type": "Any",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The conversation \u2014 an `effgen.core.thread.AgentThread`, or the mapping `effgen.core.thread.AgentThread.to_dict` produces. Anything else renders as no steps."
+    },
+    {
+     "name": "redact",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": true,
+     "description": "Pass every rendered string through the shared secret scrubber. On by default: a rendering is meant to be read, saved and shared."
+    },
+    {
+     "name": "include_ids",
+     "type": "bool",
+     "default": "False",
+     "required": false,
+     "keyword_only": true,
+     "description": "Carry tool-call ids in `detail`. Off by default, because a provider mints a fresh id per call and two runs that did the same work would otherwise not compare equal."
+    },
+    {
+     "name": "max_chars",
+     "type": "int | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "Shorten each step's body to this many characters. `None` keeps the whole text."
+    },
+    {
+     "name": "depth",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": true,
+     "description": "The nesting level to render at. Callers leave this at `0`; a delegated child's steps are rendered one level deeper."
+    }
+   ],
+   "returns": {
+    "type": "list[RenderedStep]",
+    "description": "The steps, in order, with a delegated child's own steps following the delegation that produced them."
+   },
+   "raises": [],
+   "bases": [],
+   "members": [],
+   "values": [],
+   "is_async": false
+  },
+  {
    "name": "replicate_available_models",
    "kind": "function",
    "module": "effgen.models.replicate_models",
@@ -14960,6 +16690,57 @@
    "returns": {
     "type": "list[str]",
     "description": ""
+   },
+   "raises": [],
+   "bases": [],
+   "members": [],
+   "values": [],
+   "is_async": false
+  },
+  {
+   "name": "thread_as_text",
+   "kind": "function",
+   "module": "effgen.core.thread_render",
+   "area": "conversation",
+   "summary": "The conversation as one block of text, one heading and body per step.",
+   "signature": "(source: Any, *, redact: bool = True, include_ids: bool = False, max_chars: int | None = None) -> str",
+   "params": [
+    {
+     "name": "source",
+     "type": "Any",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The conversation, as `render_thread` accepts it."
+    },
+    {
+     "name": "redact",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": true,
+     "description": "Pass every rendered string through the secret scrubber."
+    },
+    {
+     "name": "include_ids",
+     "type": "bool",
+     "default": "False",
+     "required": false,
+     "keyword_only": true,
+     "description": "Carry tool-call ids, which differ between two runs."
+    },
+    {
+     "name": "max_chars",
+     "type": "int | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "Shorten each step's body to this many characters."
+    }
+   ],
+   "returns": {
+    "type": "str",
+    "description": "The rendering, with no trailing newline. The empty string when there is no conversation to render."
    },
    "raises": [],
    "bases": [],
