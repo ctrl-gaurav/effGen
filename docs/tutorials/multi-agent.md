@@ -49,6 +49,74 @@ result = agent.run(task, mode=AgentMode.SINGLE)
 result = agent.run(task, mode=AgentMode.SUB_AGENTS)
 ```
 
+## Reading what a child actually did
+
+A child runs on its own conversation, and that conversation comes back with the
+parent's response. `response.sub_agent_threads()` is the accessor: it returns
+`{child_id: AgentThread}` for every child that reached a model, in the order the
+work was handed out.
+
+```python
+result = agent.run(task, mode=AgentMode.SUB_AGENTS)
+
+for child_id, thread in result.sub_agent_threads().items():
+    print(child_id, thread.task().text)
+    for step in thread.actions():
+        print("   called", step.tool, step.arguments)
+```
+
+Every delegation is on the parent's own thread, whether or not the child
+produced a conversation — a child that failed before reaching a model has no
+thread but still has a record:
+
+```python
+for step in result.metadata["thread"].delegations():
+    print(step.child_id, step.success, step.error or step.output[:60])
+```
+
+Both survive `result.to_dict()`, so a saved run document carries them, and both
+travel into a checkpoint with the rest of the parent's steps.
+
+A workflow keeps the same record. `WorkflowResult.node_thread(node_id)` returns
+one node's conversation, and `failed_nodes()` says which nodes failed, why, and
+what each one's thread held when it stopped:
+
+```python
+result = dag.run("draft the memo")
+
+for failure in result.failed_nodes():
+    print(failure["node_id"], failure["error"])
+    print("   got as far as", [s.kind for s in failure["thread"].steps])
+```
+
+A team result carries `TeamResponse.thread` and `TeamResponse.agent_threads()`
+in the same shape.
+
+## Choosing what a child is shown
+
+By default a child sees only the question it was asked. To give it more, pass a
+projection — a rule that *selects* steps from the parent's conversation, which
+the child then starts its own with. The child's question stays its own question,
+and what it was shown is on its thread where the context budget counts it.
+
+```python
+from effgen import ParentAnswers
+
+agent.sub_agent_manager.projection = ParentAnswers()   # or "parent-answers"
+```
+
+`NoParentContext` (the default) carries nothing, `ParentTask` carries the job
+the parent was given, `ParentAnswers` adds what each finished child answered,
+and `LastCycles(n)` carries the parent's own last `n` complete cycles of work.
+Subclass `ThreadProjection` for a rule of your own. A workflow and a team take
+the same argument: `WorkflowDAG(projection=...)` and
+`TeamConfig(projection=...)`.
+
+A child inherits its parent's `context_budget`, `compaction` and
+`max_context_length`, so a decomposition that is bounded stays bounded all the
+way down, and the projected steps are given up before the child's own question
+is.
+
 ## Tips
 
 - Sub-agents work best with larger models (3B+)
