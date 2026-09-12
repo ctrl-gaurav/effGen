@@ -30,6 +30,7 @@ from .thread import (
     ActionStep,
     AgentThread,
     AnswerStep,
+    DelegationStep,
     NudgeStep,
     ObservationStep,
     Step,
@@ -41,6 +42,15 @@ from .thread import (
 
 # How much of that conversation one run may send, and what it gives up
 from .thread_compaction import CompactionPolicy, ShortenOldestFirst, SummarizeWithModel
+
+# Which of a parent run's steps a child run starts with
+from .thread_projection import (
+    LastCycles,
+    NoParentContext,
+    ParentAnswers,
+    ParentTask,
+    ThreadProjection,
+)
 
 # Agent
 from .agent import Agent, AgentConfig, AgentMode, AgentResponse
@@ -154,11 +164,19 @@ __all__ = [
     "ObservationStep",
     "NudgeStep",
     "AnswerStep",
+    "DelegationStep",
 
     # Keeping that conversation inside a budget
     "CompactionPolicy",
     "ShortenOldestFirst",
     "SummarizeWithModel",
+
+    # What a child run is shown of its parent's conversation
+    "ThreadProjection",
+    "NoParentContext",
+    "ParentTask",
+    "ParentAnswers",
+    "LastCycles",
 
     # Multimodal message schema
     "Role",

@@ -82,6 +82,7 @@ __all__ = [
     "ActionStep",
     "AgentThread",
     "AnswerStep",
+    "DelegationStep",
     "NudgeStep",
     "ObservationStep",
     "Step",
@@ -524,6 +525,83 @@ class AnswerStep:
         return cls(text=data.get("text", ""), stop_reason=data.get("stop_reason"))
 
 
+@dataclass
+class DelegationStep:
+    """Work this run handed to another agent, and the conversation it had.
+
+    A run that spawns a sub-agent, drives a team stage or executes a workflow
+    node keeps the child's own :class:`AgentThread` here rather than only the
+    text the child answered with. The child's conversation is therefore
+    reachable from the parent's response, survives ``to_dict()``, and is written
+    into a checkpoint with the rest of the parent's steps.
+
+    Renders as nothing in the flat transcript: what the child produced already
+    reaches the parent's model through whatever the caller's pattern does with
+    it, and rendering it twice would change every existing prompt. The message
+    rendering states it as one ``assistant`` line, so a caller who asks for the
+    conversation can read the delegation as part of it.
+
+    Attributes:
+        child_id: What the parent calls this piece of work — a subtask id, a
+            node id or an agent name. Unique within one parent thread.
+        role: What the child was doing, as the parent's own pattern names it
+            (``"sub-agent"``, ``"node"``, ``"stage"``, ``"worker"``...). Free
+            text, recorded rather than interpreted.
+        task: The question the child was actually asked.
+        thread: The child's conversation, when the child produced one. ``None``
+            when the child never ran, or when it is not an agent at all.
+        output: The child's answer, as the parent received it.
+        success: Whether the child reported a successful run.
+        error: What went wrong, when the child failed.
+    """
+
+    child_id: str
+    role: str = ""
+    task: str = ""
+    thread: AgentThread | None = None
+    output: str = ""
+    success: bool = True
+    error: str | None = None
+    kind: str = field(default="delegation", init=False)
+
+    def to_text(self) -> str:
+        """The empty string: a delegation is a record, not a prompt line."""
+        return ""
+
+    def to_messages(self, *, summary: bool = False) -> list[Message]:
+        """One ``assistant`` message naming the child and what it answered."""
+        label = f"[{self.role or 'delegated'}:{self.child_id}]"
+        body = self.output if self.success else (self.error or "did not complete")
+        return [Message(role=Role.ASSISTANT, content=_text_parts(f"{label} {body}"))]
+
+    def to_dict(self) -> dict[str, Any]:
+        """The step as plain data, with the child's conversation nested in it."""
+        return {
+            "kind": self.kind,
+            "child_id": self.child_id,
+            "role": self.role,
+            "task": self.task,
+            "thread": self.thread.to_dict() if self.thread is not None else None,
+            "output": self.output,
+            "success": self.success,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DelegationStep:
+        """Rebuild the step, and the child's conversation with it."""
+        raw = data.get("thread")
+        return cls(
+            child_id=str(data.get("child_id", "")),
+            role=str(data.get("role", "") or ""),
+            task=str(data.get("task", "") or ""),
+            thread=AgentThread.from_dict(raw) if isinstance(raw, dict) else None,
+            output=str(data.get("output", "") or ""),
+            success=bool(data.get("success", True)),
+            error=data.get("error"),
+        )
+
+
 class _StepReader(Protocol):
     """What a step type has to offer for a stored step to be read back."""
 
@@ -543,6 +621,7 @@ _STEP_TYPES: dict[str, _StepReader] = {
     "observation": ObservationStep,
     "nudge": NudgeStep,
     "answer": AnswerStep,
+    "delegation": DelegationStep,
 }
 
 
@@ -985,6 +1064,27 @@ class AgentThread:
     # ------------------------------------------------------------------
     # Reading the run back — what a regex over the transcript used to do
     # ------------------------------------------------------------------
+
+    def delegations(self) -> list[DelegationStep]:
+        """Every piece of work this run handed to another agent, in order."""
+        return [step for step in self.steps if isinstance(step, DelegationStep)]
+
+    def child_threads(self) -> dict[str, AgentThread]:
+        """The conversation of each child this run delegated to, by child id.
+
+        A child that produced no conversation — it never ran, or the node was
+        not an agent at all — is left out, so a caller iterating this reads only
+        threads it can actually inspect. :meth:`delegations` carries every
+        delegation whether or not it has one.
+
+        Returns:
+            ``{child_id: thread}``, in the order the work was handed out.
+        """
+        return {
+            step.child_id: step.thread
+            for step in self.delegations()
+            if step.thread is not None
+        }
 
     def observations(self) -> list[ObservationStep]:
         """Every observation in the run, in order."""
