@@ -430,6 +430,35 @@ class AgentResponse:
         response_trace(self, console=console)
         return self
 
+    @property
+    def thread(self) -> Any:
+        """The conversation this run had, as typed steps.
+
+        This is the documented way to read a completed run back: what the model
+        was framed by, what it was asked, what it reasoned, which tools it
+        called with which arguments, what came back and how the run ended — in
+        the order it happened. It is an
+        :class:`~effgen.core.thread.AgentThread`, with
+        :meth:`~effgen.core.thread.AgentThread.to_text` for the flat transcript
+        the model was sent, :meth:`~effgen.core.thread.AgentThread.to_messages`
+        for the provider messages, and
+        :meth:`~effgen.core.thread.AgentThread.to_dict` for plain data.
+
+        ``metadata["thread"]`` holds the same object and keeps working; this
+        property is the supported name for it. The object is not itself JSON —
+        ``json.dumps(response.metadata)`` raises ``TypeError`` on it — so the
+        serialisable form of a whole run is :meth:`to_dict`, which writes the
+        thread through its own :meth:`~effgen.core.thread.AgentThread.to_dict`.
+
+        :func:`effgen.core.thread_render.thread_as_text` renders it for a human,
+        with secrets redacted and nothing in it that differs between two runs
+        that took the same path.
+
+        Returns:
+            The run's thread, or ``None`` for a run that recorded none.
+        """
+        return (self.metadata or {}).get("thread")
+
     def sub_agent_threads(self) -> dict[str, Any]:
         """The conversation each child of this run had, by the parent's id for it.
 

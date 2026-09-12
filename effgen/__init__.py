@@ -112,6 +112,9 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "ParentTask": ("effgen.core.thread_projection", "ParentTask"),
     "ParentAnswers": ("effgen.core.thread_projection", "ParentAnswers"),
     "LastCycles": ("effgen.core.thread_projection", "LastCycles"),
+    "RenderedStep": ("effgen.core.thread_render", "RenderedStep"),
+    "render_thread": ("effgen.core.thread_render", "render_thread"),
+    "thread_as_text": ("effgen.core.thread_render", "thread_as_text"),
     "ContextBudgetExceededError": ("effgen.models.errors", "ContextBudgetExceededError"),
     "ThoughtStep": ("effgen.core.thread", "ThoughtStep"),
     "BaseModel": ("effgen.models.base", "BaseModel"),
@@ -406,6 +409,10 @@ __all__ = [
     "ParentTask",
     "ParentAnswers",
     "LastCycles",
+    # Reading a finished run's conversation back
+    "RenderedStep",
+    "render_thread",
+    "thread_as_text",
     # Multimodal message schema
     "Role",
     "TextPart",
