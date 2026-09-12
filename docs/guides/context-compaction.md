@@ -205,6 +205,8 @@ catching it.
 
 ## Related
 
+- [Reading a run back](reading-a-run.md) — the accessor, the rendering and
+  the command-line flags for a finished run's conversation.
 - [Sessions and checkpoints](sessions-and-checkpoints.md) — persisting a
   conversation across processes.
 - [Architecture](../architecture/overview.md) — where short-term memory sits in the three-tier system.

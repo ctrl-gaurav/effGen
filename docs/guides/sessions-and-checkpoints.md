@@ -217,7 +217,8 @@ available: `CheckpointManager(dir, backend="sqlite")`.
 ### What a checkpoint carries
 
 A checkpoint holds the run's conversation under `thread`, as the same data
-`response.metadata["thread"].to_dict()` produces, carrying that format's own
+`response.thread.to_dict()` produces (see
+[Reading a run back](reading-a-run.md)), carrying that format's own
 version number. `Checkpoint.to_thread()` hands it back:
 
 ```python
