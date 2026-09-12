@@ -14,12 +14,19 @@ text file and fails on two classes of text:
   separator between ``Phase`` and its number may be a space, hyphen, or
   underscore, and the singular and plural forms are both matched,
 * author/process breadcrumbs (``this phase``, ``as per audit``,
-  ``fixed in phase``, ``builder/verifier added``),
+  ``fixed in phase``, ``builder/verifier/planner/validator added``, and the
+  role names that have no ordinary technical use at all — ``lead architect``,
+  ``scrub agent``, ``release-verifier``),
 * names of internal planning artifacts (``findings report``, ``phase brief``,
-  ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``) and paths into the
-  internal planning tree (``followups/x.md``, ``outputs/104_phase/…``), which
-  read as live cross-references but name a gitignored path no reader outside
-  the authoring checkout can follow,
+  ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``, and the planning
+  tree's own files by name — ``HANDOVER.md``, ``DIAGNOSIS.md``, ``RUNBOOK.md``,
+  ``LEAD_ADDENDUM``, ``ARCHITECT_HANDOVER``), paths into the internal planning
+  tree (``followups/x.md``, ``outputs/104_phase/…``), and cross-references into
+  those documents' section numbering (``§G.1``, ``§1.12``) — all of which read
+  as live citations but name a gitignored path no reader outside the authoring
+  checkout can follow. A statute citation is a different shape (``§ 16600`` —
+  a space, no dotted sub-number) and is not matched, so the legal prompt
+  library's sources are untouched,
 * leftover debugging (``breakpoint()`` / ``pdb.set_trace()`` /
   ``ipdb.set_trace()`` / ``import pdb`` / a JavaScript ``debugger;``),
 * unresolved placeholder markers (``TODO`` / ``FIXME`` / ``XXX`` / ``HACK`` /
@@ -191,7 +198,9 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "process-breadcrumb": re.compile(
         r"\bthis phase\b|\bas per (?:audit|the report)\b|\bfixed in phase\b|"
         r"\bthe report (?:asked|requested|wanted)\b|\bbuilder agent\b|"
-        r"\b(?:builder|verifier|explorer) (?:added|fixed|confirmed|noted|reported)\b",
+        r"\b(?:builder|verifier|explorer|planner|validator) "
+        r"(?:added|fixed|confirmed|noted|reported)\b|"
+        r"\blead architect\b|\bscrub agent\b|\brelease[ -]verifier\b",
         re.IGNORECASE,
     ),
     # Names of internal planning artifacts. These describe how the project is
@@ -202,10 +211,25 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"\bzero[ -]ignore\b|\bask[ -]before[ -]commit\b|AUDIT_REPORT",
         re.IGNORECASE,
     ),
+    # The internal planning tree's own files, by name. None of them is shipped,
+    # so a reference to one is a pointer no reader can follow. Matched
+    # case-sensitively: these files are named in capitals, while the lowercase
+    # words are ordinary ones an example may legitimately use — an operations
+    # ``runbook.md`` in a retrieval corpus is not this.
+    "planning-artifact-file": re.compile(
+        r"\bLEAD_ADDENDUM\b|\bARCHITECT_HANDOVER\b|"
+        r"\b(?:HANDOVER|DIAGNOSIS|RUNBOOK)\.md\b"
+    ),
     # Paths inside the internal planning tree. A comment that points a reader
     # at one of these is unreadable outside the checkout it was written in,
     # and the directory itself is gitignored. The slash is required, so the
     # ordinary English "follow-ups" and "the findings" are untouched.
+    # Cross-references into the internal planning documents' own section
+    # numbering ("§G.1", "§1.12"). They read as a citation but name a section
+    # of a gitignored file. The legal prompt library's statute citations are a
+    # different shape — "§ 16600" has a space and no dotted sub-number — so
+    # they are untouched.
+    "planning-section-ref": re.compile(r"§[A-Z]\.?\d|§\d+\.\d+"),
     "planning-path": re.compile(
         r"\b(?:resolved_)?follow[ _-]?ups?/|\bfindings/phase|"
         r"\boutputs/\d+_phase\b|\bbuild_plan/",
@@ -498,6 +522,11 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "the report asked for a clearer error here",
         "builder added the fallback path",
         "the verifier confirmed this on three families",
+        "planner noted the seam",
+        "validator reported a regression",
+        "the lead architect signed this off",
+        "held for the scrub agent",
+        "the release-verifier re-derived it",
     ],
     "planning-artifact": [
         "see the findings report for the full list",
@@ -507,6 +536,18 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "held until the ask-before-commit gate",
         "recorded in AUDIT_REPORT_6",
         "the live proof lives in the phase evidence",
+    ],
+    "planning-artifact-file": [
+        "recorded in HANDOVER.md",
+        "the section DIAGNOSIS.md cites",
+        "the lifecycle RUNBOOK.md describes",
+        "overridden by LEAD_ADDENDUM",
+        "the verdict goes in ARCHITECT_HANDOVER",
+    ],
+    "planning-section-ref": [
+        "the rule is §G.1 and it is not optional",
+        "shapes it was not written for (§G.3)",
+        "the house style is §1.12",
     ],
     "planning-path": [
         "the wider seam is followups/mixin_attr_defined_seam.md",
@@ -870,6 +911,9 @@ def test_gated_vocabulary_covers_the_house_style_list():
         "a later phase will revisit it", "regression tests for previous phases",
         "the builder added a fallback", "finding E3-2", "E4-1 regression",
         "closes BUG-012", "closes ISSUE-7", "see the phase evidence",
+        "the lead architect signed it off", "held for the scrub agent",
+        "recorded in HANDOVER.md", "the section DIAGNOSIS.md cites",
+        "overridden by LEAD_ADDENDUM", "the rule is §G.1", "house style §1.12",
         "TODO", "FIXME", "XXX", "HACK", "breakpoint()", "pdb.set_trace()",
         # self-praise
         "fails honestly", "an honest error", "the honesty of it",
@@ -893,6 +937,16 @@ def test_gated_vocabulary_covers_the_house_style_list():
         "first-class functions", "the bleeding-edge branch",
     ):
         assert not find_editorializing("s.py", excluded), excluded
+
+    # A statute citation is the section sign in its ordinary legal use, which
+    # the prompt library ships. It must not read as a planning cross-reference.
+    for legal in ("Cal. Bus. & Prof. Code § 16600", "18 U.S.C. § 1030"):
+        assert not find_violations("s.py", legal), legal
+
+    # The planning files are matched in capitals only: the lowercase words are
+    # ordinary ones, and a retrieval example ships a corpus that uses them.
+    for ordinary in ("sources: ['runbook.md']", "wrote handover.md for the team"):
+        assert not find_violations("s.py", ordinary), ordinary
 
 
 def test_allowlist_entries_are_live_and_load_bearing():
