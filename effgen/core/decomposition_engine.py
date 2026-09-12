@@ -318,6 +318,7 @@ Respond with ONLY the JSON, no additional text."""
             # Default to parallel
             prompt = self.PARALLEL_PROMPT_TEMPLATE.format(task=task, language_note=language_note)
 
+        thread = (context or {}).get("thread")
         try:
             # Generate decomposition using LLM
             response = self.llm_client.generate(prompt, max_tokens=1000, temperature=0.3)
@@ -326,12 +327,52 @@ Respond with ONLY the JSON, no additional text."""
             subtasks = self._parse_decomposition(response)
 
             # Validate and return
-            return self._validate_decomposition(subtasks, task, structure)
+            validated = self._validate_decomposition(subtasks, task, structure)
+            self._record(thread, prompt, str(response), success=True)
+            return validated
 
         except Exception as e:
             # If LLM decomposition fails, fall back to rule-based
             logger.warning(f"LLM decomposition failed: {e}. Using rule-based fallback.")
+            self._record(
+                thread, prompt, "", success=False,
+                error=f"{type(e).__name__}: {e}",
+            )
             return self._rule_based_decompose(task, strategy, structure)
+
+    @staticmethod
+    def _record(thread: Any, prompt: str, answer: str, *,
+                success: bool, error: str | None = None) -> None:
+        """Keep the decomposition on the parent run's conversation.
+
+        The decomposition is a model call the parent makes on its own behalf,
+        and it is the one call that reaches the model without going through an
+        :class:`~effgen.core.agent.Agent`. Recording it as a step means a reader
+        of the parent's thread can see what was asked and what came back
+        instead of only the subtasks that survived parsing.
+
+        Args:
+            thread: The parent run's conversation, when the caller passed one
+                as ``context["thread"]``. Anything else is ignored, so a bare
+                engine with no parent records nothing and behaves as before.
+            prompt: The decomposition request, exactly as it was sent.
+            answer: What the model replied.
+            success: Whether the reply parsed into subtasks.
+            error: What went wrong, when it did not.
+        """
+        from .thread import AgentThread, DelegationStep
+
+        if not isinstance(thread, AgentThread):
+            return
+        thread.append(DelegationStep(
+            child_id="decomposition",
+            role="decomposition",
+            task=prompt,
+            output=answer,
+            success=success,
+            error=error,
+        ))
+        logger.info("[thread] the run recorded its decomposition as a step")
 
     def _parse_decomposition(self, response: str) -> list[SubTask]:
         """

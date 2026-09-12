@@ -15,6 +15,7 @@ import asyncio
 import contextvars
 import functools
 import logging
+import threading
 import time
 import traceback
 from collections.abc import Callable
@@ -26,6 +27,12 @@ from ..observability.tracing import execution_scope
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .router import RoutingStrategy
 from .task import SubTask, TaskStatus
+from .thread import AgentThread, DelegationStep
+from .thread_projection import (
+    ThreadProjection,
+    delegation_of,
+    resolve_projection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +156,9 @@ class SubAgentResult:
         execution_time: Time taken in seconds
         tokens_used: Tokens consumed
         tool_calls: Number of tool calls made
+        thread: The child's own conversation, as the steps it took. ``None``
+            when the child never reached a model — its task raised before the
+            run started, or no parent model was available.
         metadata: Additional metadata
     """
     subtask_id: str
@@ -159,6 +169,7 @@ class SubAgentResult:
     execution_time: float = 0.0
     tokens_used: int = 0
     tool_calls: int = 0
+    thread: AgentThread | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,6 +183,7 @@ class SubAgentResult:
             "execution_time": round(self.execution_time, 2),
             "tokens_used": self.tokens_used,
             "tool_calls": self.tool_calls,
+            "thread": self.thread.to_dict() if self.thread is not None else None,
             "metadata": self.metadata
         }
 
@@ -191,14 +203,20 @@ class SubAgentManager:
     def __init__(self,
                  parent_agent: Any = None,
                  config: dict[str, Any] | None = None,
-                 execution_tracker: ExecutionTracker | None = None) -> None:
+                 execution_tracker: ExecutionTracker | None = None,
+                 projection: Any = None) -> None:
         """
         Initialize sub-agent manager.
 
         Args:
             parent_agent: Parent agent instance
-            config: Optional configuration
+            config: Optional configuration. ``config["projection"]`` is read
+                when *projection* is not given.
             execution_tracker: Optional execution tracker
+            projection: Which of the parent run's steps each child starts with
+                (:mod:`effgen.core.thread_projection`). Defaults to carrying
+                nothing, which is what a child was given before projections
+                existed.
         """
         self.parent_agent = parent_agent
         self.config = config or {}
@@ -206,6 +224,53 @@ class SubAgentManager:
         self.active_sub_agents: dict[str, Any] = {}
         self.sub_agent_results: dict[str, SubAgentResult] = {}
         self.max_parallel = self.config.get("max_parallel_agents", 5)
+        self.projection = (
+            projection if projection is not None else self.config.get("projection")
+        )
+        #: The parent run's conversation, when there is one to project from and
+        #: to record each child's work on. Set by the run that owns this
+        #: manager; ``None`` for a manager driven directly.
+        self.parent_thread: AgentThread | None = None
+        self._thread_lock = threading.Lock()
+
+    @property
+    def projection(self) -> ThreadProjection:
+        """Which of the parent run's steps each child starts with.
+
+        Assigning a built-in name, a :class:`ThreadProjection` subclass or
+        ``None`` resolves it here, so a caller may write
+        ``manager.projection = "parent-answers"`` and read back the rule.
+        """
+        return self._projection
+
+    @projection.setter
+    def projection(self, value: Any) -> None:
+        """Set the rule, however the caller says it.
+
+        Args:
+            value: ``None`` for the default, one of the built-in names, a
+                :class:`ThreadProjection` subclass, or an instance of one.
+        """
+        self._projection = resolve_projection(value)
+
+    def record_delegation(self, step: DelegationStep) -> None:
+        """Append one child's record to the parent run's conversation.
+
+        Children can finish in parallel, so the append is serialised here
+        rather than left to whichever worker thread got there first.
+
+        Args:
+            step: The record of what the child was asked and what it answered.
+        """
+        if self.parent_thread is None:
+            return
+        with self._thread_lock:
+            self.parent_thread.append(step)
+
+    def _projected_steps(self, task: str) -> list[Any]:
+        """The steps a child about to be asked *task* starts its thread with."""
+        with self._thread_lock:
+            return self.projection.project(self.parent_thread, task=task)
 
     def _decomposition_scope(self):
         """Scope one decomposition as a single execution.
@@ -473,6 +538,13 @@ class SubAgentManager:
             # model. (Previously this returned fabricated "Completed: …" text with
             # made-up token/tool counts — a silent-fabrication trap.)
             result_data = self._run_real_sub_agent(subtask, config)
+            # The child's own response travels back so its conversation can be
+            # recorded, and is taken out again here: what goes on to the
+            # subtask and into the synthesis is plain data, as it always was.
+            child_response = (
+                result_data.pop("response", None)
+                if isinstance(result_data, dict) else None
+            )
 
             execution_time = time.time() - start_time
 
@@ -504,11 +576,32 @@ class SubAgentManager:
                 if isinstance(result_data, dict) else None,
                 execution_time=execution_time,
                 tokens_used=result_data.get("tokens_used", 0) if isinstance(result_data, dict) else 0,
-                tool_calls=result_data.get("tool_calls", 0) if isinstance(result_data, dict) else 0
+                tool_calls=result_data.get("tool_calls", 0) if isinstance(result_data, dict) else 0,
+                thread=self._child_thread(child_response),
             )
 
             # Store result
             self.sub_agent_results[subtask.id] = result
+
+            # Record what was delegated on the parent's own conversation, so
+            # the child's steps are reachable from the parent's response, are
+            # written into its checkpoint, and are there for the next child's
+            # projection to read.
+            self.record_delegation(delegation_of(
+                subtask.id,
+                role="sub-agent",
+                task=subtask.description,
+                response=child_response,
+                output=str(result_data.get("output", "") or "")
+                if isinstance(result_data, dict) else str(result_data or ""),
+            ) if child_response is not None else DelegationStep(
+                child_id=subtask.id,
+                role="sub-agent",
+                task=subtask.description,
+                output=str(result_data.get("output", "") or "")
+                if isinstance(result_data, dict) else str(result_data or ""),
+                success=sub_success,
+            ))
 
             return result
 
@@ -543,7 +636,33 @@ class SubAgentManager:
 
             self.sub_agent_results[subtask.id] = result
 
+            # A child that raised is recorded too, with what went wrong: a
+            # parent whose thread showed nothing for a failed child would read
+            # as a child that was never asked.
+            self.record_delegation(DelegationStep(
+                child_id=subtask.id,
+                role="sub-agent",
+                task=subtask.description,
+                success=False,
+                error=error_msg,
+            ))
+
             return result
+
+    @staticmethod
+    def _child_thread(response: Any) -> AgentThread | None:
+        """The conversation a child run had, when it produced one.
+
+        Args:
+            response: Whatever the child returned, or ``None``.
+
+        Returns:
+            The child's thread, or ``None`` when the child never reached a
+            model or answered without building one.
+        """
+        meta = getattr(response, "metadata", None) or {}
+        thread = meta.get("thread") if isinstance(meta, dict) else None
+        return thread if isinstance(thread, AgentThread) else None
 
     def _run_real_sub_agent(self, subtask: SubTask, config: SubAgentConfig) -> dict[str, Any]:
         """
@@ -590,6 +709,11 @@ class SubAgentManager:
                 f"agent, including any language it specifies: \"{parent_system_prompt}\""
             )
 
+        # How many prompt tokens the child may send, and what it gives up to
+        # stay inside that, are the parent's settings: a child is a run of the
+        # same job on the same model, and a decomposition that bounded the
+        # parent and left every child unbounded would be bounded in name only.
+        parent_cfg = getattr(parent, "config", None)
         child_cfg = AgentConfig(
             name=f"{config.specialization.value}_specialist",
             model=model,                       # reuse the parent's model instance
@@ -600,21 +724,30 @@ class SubAgentManager:
             enable_sub_agents=False,           # no recursive decomposition
             enable_memory=False,
             require_model=False,               # model is already an instance
+            context_budget=getattr(parent_cfg, "context_budget", "auto"),
+            compaction=getattr(parent_cfg, "compaction", None),
+            max_context_length=getattr(parent_cfg, "max_context_length", None),
         )
         child = Agent(child_cfg)
         parent_name = str(getattr(parent, "name", "") or "") or None
+        # What the parent decided this child should see. Steps, not text pasted
+        # in front of the question — the child's question stays the question it
+        # was given, and what it was shown is on its own thread where its budget
+        # can count it.
+        prior = self._projected_steps(subtask.description)
         try:
             # The child's telemetry names the agent that spawned it, so a
             # decomposed run reads as work under its parent rather than as a
             # peer of it.
             with execution_scope(role="sub-agent", parent_agent=parent_name):
-                response = child.run(subtask.description)
+                response = child.run(subtask.description, _prior_steps=prior)
             return {
                 "output": response.output,
                 "summary": f"{config.specialization.value} sub-agent result",
                 "success": response.success,
                 "tokens_used": getattr(response, "tokens_used", 0),
                 "tool_calls": getattr(response, "tool_calls", 0),
+                "response": response,
             }
         finally:
             child.close()

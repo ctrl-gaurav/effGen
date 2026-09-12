@@ -172,6 +172,12 @@ class _LoopPolicy:
     #: holding both a picture and a tool drives the loop instead of falling out
     #: of it into a single direct call.
     task_parts: tuple[Any, ...] = ()
+    #: Steps a parent run chose for this one to start with — a projection of
+    #: the parent's thread (:mod:`effgen.core.thread_projection`). They open the
+    #: run's conversation in front of its question, so the child answers with
+    #: the background its parent gave it rather than with that background pasted
+    #: into the question itself.
+    prior_steps: tuple[Any, ...] = ()
 
     @property
     def tools_travel_as_parameter(self) -> bool:
@@ -194,6 +200,7 @@ class _LoopPolicy:
         checkpoint_dir = kwargs.pop("checkpoint_dir", None)
         resume = kwargs.pop("_resume_scratchpad", None)
         resume_thread = kwargs.pop("_resume_thread", None)
+        prior_steps = tuple(kwargs.pop("_prior_steps", None) or ())
         # Content parts belong to the conversation, not to the model call, so
         # they are taken out of the caller's keyword arguments here and put on
         # the thread's task step instead.
@@ -229,6 +236,7 @@ class _LoopPolicy:
             run_id=run_id,
             raise_on_error=bool(agent.config.raise_on_error),
             task_parts=task_parts,
+            prior_steps=prior_steps,
         )
         logger.info(
             "[loop] frame=%s tools_as_parameter=%s streamed=%s max_iterations=%d",
@@ -1949,6 +1957,12 @@ def _frame_steps(agent: Any, task: str, policy: _LoopPolicy) -> list[Step]:
             "[thread] the run carries %d earlier turn(s) of this session", len(prior)
         )
         steps.extend(prior)
+    if policy.prior_steps:
+        logger.info(
+            "[thread] the run opens with %d step(s) projected from its parent",
+            len(policy.prior_steps),
+        )
+        steps.extend(policy.prior_steps)
     steps.append(TaskStep(text=task, parts=list(policy.task_parts)))
     return steps
 

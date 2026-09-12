@@ -347,17 +347,38 @@ class AgentOrchestrationMixin:
                     routing_context = {**(context or {}), "system_prompt": self.config.system_prompt}
 
                 if mode == AgentMode.AUTO and self.config.enable_sub_agents:
-                    # Use router to decide
-                    routing_decision = self.router.route(task, routing_context)
+                    # The decomposition is the one model call a decomposed run
+                    # makes on its own behalf, so it goes on the run's own
+                    # conversation — opened here, before routing, and handed to
+                    # the run that then delegates.
+                    from .thread import AgentThread, TaskStep
+                    run_thread = AgentThread(steps=[
+                        TaskStep(text=task if isinstance(task, str) else str(task)),
+                    ])
+                    routing_decision = self.router.route(
+                        task, {**(routing_context or {}), "thread": run_thread}
+                    )
 
                     if routing_decision.use_sub_agents:
-                        response = self._run_with_sub_agents(task, routing_decision, context, **kwargs)
+                        response = self._run_with_sub_agents(
+                            task, routing_decision, context,
+                            _run_thread=run_thread, **kwargs,
+                        )
                     else:
                         response = self._run_single_agent(task, context, **kwargs)
                 elif mode == AgentMode.SUB_AGENTS and self.config.enable_sub_agents:
                     # Force sub-agent mode
-                    routing_decision = self.router.route(task, routing_context)
-                    response = self._run_with_sub_agents(task, routing_decision, context, **kwargs)
+                    from .thread import AgentThread, TaskStep
+                    run_thread = AgentThread(steps=[
+                        TaskStep(text=task if isinstance(task, str) else str(task)),
+                    ])
+                    routing_decision = self.router.route(
+                        task, {**(routing_context or {}), "thread": run_thread}
+                    )
+                    response = self._run_with_sub_agents(
+                        task, routing_decision, context,
+                        _run_thread=run_thread, **kwargs,
+                    )
                 else:
                     # Single agent mode
                     response = self._run_single_agent(task, context, **kwargs)

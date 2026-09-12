@@ -45,6 +45,7 @@ from .router import RoutingDecision, RoutingStrategy
 from .thread import (
     AgentThread,
     AnswerStep,
+    TaskStep,
 )
 from .tool_call_record import ToolCallList
 
@@ -606,11 +607,24 @@ class AgentReActMixin(
         Returns:
             AgentResponse
         """
+        # The parent's own conversation for this run. A decomposed run never
+        # built one before, so its response was the only kind with no
+        # ``metadata["thread"]``; it has one now, carrying what it was asked,
+        # the decomposition that chose the children, one record per child and
+        # the answer it synthesised. Taken out of the keyword arguments before
+        # any path can forward them to a single-agent run, which builds its own.
+        thread = kwargs.pop("_run_thread", None) or AgentThread(
+            steps=[TaskStep(text=task)]
+        )
+
         if self._current_depth >= self.config.max_sub_agent_depth:
             logger.warning(f"Sub-agent depth limit reached ({self.config.max_sub_agent_depth})")
             return self._run_single_agent(task, context, **kwargs)
 
         self._current_depth += 1
+        manager = self.sub_agent_manager
+        previous_thread = getattr(manager, "parent_thread", None)
+        manager.parent_thread = thread
 
         try:
             # Track decomposition
@@ -632,20 +646,20 @@ class AgentReActMixin(
             if strategy == RoutingStrategy.PARALLEL_SUB_AGENTS:
                 # Execute in parallel (use helper to handle existing event loops)
                 results = self._run_coroutine_sync(
-                    self.sub_agent_manager.execute_parallel(subtasks)
+                    manager.execute_parallel(subtasks)
                 )
             elif strategy == RoutingStrategy.SEQUENTIAL_SUB_AGENTS:
                 # Execute sequentially
-                results = self.sub_agent_manager.execute_sequential(subtasks)
+                results = manager.execute_sequential(subtasks)
             elif strategy == RoutingStrategy.HYBRID:
                 # Execute with hybrid approach
-                results = self.sub_agent_manager.execute_hybrid(subtasks)
+                results = manager.execute_hybrid(subtasks)
             else:
                 # Default to sequential
-                results = self.sub_agent_manager.execute_sequential(subtasks)
+                results = manager.execute_sequential(subtasks)
 
             # Synthesize results
-            synthesis = self.sub_agent_manager.synthesize_results(
+            synthesis = manager.synthesize_results(
                 results,
                 task,
                 strategy
@@ -656,8 +670,19 @@ class AgentReActMixin(
             total_tool_calls = synthesis["metrics"]["total_tool_calls"]
 
             answered = synthesis["successful"] > 0
+            output = (
+                sanitize_final_answer(synthesis["final_output"])
+                or synthesis["final_output"]
+            )
+            stop_reason = "final_answer" if answered else "sub_agent_failed"
+            thread.append(AnswerStep(text=output, stop_reason=stop_reason))
+            logger.info(
+                "[thread] the decomposed run recorded %d delegation(s), "
+                "%d carrying the child's own conversation",
+                len(thread.delegations()), len(thread.child_threads()),
+            )
             return AgentResponse(
-                output=sanitize_final_answer(synthesis["final_output"]) or synthesis["final_output"],
+                output=output,
                 success=answered,
                 mode=AgentMode.SUB_AGENTS,
                 iterations=len(subtasks),
@@ -666,12 +691,14 @@ class AgentReActMixin(
                 routing_decision=routing_decision,
                 metadata={
                     "synthesis": synthesis,
-                    "failed_subtasks": synthesis["failed"]
+                    "failed_subtasks": synthesis["failed"],
+                    "thread": thread,
                 },
-                stop_reason="final_answer" if answered else "sub_agent_failed",
+                stop_reason=stop_reason,
             )
         finally:
             self._current_depth -= 1
+            manager.parent_thread = previous_thread
 
 
 

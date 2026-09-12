@@ -430,6 +430,32 @@ class AgentResponse:
         response_trace(self, console=console)
         return self
 
+    def sub_agent_threads(self) -> dict[str, Any]:
+        """The conversation each child of this run had, by the parent's id for it.
+
+        A run that delegated — to sub-agents, to a team's stages, to a
+        workflow's nodes — keeps each child's own
+        :class:`~effgen.core.thread.AgentThread` on its own thread, as a
+        :class:`~effgen.core.thread.DelegationStep`. This is the documented way
+        to reach them: the same mapping survives :meth:`to_dict` as plain data
+        under ``metadata["thread"]["steps"]``, and travels into a checkpoint
+        with the rest of the parent's steps, so a resumed run can still read
+        what its children did.
+
+        A child that produced no conversation of its own is not in the mapping;
+        ``metadata["thread"].delegations()`` carries every delegation whether or
+        not it has one, with what the child answered and what went wrong.
+
+        Returns:
+            ``{child_id: thread}``, in the order the work was handed out, or an
+            empty mapping for a run that delegated nothing.
+        """
+        thread = (self.metadata or {}).get("thread")
+        if thread is None or not hasattr(thread, "child_threads"):
+            return {}
+        children: dict[str, Any] = thread.child_threads()
+        return children
+
     @property
     def text(self) -> str:
         """Read-only alias for :attr:`output` (familiar from other SDKs)."""
