@@ -87,6 +87,15 @@ def add_run_parser(subparsers: argparse._SubParsersAction, *, preset_choices: li
              '(alias "hipaa"/"deidentify"), "minimal", or "none". Also '
              'honored from a `-c/--config` file\'s "guardrails" key.',
     )
+    run_parser.add_argument('--show-thread', dest='show_thread', action='store_true',
+                            help='Print the run\'s conversation after the answer: '
+                                 'the persona and the question the model was framed '
+                                 'by, every thought, every tool call with its input, '
+                                 'every result and how the run ended. Secrets are '
+                                 'redacted, and nothing that differs between two runs '
+                                 'of the same path is printed, so two of these diff '
+                                 'cleanly. The same conversation is in --json under '
+                                 'metadata.thread.')
     run_parser.add_argument('--explain', action='store_true',
                             help='Show why the agent chose each tool')
     run_parser.add_argument('--trace', action='store_true',

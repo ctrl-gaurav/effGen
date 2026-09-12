@@ -58,6 +58,45 @@ def _failure_text(response: Any) -> str:
     return reason or "The run failed and reported no message."
 
 
+def run_document(response: Any) -> dict[str, Any]:
+    """The run as JSON data, with anything key-shaped in it redacted.
+
+    Every document ``effgen run`` writes — ``--json`` on stdout, ``-o`` to a
+    file, ``--card`` to an HTML page — is meant to be piped, saved and shared,
+    so a provider key that reached a tool's output, an instruction or the
+    answer is replaced by a labelled placeholder on the way out. The library's
+    own :meth:`~effgen.core.agent_response.AgentResponse.to_dict` is untouched
+    and still returns exactly what the run produced.
+    """
+    from effgen.observability.redact import get_redactor
+
+    return get_redactor().scrub_dict(response.to_dict())
+
+
+def print_thread(cli: "CLIInterface", response: Any) -> None:
+    """Print the run's conversation, step by step.
+
+    Shows what the model was actually sent on every turn of a completed run —
+    the persona and the question it was framed by, each thought, each tool call
+    with the input it was given, each result and how the run ended — with no
+    debug logging turned on. Secrets are redacted and nothing that differs
+    between two runs of the same path is printed, so two of these diff cleanly.
+    """
+    from effgen.core.thread_render import render_thread
+
+    cli.print_header("Conversation")
+    steps = render_thread(getattr(response, "thread", None))
+    if not steps:
+        cli.print("(no conversation recorded for this run)")
+        return
+    for step in steps:
+        text = _ascii_fold(step.to_text(), cli._human_stream())
+        if cli.console:
+            cli.console.print(text, highlight=False)
+        else:
+            print(text)
+
+
 #: Heading over the text a run had reached when its iteration cap stopped it.
 PARTIAL_PROGRESS_TITLE = "Partial progress (not an answer)"
 
@@ -823,6 +862,10 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 _explain = getattr(args, 'explain', False)
                 _trace = getattr(args, 'trace', False)
 
+                # The run's conversation, as the steps it was made of.
+                if getattr(args, 'show_thread', False):
+                    print_thread(cli, response)
+
                 # A per-step timeline (bars + durations) shows where the
                 # wall-clock went across the run's steps.
                 if _trace and response.execution_trace:
@@ -898,7 +941,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             if args.output:
                 output_path = Path(args.output)
                 with open(output_path, 'w', encoding='utf-8') as f:
-                    json.dump(response.to_dict(), f, indent=2, ensure_ascii=False)
+                    json.dump(run_document(response), f, indent=2, ensure_ascii=False)
                 cli.print_success(f"Response saved to {output_path}")
 
             # Write the shareable HTML card when asked. Composes with -o:
@@ -910,7 +953,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 try:
                     written = write_html_report(
                         card_path,
-                        response.to_dict(),
+                        run_document(response),
                         kind="run",
                         command=_invoked_command(),
                     )
@@ -924,7 +967,9 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             # -o file carries). Goes to real stdout regardless of the
             # stderr-routed human output above.
             if json_mode:
-                print(json.dumps(response.to_dict(), indent=2, ensure_ascii=json_ensure_ascii()))
+                print(json.dumps(
+                    run_document(response), indent=2, ensure_ascii=json_ensure_ascii()
+                ))
 
         return exit_code
 

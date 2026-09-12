@@ -163,8 +163,16 @@ def _print_group_help(args) -> int:
 
 
 def _invoked_command() -> str:
-    """Return the command line that produced a result, for a report header."""
-    return " ".join(["effgen", *sys.argv[1:]]).strip()
+    """Return the command line that produced a result, for a report header.
+
+    The header is stamped into documents that are saved and shared, and an
+    invocation carries whatever the user typed — a task, a persona, a header
+    argument. Anything key-shaped in it is replaced by a labelled placeholder
+    on the way out, the same way the document beside it is.
+    """
+    from effgen.observability.redact import get_redactor
+
+    return get_redactor().scrub(" ".join(["effgen", *sys.argv[1:]]).strip())
 
 
 def _checkpoint_run_kwargs(args) -> dict:
