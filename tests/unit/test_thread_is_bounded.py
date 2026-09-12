@@ -173,6 +173,32 @@ def lines():
         log.setLevel(previous)
 
 
+@pytest.fixture()
+def length_based_token_count(monkeypatch):
+    """Count tokens by text length, the way a machine with no BPE data does.
+
+    ``estimate_tokens`` uses a tiktoken BPE encoding when one is available and
+    falls back to a character-length estimate when it is not. The encoding is a
+    cached download, so whether it is present is a property of the machine, and
+    the two counters disagree enough to move a named budget: the ReAct frame
+    alone measures under 1200 tokens with the encoding loaded and over 1300
+    without it. A test that names a budget outright therefore has to say which
+    counter that number is in, or it passes where the data is cached and fails
+    where it is not.
+
+    The character-length estimate is the one every machine has, so it is the one
+    pinned here. What is under test is the budget arithmetic, not the fidelity
+    of the tokenizer.
+    """
+    from effgen.models import _adapter_utils
+
+    monkeypatch.setattr(
+        _adapter_utils, "get_bpe_encoding",
+        lambda name="cl100k_base", *, model=None: None,
+    )
+    yield
+
+
 def _agent(model, **cfg) -> Agent:
     return Agent(config=AgentConfig(
         name="bounded-test",
@@ -235,19 +261,23 @@ def test_an_unbounded_run_reports_that_it_was_unbounded() -> None:
         }),
     ],
 )
-def test_the_prompt_actually_sent_is_under_the_budget(label, config) -> None:
+def test_the_prompt_actually_sent_is_under_the_budget(
+    label, config, length_based_token_count
+) -> None:
     # A budget named outright rather than derived, so the same number binds
     # every frame and the comparison between them is the frame, not the window.
+    # Naming it only works if a token means the same thing everywhere, so the
+    # counter is pinned: see ``length_based_token_count``.
     model = _Refusing(window=32768, answer_at=7, native=config.get(
         "tool_calling_mode"
     ) == "native")
-    response = _agent(model, context_budget=1200, **config).run(
+    response = _agent(model, context_budget=1800, **config).run(
         "what is two plus two?"
     )
     budget = response.metadata["context_budget"]
-    assert budget["budget_tokens"] == 1200
+    assert budget["budget_tokens"] == 1800
     assert budget["firings"] > 0, f"{label}: the budget never bound this frame"
-    assert max(model.sizes) <= 1200, label
+    assert max(model.sizes) <= 1800, label
     assert model.refusals == 0, label
 
 

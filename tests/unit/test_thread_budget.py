@@ -185,8 +185,13 @@ def test_an_image_is_counted_at_its_allowance_and_never_as_prose() -> None:
         [Message(role=Role.USER, content=[TextPart(text="what is in this picture?")])]
     )
     assert counted == text_only + IMAGE_TOKEN_ALLOWANCE
-    # What reading the bytes as prose would have produced.
-    assert count_text_tokens(str(PNG)) > 10 * IMAGE_TOKEN_ALLOWANCE
+    # What reading the bytes as prose would have produced. The bound is set by
+    # the weaker of the two counters: with a BPE encoding loaded the payload
+    # measures about twelve times the allowance, and with the character-length
+    # estimate that stands in when no encoding is available, about six. Either
+    # way a payload read as prose costs several times what the allowance does,
+    # which is the property being stated.
+    assert count_text_tokens(str(PNG)) > 4 * IMAGE_TOKEN_ALLOWANCE
 
 
 def test_audio_and_video_are_counted_at_their_allowances() -> None:
