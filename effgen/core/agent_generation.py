@@ -25,6 +25,7 @@ from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
     REMEDIATION_BY_CATEGORY,
     BackendUnreachableError,
+    ContextBudgetExceededError,
     InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
@@ -117,7 +118,7 @@ def model_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 if TYPE_CHECKING:
-    pass
+    from .agent_config import AgentConfig
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
@@ -130,13 +131,26 @@ _obs_log = _get_obs_logger(__name__)
 from .agent import AgentMode, AgentResponse  # noqa: E402
 from .agent_runtime import (  # noqa: E402
     _infer_provider_from_model,
+    resolve_output_budget,
     sanitize_final_answer,
+)
+from .thread_budget import (  # noqa: E402
+    UNBOUNDED_CONTEXT_BUDGET,
+    resolve_context_budget,
 )
 from .tool_call_record import ToolCallList  # noqa: E402
 
 
 class AgentGenerationMixin:
     """Generation / error-handling / structured-output methods for :class:`Agent`."""
+
+    if TYPE_CHECKING:
+        # Contributed by :class:`~effgen.core.agent.Agent`, which owns them.
+        # Declared for the type checker only — at run time they arrive through
+        # the MRO, and these statements do not execute.
+        config: "AgentConfig"
+        model: BaseModel | None
+        model_name: str | None
 
     def _apply_structured_output(
         self,
@@ -461,17 +475,25 @@ class AgentGenerationMixin:
                     # (the tool definitions, and whether a call is required).
                     extra_gen_kwargs = model_call_kwargs(kwargs)
 
-                    result = current_model.generate(prompt, config=gen_config, **extra_gen_kwargs)
+                    turn_result = current_model.generate(prompt, config=gen_config, **extra_gen_kwargs)
 
-                    response_text = result.text if result and result.text else ""
+                    # An adapter may answer with a result object or with the
+                    # plain mapping the same fields live in; the lines below
+                    # already read the rest of it either way, and this reads
+                    # the text the same way rather than only one of them.
+                    raw_text = (
+                        turn_result.get("text") if isinstance(turn_result, dict)
+                        else getattr(turn_result, "text", None)
+                    )
+                    response_text = str(raw_text) if raw_text else ""
                     if local_stop_sequences:
                         response_text = apply_stop_sequences(
                             response_text, local_stop_sequences,
                         )
-                    tokens_used = result.tokens_used if result and hasattr(result, 'tokens_used') else 0
-                    finish_reason = result.finish_reason if result and hasattr(result, 'finish_reason') else "unknown"
+                    tokens_used = turn_result.tokens_used if turn_result and hasattr(turn_result, 'tokens_used') else 0
+                    finish_reason = turn_result.finish_reason if turn_result and hasattr(turn_result, 'finish_reason') else "unknown"
                     total_tokens += tokens_used
-                    result_metadata = result.metadata if result and hasattr(result, 'metadata') else {}
+                    result_metadata = turn_result.metadata if turn_result and hasattr(turn_result, 'metadata') else {}
                     # Surface per-run cost/token usage on the eventual response
                     # (every call counts — including a billed empty one).
                     self._accumulate_run_cost(result_metadata)
@@ -1150,6 +1172,59 @@ class AgentGenerationMixin:
             conversation_history = self._format_conversation_history()
             prompt = self._direct_prompt(task, conversation_history)
 
+        # A run with no tools takes one turn, so there is no transcript to give
+        # up: the whole prompt is the question, the persona and the session's
+        # earlier turns, and all three are protected. The budget therefore has
+        # exactly one thing to say here — whether the request fits — and it says
+        # it before the request is sent rather than letting the provider refuse
+        # it and returning the provider's sentence about token counts.
+        budget = resolve_context_budget(
+            self.config.context_budget,
+            model=self.model,
+            window_override=self.config.max_context_length,
+            output_tokens=resolve_output_budget(
+                kwargs.get("max_tokens"), self.config.max_tokens, self.model
+            ),
+        )
+        budget_meta = (
+            UNBOUNDED_CONTEXT_BUDGET if budget is None else budget.as_dict()
+        )
+        if budget is not None and budget.exceeded(prompt):
+            budget_meta = budget.as_dict()
+            logger.info(
+                "[context] the thread cannot be brought under the budget: "
+                "%d tokens allowed, %d measured",
+                budget.budget_tokens, budget.last_measured,
+            )
+            error = ContextBudgetExceededError(
+                budget_tokens=budget.budget_tokens,
+                measured_tokens=budget.last_measured,
+                window_tokens=budget.window_tokens,
+                budget_source=budget.source,
+                provider=str(_infer_provider_from_model(
+                    self.model, getattr(self, "model_name", None) or "unknown"
+                ) or "effgen"),
+                model_name=str(getattr(self, "model_name", None) or ""),
+                protected="the question and the conversation it is asked in",
+            )
+            if self.config.raise_on_error:
+                raise error
+            detail = self._build_error_detail(error, self.model)
+            return AgentResponse(
+                output=generation_failure_text(detail),
+                success=False,
+                mode=AgentMode.SINGLE,
+                iterations=0,
+                tool_calls=ToolCallList(),
+                tokens_used=0,
+                metadata={
+                    "reason": "generation_failed",
+                    "error": detail,
+                    "prompt_protocol": "flat",
+                    "context_budget": budget_meta,
+                },
+            )
+
         try:
             # Time the call as a model span so a tool-free run still shows its
             # inner structure (the ReAct path already does this).
@@ -1178,6 +1253,7 @@ class AgentGenerationMixin:
                     failure = self._generation_failure_response(
                         response, iterations=1, tool_calls=0, tokens=tokens_used,
                     )
+                    failure.metadata["context_budget"] = budget_meta
                     # The adapter reports this failure by returning, not by
                     # raising, so record it on the span explicitly.
                     mark_span_error(str(failure.output)[:300])
@@ -1199,9 +1275,12 @@ class AgentGenerationMixin:
                     # goes out as one string whatever the caller configured.
                     # Saying so here means every run carries the key.
                     "prompt_protocol": "flat",
+                    "context_budget": budget_meta,
                 },
             )
 
+        except ContextBudgetExceededError:
+            raise
         except Exception as e:
             logger.error(f"Direct inference failed: {e}")
             detail = self._build_error_detail(e, self.model)

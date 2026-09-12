@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -101,6 +102,12 @@ from .thread import (
     TaskStep,
     ThoughtStep,
 )
+from .thread_budget import (
+    UNBOUNDED_CONTEXT_BUDGET,
+    count_prompt_tokens,
+    resolve_context_budget,
+)
+from .thread_compaction import resolve_policy
 from .tool_call_record import ToolCallList
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -337,6 +344,12 @@ class _RunState:
     checkpoints: Any = None
     iter_start: float = 0.0
     prompt: Any = ""
+    #: How many prompt tokens this run may send, resolved once before the first
+    #: turn. ``None`` when the run is unbounded — the caller asked for that, or
+    #: the model declares no window a budget could be derived from.
+    budget: Any = None
+    #: What the run gives up when it reaches the budget.
+    compaction: Any = None
 
 
 @dataclass(frozen=True)
@@ -898,6 +911,113 @@ def _written_call(
     ))
 
 
+#: How many rounds of compaction one turn may take before the run is declared
+#: not to fit. Each round gives up a rung and the prompt is rebuilt, so a
+#: policy that is releasing anything at all converges well inside this; the cap
+#: is what stops a policy that reports progress it did not make from looping.
+MAX_COMPACTION_ROUNDS = 8
+
+
+def _stamp_budget(state: _RunState) -> None:
+    """Put the run's budget on the thread, where every terminal path reads it.
+
+    On the thread rather than only on the response, so the key survives a
+    checkpoint and a stored session turn the same way the protocol does.
+    """
+    state.thread.metadata["context_budget"] = (
+        UNBOUNDED_CONTEXT_BUDGET if state.budget is None else state.budget.as_dict()
+    )
+
+
+def _compact_once(agent: Any, state: _RunState, thread: AgentThread) -> bool:
+    """Give up one rung of the thread, and say what it cost.
+
+    Args:
+        agent: The agent the run belongs to.
+        state: The run's conversation, budget and policy.
+        thread: The run's conversation, changed in place.
+
+    Returns:
+        Whether anything was given up.
+    """
+    budget = state.budget
+    before = (budget.stats.summarisation or {}).get("total_tokens", 0)
+    if not state.compaction.compact(thread, budget):
+        logger.info(
+            "[context] the thread cannot be brought under the budget: "
+            "%d tokens allowed, %d measured",
+            budget.budget_tokens, budget.last_measured,
+        )
+        return False
+    after = (budget.stats.summarisation or {}).get("total_tokens", 0)
+    state.tokens_used += max(0, after - before)
+    budget.stats.firings += 1
+    logger.info(
+        "[context] compacted the thread: %d tokens allowed, %d measured, "
+        "%d observations shortened, %d steps dropped, about %d tokens released",
+        budget.budget_tokens, budget.last_measured,
+        budget.stats.observations_shortened, budget.stats.steps_dropped,
+        budget.stats.tokens_dropped,
+    )
+    return True
+
+
+def _cannot_fit(
+    agent: Any, policy: _LoopPolicy, state: _RunState, thread: AgentThread
+) -> _StepOutcome | None:
+    """End the run on a conversation that will not fit what it may send.
+
+    Raises the typed error when the caller asked for failures to raise, and
+    otherwise hands back the equivalent failure response — the same choice
+    every other failure in this loop makes.
+
+    Args:
+        agent: The agent the run belongs to.
+        policy: The run's policy, for whether a failure raises.
+        state: The run's conversation and counters.
+        thread: The run's conversation.
+
+    Returns:
+        The terminal outcome, when the run reports rather than raises.
+
+    Raises:
+        ContextBudgetExceededError: When the run raises its failures.
+    """
+    from ..models.errors import ContextBudgetExceededError
+
+    budget = state.budget
+    error = ContextBudgetExceededError(
+        budget_tokens=budget.budget_tokens,
+        measured_tokens=budget.last_measured,
+        window_tokens=budget.window_tokens,
+        budget_source=budget.source,
+        provider=str(_infer_provider_from_model(
+            agent.model, getattr(agent, "model_name", None) or "unknown"
+        ) or "effgen"),
+        model_name=str(getattr(agent, "model_name", None) or ""),
+    )
+    if policy.raise_on_error:
+        raise error
+    failure = agent._generation_failure_response(
+        {"metadata": {"error_detail": {
+            "type": type(error).__name__,
+            "category": "invalid_request",
+            "provider": error.provider,
+            "model": error.model_name,
+            "message": error.message,
+            "retryable": False,
+        }}},
+        iterations=state.iterations,
+        tool_calls=state.tool_calls,
+        tokens=state.tokens_used,
+        debug_trace=state.debug_trace,
+    )
+    failure.metadata["thread"] = thread
+    failure.metadata["prompt_protocol"] = _protocol_of(thread)
+    failure.metadata["context_budget"] = _budget_of(thread)
+    return _StepOutcome("response", failure)
+
+
 def _note_debug_turn(state: _RunState, response: dict[str, Any], **fields: Any) -> None:
     """Append one iteration to the debug trace, when one is being collected."""
     if state.debug_trace is None:
@@ -953,126 +1073,159 @@ def step(
     # The frame for this turn: the run's frame, unless the guards have stopped
     # offering tools, which no frame but the text scaffold can express.
     turn_frame = frame_for(agent, tools_suppressed=guards.tools_suppressed())
-    transcript = thread.to_text()
     _cite_sources, _numbered_passages = agent._citation_prompt_state()
     _answer_shape = agent._answer_shape_instruction()
     gen_kwargs = dict(kwargs)
     turn_protocol = "flat"
     flat_prompt = ""
-    prompt: Any
+    prompt: Any = ""
 
     # Whether the persona and the session's earlier turns can travel as their
     # own messages this turn. A string frame has one role, so on a model whose
     # adapter does not take a conversation they stay in the text, exactly as
     # they were.
     carry_roles = agent._model_carries_a_conversation()
-    # The tool contract is not a reason on its own: the string frame already
-    # states it, in its own place. What a string frame cannot express is the
-    # caller's own persona and the turns of a session that happened before this
-    # run — those are what move the request onto roles.
-    frame_roles = carry_roles and bool(
-        thread.persona_text() or thread.prior_turns()
-    )
-    task_step = thread.task()
-    frame_parts = bool(task_step.parts) if task_step is not None else False
 
-    if turn_frame == "native":
-        # Native/hybrid mode: use a simple user message and pass tool
-        # definitions via the chat template's tools parameter. The model then
-        # writes its calls as the tokens its own template declares.
-        prompt = agent._native_tool_prompt(
-            task, transcript,
-            "" if frame_roles else conversation_history,
-            guards.previous_actions,
-            frame_owns_roles=frame_roles,
+    def build_prompt() -> None:
+        """Assemble this turn's request from the thread as it stands.
+
+        Every frame reaches the model through this one site, so the request a
+        budget measures is the request that is about to be sent rather than an
+        estimate of something near it. It is called again after each round of
+        compaction, which is why the two lines it logs are guarded to fire once
+        per run: a turn rebuilt eight times still reports its frame once.
+        """
+        nonlocal prompt, turn_protocol, flat_prompt
+        transcript = thread.to_text()
+        # The tool contract is not a reason on its own: the string frame
+        # already states it, in its own place. What a string frame cannot
+        # express is the caller's own persona and the turns of a session that
+        # happened before this run — those are what move the request onto roles.
+        frame_roles = carry_roles and bool(
+            thread.persona_text() or thread.prior_turns()
         )
-        tool_defs = agent._tool_calling_strategy.format_tools_for_prompt(
-            list(agent.tools.values())
-        )
-        if isinstance(tool_defs, list):
-            gen_kwargs["tools"] = tool_defs
-        if frame_roles or frame_parts:
+        task_step = thread.task()
+        frame_parts = bool(task_step.parts) if task_step is not None else False
+
+        if turn_frame == "native":
+            # Native/hybrid mode: use a simple user message and pass tool
+            # definitions via the chat template's tools parameter. The model then
+            # writes its calls as the tokens its own template declares.
+            prompt = agent._native_tool_prompt(
+                task, transcript,
+                "" if frame_roles else conversation_history,
+                guards.previous_actions,
+                frame_owns_roles=frame_roles,
+            )
+            tool_defs = agent._tool_calling_strategy.format_tools_for_prompt(
+                list(agent.tools.values())
+            )
+            if isinstance(tool_defs, list):
+                gen_kwargs["tools"] = tool_defs
+            if frame_roles or frame_parts:
+                if not state.frame_carried_by_messages:
+                    state.frame_carried_by_messages = True
+                    logger.info(
+                        "[frame] the run's frame travels as messages: "
+                        "persona=%s earlier turns=%d content parts=%d",
+                        bool(thread.persona_text()) if frame_roles else False,
+                        len(thread.prior_turns()) if frame_roles else 0,
+                        len(task_step.parts) if task_step is not None else 0,
+                    )
+                prompt = agent._frame_as_messages(
+                    prompt, thread, carry_roles=frame_roles,
+                )
+            # The same turn, said as the conversation it was, when the caller asked
+            # for that and the model declares it carries the shape. The flat prompt
+            # above stays built either way: it is what a refusal falls back to, and
+            # building it keeps the two renderings assembled from the same state.
+            flat_prompt = prompt
+            turn_protocol = agent._resolve_prompt_protocol(
+                tools_travel_as_parameter="tools" in gen_kwargs,
+                conversation_carries_earlier_turns=bool(thread.prior_turns()),
+            )
+            if turn_protocol == "messages":
+                if not state.resolved_to_messages:
+                    state.resolved_to_messages = True
+                    logger.info("[protocol] the run sends the conversation as messages")
+                prompt = agent._native_tool_messages(
+                    thread, guards.previous_actions,
+                    split_reasoning=(
+                        agent._message_protocol_probe() == PROTOCOL_SPLIT
+                    ),
+                )
+        elif turn_frame == "custom_template":
+            turn_protocol = agent._resolve_prompt_protocol(
+                tools_travel_as_parameter=False,
+                conversation_carries_earlier_turns=bool(thread.prior_turns()),
+            )
+            # User-provided custom template
+            tools_description = agent._get_tools_description()
+            prompt = agent.config.system_prompt_template.format(
+                tools_description=tools_description,
+                conversation_history=conversation_history,
+                task=task,
+                scratchpad=transcript,
+            )
+        else:
+            turn_protocol = agent._resolve_prompt_protocol(
+                tools_travel_as_parameter=False,
+                conversation_carries_earlier_turns=bool(thread.prior_turns()),
+            )
+            # ReAct mode: use enhanced ToolPromptGenerator
+            prompt = agent._tool_prompt_generator.generate_react_prompt(
+                task=task,
+                scratchpad=transcript,
+                conversation_history=conversation_history,
+                system_prompt=agent.config.system_prompt,
+                verbose=agent._verbose_tools,
+                closing_instruction=agent._context_answer_instruction(
+                    guards.previous_actions,
+                    cite_sources=_cite_sources,
+                    numbered_passages=_numbered_passages,
+                ),
+                answer_shape=_answer_shape,
+                tool_contract=agent._tool_contract(),
+            )
+        if frame_parts and not isinstance(prompt, list):
+            # A picture cannot ride in a string. The template already states the
+            # persona and the earlier turns, so only the parts are added here.
             if not state.frame_carried_by_messages:
                 state.frame_carried_by_messages = True
                 logger.info(
                     "[frame] the run's frame travels as messages: "
-                    "persona=%s earlier turns=%d content parts=%d",
-                    bool(thread.persona_text()) if frame_roles else False,
-                    len(thread.prior_turns()) if frame_roles else 0,
+                    "persona=False earlier turns=0 content parts=%d",
                     len(task_step.parts) if task_step is not None else 0,
                 )
-            prompt = agent._frame_as_messages(
-                prompt, thread, carry_roles=frame_roles,
-            )
-        # The same turn, said as the conversation it was, when the caller asked
-        # for that and the model declares it carries the shape. The flat prompt
-        # above stays built either way: it is what a refusal falls back to, and
-        # building it keeps the two renderings assembled from the same state.
-        flat_prompt = prompt
-        turn_protocol = agent._resolve_prompt_protocol(
-            tools_travel_as_parameter="tools" in gen_kwargs,
-            conversation_carries_earlier_turns=bool(thread.prior_turns()),
+            prompt = agent._frame_as_messages(prompt, thread, carry_roles=False)
+
+    build_prompt()
+    # The conversation is brought back under the run's budget here, before
+    # anything is sent: a prompt that will not fit is not a request worth
+    # paying for. Each round gives up one rung of the policy's ladder and the
+    # turn is rebuilt, so what is measured is always the request itself.
+    if state.budget is not None:
+        rounds = 0
+        while state.budget.exceeded(prompt) and rounds < MAX_COMPACTION_ROUNDS:
+            if not _compact_once(agent, state, thread):
+                outcome = _cannot_fit(agent, policy, state, thread)
+                if outcome is not None:
+                    return outcome
+                break
+            rounds += 1
+            build_prompt()
+        if state.budget.exceeded(prompt):
+            outcome = _cannot_fit(agent, policy, state, thread)
+            if outcome is not None:
+                return outcome
+        _stamp_budget(state)
+    if turn_protocol == "messages":
+        logger.info(
+            "[protocol] messages turn: %d messages, %d tool calls, "
+            "%d tool results",
+            len(prompt),
+            *_count_tool_parts(prompt),
         )
-        if turn_protocol == "messages":
-            if not state.resolved_to_messages:
-                state.resolved_to_messages = True
-                logger.info("[protocol] the run sends the conversation as messages")
-            prompt = agent._native_tool_messages(
-                thread, guards.previous_actions,
-                split_reasoning=(
-                    agent._message_protocol_probe() == PROTOCOL_SPLIT
-                ),
-            )
-            logger.info(
-                "[protocol] messages turn: %d messages, %d tool calls, "
-                "%d tool results",
-                len(prompt),
-                *_count_tool_parts(prompt),
-            )
-    elif turn_frame == "custom_template":
-        turn_protocol = agent._resolve_prompt_protocol(
-            tools_travel_as_parameter=False,
-            conversation_carries_earlier_turns=bool(thread.prior_turns()),
-        )
-        # User-provided custom template
-        tools_description = agent._get_tools_description()
-        prompt = agent.config.system_prompt_template.format(
-            tools_description=tools_description,
-            conversation_history=conversation_history,
-            task=task,
-            scratchpad=transcript,
-        )
-    else:
-        turn_protocol = agent._resolve_prompt_protocol(
-            tools_travel_as_parameter=False,
-            conversation_carries_earlier_turns=bool(thread.prior_turns()),
-        )
-        # ReAct mode: use enhanced ToolPromptGenerator
-        prompt = agent._tool_prompt_generator.generate_react_prompt(
-            task=task,
-            scratchpad=transcript,
-            conversation_history=conversation_history,
-            system_prompt=agent.config.system_prompt,
-            verbose=agent._verbose_tools,
-            closing_instruction=agent._context_answer_instruction(
-                guards.previous_actions,
-                cite_sources=_cite_sources,
-                numbered_passages=_numbered_passages,
-            ),
-            answer_shape=_answer_shape,
-            tool_contract=agent._tool_contract(),
-        )
-    if frame_parts and not isinstance(prompt, list):
-        # A picture cannot ride in a string. The template already states the
-        # persona and the earlier turns, so only the parts are added here.
-        if not state.frame_carried_by_messages:
-            state.frame_carried_by_messages = True
-            logger.info(
-                "[frame] the run's frame travels as messages: "
-                "persona=False earlier turns=0 content parts=%d",
-                len(task_step.parts) if task_step is not None else 0,
-            )
-        prompt = agent._frame_as_messages(prompt, thread, carry_roles=False)
     state.prompt = prompt
 
     # A turn that answered while holding a tool doing work the model cannot do
@@ -1151,10 +1304,49 @@ def step(
                         agent, flat_prompt, policy, gen_kwargs,
                         streamable=streamable,
                     )
+            # The provider refused a prompt our own count said would fit. Its
+            # number is the better one — it has just been shown to be right and
+            # ours wrong in the direction that matters — so take it, give up one
+            # more rung, and send once more. A run already at what it cannot do
+            # without says so with the typed error instead of paying for the
+            # same refusal again.
+            if state.budget is not None and _is_context_overflow(response):
+                stated = _stated_context_limit(response)
+                lowered = (
+                    state.budget.lower_to(stated) if stated else False
+                )
+                if lowered:
+                    logger.info(
+                        "[context] the provider counted %d tokens where we "
+                        "estimated %d",
+                        stated or 0, state.budget.last_measured,
+                    )
+                if _compact_once(agent, state, thread):
+                    build_prompt()
+                    _stamp_budget(state)
+                    response = yield from emitter.model_turn(
+                        agent, prompt, policy, gen_kwargs, streamable=streamable,
+                    )
+                if _is_context_overflow(response):
+                    state.budget.last_measured = max(
+                        state.budget.last_measured,
+                        count_prompt_tokens(prompt, model=agent.model),
+                    )
+                    outcome = _cannot_fit(agent, policy, state, thread)
+                    if outcome is not None:
+                        return outcome
             _meta = response.get("metadata") or {}
             _in_tok = _meta.get("prompt_tokens", 0) or 0
             _out_tok = response.get("tokens_used", 0) or 0
             _cached = _meta.get("cached_input_tokens", 0) or 0
+            # The provider counted the prompt we just sent. Paired with our own
+            # estimate of it, that is a correction for the next turn which
+            # costs nothing and is exact one turn late.
+            if state.budget is not None and _in_tok:
+                state.budget.observe_reported(
+                    reported=int(_in_tok),
+                    estimated=count_prompt_tokens(prompt, model=agent.model),
+                )
             try:
                 _mspan.set_attribute(ModelAttrs.INPUT_TOKENS, int(_in_tok))
                 _mspan.set_attribute(ModelAttrs.OUTPUT_TOKENS, int(_out_tok))
@@ -1190,6 +1382,7 @@ def step(
         )
         failure.metadata["thread"] = thread
         failure.metadata["prompt_protocol"] = _protocol_of(thread)
+        failure.metadata["context_budget"] = _budget_of(thread)
         return _StepOutcome("response", failure)
 
     logger.info(
@@ -1797,6 +1990,24 @@ def drive(
     # carries the key whatever ended the run, and raised to "messages" by the
     # first turn the model took that way.
     state.thread.metadata["prompt_protocol"] = "flat"
+    # How many prompt tokens this run may send, and what it gives up to stay
+    # inside that. Resolved once, before the first turn, so every turn of one
+    # run is measured against the same ceiling.
+    state.budget = resolve_context_budget(
+        agent.config.context_budget,
+        model=agent.model,
+        window_override=agent.config.max_context_length,
+        output_tokens=policy.gen_config.max_tokens,
+    )
+    state.compaction = resolve_policy(agent.config.compaction)
+    if state.budget is not None:
+        logger.info(
+            "[context] the run is bounded at %d tokens (window %s, source %s)",
+            state.budget.budget_tokens,
+            state.budget.window_tokens,
+            state.budget.source,
+        )
+    _stamp_budget(state)
     if policy.debug:
         from ..debug.inspector import DebugTrace
         state.debug_trace = DebugTrace(
@@ -2093,11 +2304,30 @@ def _terminal_meta(agent: Any, thread: AgentThread, reason: str) -> dict[str, An
         "tool_calling_strategy": agent._tool_calling_strategy.name,
         "thread": thread,
         "prompt_protocol": _protocol_of(thread),
+        # Always present, the way the protocol is: a reader should not have to
+        # know whether a run was bounded to ask whether it was.
+        "context_budget": _budget_of(thread),
         # A run that carries a picture or a recording says so whether or not the
         # agent holds tools: a caller reading the key should not have to know
         # which path answered it.
         "multimodal_inputs": bool(task is not None and task.parts),
     }
+
+
+def _budget_of(thread: AgentThread) -> dict[str, Any]:
+    """What the run's budget did, as every terminal path reports it.
+
+    Read off the thread, which is where the loop stamps it, so a response built
+    somewhere other than the loop carries the same mapping without having to be
+    handed the budget object.
+
+    Args:
+        thread: The run's conversation.
+
+    Returns:
+        The budget mapping, or the one a run with no budget in force reports.
+    """
+    return dict(thread.metadata.get("context_budget") or UNBOUNDED_CONTEXT_BUDGET)
 
 
 def _protocol_of(thread: AgentThread) -> str:
@@ -2111,6 +2341,59 @@ def _protocol_of(thread: AgentThread) -> str:
         list, ``"flat"`` otherwise.
     """
     return str(thread.metadata.get("prompt_protocol") or "flat")
+
+
+def _failure_message(response: dict[str, Any]) -> str:
+    """What a failed turn said, as the generation layer recorded it."""
+    if response.get("finish_reason") != "error":
+        return ""
+    meta = response.get("metadata") or {}
+    detail = meta.get("error_detail") or {}
+    return str(detail.get("message") or meta.get("error") or "")
+
+
+def _is_context_overflow(response: dict[str, Any]) -> bool:
+    """Whether a turn failed because its prompt was larger than the window.
+
+    Read through the same phrase list the rest of effGen reads a too-long
+    prompt with, so the loop and the error surface agree about what one is.
+
+    Args:
+        response: What the generation layer returned for the turn.
+
+    Returns:
+        True when the failure was the prompt not fitting.
+    """
+    from ..models.errors import _CONTEXT_WINDOW_SIGNALS
+
+    message = _failure_message(response).lower()
+    return bool(message) and any(s in message for s in _CONTEXT_WINDOW_SIGNALS)
+
+
+#: What a provider says the model would have accepted. Every wording this
+#: matches states the window before it states what was asked for, so the first
+#: number is the one to believe.
+_STATED_LIMIT_RE = re.compile(
+    r"(?:maximum context length is|context length \()\s*(\d{3,})", re.IGNORECASE
+)
+
+
+def _stated_context_limit(response: dict[str, Any]) -> int | None:
+    """The window a refusal named, when it named one.
+
+    Args:
+        response: What the generation layer returned for the turn.
+
+    Returns:
+        The token count the provider stated, or ``None``.
+    """
+    match = _STATED_LIMIT_RE.search(_failure_message(response))
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:  # pragma: no cover - the pattern only matches digits
+        return None
 
 
 def _is_request_shape_refusal(response: dict[str, Any]) -> bool:

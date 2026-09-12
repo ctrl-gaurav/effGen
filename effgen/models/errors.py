@@ -77,6 +77,20 @@ _CONTEXT_OVERFLOW_SIGNALS = (
     "request too large",
     "too large for model",
     "context window",
+    "exceeds model context length",
+)
+
+# The subset of the above that says the prompt is larger than the window,
+# rather than that a rate limit was reached. A window is a property of the
+# model and does not change while a request is in flight, so sending the same
+# prompt again spends the budget on the same refusal — which is what the local
+# engines' own check used to cause, its wording matching none of the phrases
+# above and being classified as an unknown, retryable failure.
+_CONTEXT_WINDOW_SIGNALS = (
+    "context_length_exceeded",
+    "maximum context length",
+    "exceeds model context length",
+    "too large for model",
 )
 
 
@@ -706,6 +720,71 @@ class InvalidRequestError(Exception):
         )
 
 
+class ContextBudgetExceededError(InvalidRequestError):
+    """Raised when a run's conversation will not fit the tokens it may send.
+
+    The run has already given up everything its compaction policy is allowed to
+    give up — old tool results, old reasoning, whole answered cycles — and the
+    smallest prompt it can still build is over the budget. What is left is the
+    question, the instructions the run is framed by and its most recent work,
+    none of which can go without changing what was asked.
+
+    Raised **before the request is sent**, so a run whose frame alone is too
+    large costs nothing at the provider. It is an
+    :class:`InvalidRequestError`, so a caller already catching a prompt that
+    was refused for being too long keeps catching this.
+
+    Attributes:
+        budget_tokens: What the run was allowed to send.
+        measured_tokens: What the smallest prompt it could build measured.
+        window_tokens: The context window the budget came from, when it was
+            derived from one.
+        budget_source: ``"auto"``, ``"config"`` or ``"fraction"`` — how the
+            budget was arrived at.
+        response: The run so far, when the caller asked for it to be kept.
+        partial: The progress the run had made, when there was any.
+    """
+
+    def __init__(
+        self,
+        *,
+        budget_tokens: int,
+        measured_tokens: int,
+        window_tokens: int | None = None,
+        budget_source: str = "auto",
+        provider: str = "effgen",
+        model_name: str = "",
+        protected: str = "",
+        response: Any = None,
+        partial: Any = None,
+    ) -> None:
+        self.budget_tokens = int(budget_tokens)
+        self.measured_tokens = int(measured_tokens)
+        self.window_tokens = window_tokens
+        self.budget_source = budget_source
+        self.response = response
+        self.partial = partial
+        held = protected or (
+            "the question, the instructions the run is framed by and its most "
+            "recent work"
+        )
+        window = (
+            f" of a {window_tokens}-token context window" if window_tokens else ""
+        )
+        super().__init__(
+            provider,
+            model_name,
+            (
+                f"the conversation does not fit: this run may send "
+                f"{self.budget_tokens} prompt tokens{window} and the smallest "
+                f"prompt it can build measures {self.measured_tokens} — {held} "
+                f"cannot be given up. Raise max_context_length or "
+                f"context_budget, shorten the question, or run it on a model "
+                f"with a larger context window."
+            ),
+        )
+
+
 class BudgetExceededError(Exception):
     """Raised when cumulative spend crosses the configured daily/monthly budget.
 
@@ -998,6 +1077,14 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     # invalid request.
     if any(k in str(exc).lower() for k in _EXPLICIT_INVALID_KEY_SIGNALS):
         return _AUTH
+
+    # 1.9. A prompt larger than the model's window. The window does not change
+    # while the request is in flight, so the same prompt sent again is refused
+    # again — it is the request that is wrong, not the moment. Classified from
+    # the message because the check that states it most plainly is effGen's own
+    # and raises a bare ValueError carrying no status code.
+    if any(k in str(exc).lower() for k in _CONTEXT_WINDOW_SIGNALS):
+        return _INVALID
 
     # 2. HTTP status code (raw SDK errors carry one).
     status = _status_code_of(exc)

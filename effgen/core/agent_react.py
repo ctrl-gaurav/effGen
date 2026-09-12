@@ -28,6 +28,7 @@ from ..utils.structured_logging import (
 )
 from .agent_citations import AgentCitationsMixin
 from .agent_loop import (
+    _budget_of,
     _Collecting,
     _decline_call,  # noqa: F401 - the loop's, re-exported where it was
     _is_request_shape_refusal,  # noqa: F401 - same
@@ -229,6 +230,7 @@ class AgentReActMixin(
             "tool_calling_strategy": detail["tool_calling_strategy"],
             "thread": run,
             "prompt_protocol": _protocol_of(run),
+            "context_budget": _budget_of(run),
         }
         partial = None
         if calls:
@@ -335,6 +337,7 @@ class AgentReActMixin(
             "tool_calling_strategy": self._tool_calling_strategy.name,
             "thread": thread,
             "prompt_protocol": _protocol_of(thread),
+            "context_budget": _budget_of(thread),
         }
         logger.info(
             "outcome stopped: stop_reason=%s tool=%s category=%s observations=%d",
