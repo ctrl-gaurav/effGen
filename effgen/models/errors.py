@@ -1083,7 +1083,16 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     # again — it is the request that is wrong, not the moment. Classified from
     # the message because the check that states it most plainly is effGen's own
     # and raises a bare ValueError carrying no status code.
-    if any(k in str(exc).lower() for k in _CONTEXT_WINDOW_SIGNALS):
+    #
+    # A payload that states a per-minute or per-day limit is excluded: a
+    # provider that answers a spent token budget with "request too large for
+    # model X on tokens per minute (TPM)" is reporting a throttle, and the same
+    # prompt does fit a minute later. Reading it as an oversized request loses
+    # the backoff and reports a transient limit as permanent.
+    _text = str(exc).lower()
+    if any(k in _text for k in _CONTEXT_WINDOW_SIGNALS) and not any(
+        k in _text for k in _EXPLICIT_RATE_LIMIT_SIGNALS
+    ):
         return _INVALID
 
     # 2. HTTP status code (raw SDK errors carry one).
