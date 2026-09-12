@@ -19,9 +19,46 @@ from __future__ import annotations
 import itertools
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any
+
+
+def as_data(value: Any) -> Any:
+    """*value* as JSON-serialisable data, however it was recorded.
+
+    An event's ``data`` is whatever the code that emitted it had to hand, so a
+    node's metadata can end up holding a record object — the list of tool calls
+    a finished run made, for instance. A serialised tree has to be data, or a
+    caller writing the run out with :func:`json.dumps` gets ``TypeError`` for
+    the whole document. Anything carrying its own ``to_dict`` is asked for it,
+    a dataclass is read field by field, a set becomes a list, an enum becomes
+    its value, and anything else is rendered as its string form rather than
+    dropped.
+    """
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, dict):
+        return {str(key): as_data(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [as_data(item) for item in value]
+    if isinstance(value, set | frozenset):
+        return [as_data(item) for item in value]
+    if isinstance(value, Enum):
+        return as_data(value.value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return as_data(to_dict())
+        except Exception:  # noqa: BLE001 - a record that cannot describe itself
+            return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        try:
+            return as_data(asdict(value))
+        except Exception:  # noqa: BLE001 - a field that cannot be copied
+            return str(value)
+    return str(value)
+
 
 # Monotonic sequence so every event id is unique even when several events are
 # created within the same millisecond. A bare ``time.time()*1000`` id collides
@@ -88,7 +125,7 @@ class ExecutionEvent:
             "timestamp": self.timestamp,
             "agent_id": self.agent_id,
             "message": self.message,
-            "data": self.data,
+            "data": as_data(self.data),
             "parent_event_id": self.parent_event_id,
             "event_id": self.event_id
         }
@@ -172,5 +209,5 @@ class ExecutionNode:
             "duration": self.get_duration(),
             "parent_id": self.parent_id,
             "children": [child.to_dict() for child in self.children],
-            "metadata": self.metadata
+            "metadata": as_data(self.metadata)
         }
