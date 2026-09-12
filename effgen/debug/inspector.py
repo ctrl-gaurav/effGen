@@ -27,18 +27,23 @@ logger = logging.getLogger(__name__)
 
 
 def _conversation_text(iteration: "DebugIteration") -> str:
-    """The iteration's conversation as text, from its steps where it has them.
+    """The iteration's conversation as steps, one heading and body per step.
 
-    Rendering the steps is what the run itself renders, so what the panel shows
-    is the transcript the model saw. An iteration recorded before the steps were
-    kept falls back to the snapshot it stored.
+    This is what the model was actually sent by the end of the iteration: the
+    instructions it was framed by, the question, every thought, every call with
+    the input it was given and every result. Secrets are redacted, and nothing
+    that differs between two runs that took the same path is printed, so two of
+    these diff cleanly. An iteration recorded before the steps were kept falls
+    back to the flat snapshot it stored.
     """
     saved = getattr(iteration, "thread_snapshot", None)
     if saved:
         try:
-            from ..core.thread import AgentThread
+            from ..core.thread_render import thread_as_text
 
-            return AgentThread.from_dict(saved).to_text()
+            rendered = thread_as_text(saved)
+            if rendered:
+                return rendered
         except (ValueError, TypeError, KeyError):
             logger.debug("Debug trace: stored steps could not be read", exc_info=True)
     return iteration.scratchpad_snapshot
@@ -261,12 +266,18 @@ def run_debug_cli(
 
         console.print(table)
 
+        # The conversation the model was sent by the end of this iteration,
+        # rendered as its steps rather than as one flattened string.
+        conversation = _conversation_text(it)
+        if conversation:
+            console.print(Panel(conversation, title="Conversation", style="cyan"))
+
         if step and not it.final_answer:
             action = console.input("[dim]Press Enter to continue, 's' for scratchpad, 'q' to quit: [/dim]")
             if action.strip().lower() == "q":
                 break
             if action.strip().lower() == "s":
-                console.print(Panel(_conversation_text(it) or "(empty)", title="Conversation"))
+                console.print(Panel(conversation or "(empty)", title="Conversation"))
 
     # Summary
     summary = Table(title="Run Summary", show_lines=True)
@@ -315,6 +326,9 @@ def _print_trace_rich(trace: DebugTrace) -> None:
             table.add_row("Final Answer", it.final_answer)
         table.add_row("Tokens / Latency", f"{it.tokens_used} / {it.latency:.3f}s")
         console.print(table)
+        conversation = _conversation_text(it)
+        if conversation:
+            console.print(Panel(conversation, title="Conversation", style="cyan"))
 
 
 # ---------------------------------------------------------------------------

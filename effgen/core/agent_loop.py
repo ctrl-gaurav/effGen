@@ -1823,6 +1823,14 @@ def step(
                 logger.info(
                     "Returning direct calculator result for simple arithmetic task"
                 )
+                # A turn that ends the run here is still a turn the model took,
+                # so the debug trace records it rather than reporting a run with
+                # no iterations at all.
+                _note_debug_turn(
+                    state, response, thought=reasoning, action=action,
+                    action_input=str(action_input), observation=str(tool_result),
+                    final_answer=tool_result,
+                )
                 return _StepOutcome("response", build_response(
                     agent, policy, state, snapshot, tool_result,
                     tool_calls=state.tool_calls,
