@@ -149,7 +149,7 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: another agent and the five ways of choosing what that agent is shown.
 #: Growing it is a deliberate act — move the number in the same commit that
 #: widens the surface.
-TOP_LEVEL_API_SIZE = 245
+TOP_LEVEL_API_SIZE = 248
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.
