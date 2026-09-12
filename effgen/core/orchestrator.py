@@ -24,6 +24,8 @@ from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .lifecycle import AgentRegistry
 from .message_bus import AgentMessage, MessageBus, MessageType
 from .shared_state import SharedState
+from .thread import AgentThread, AnswerStep, TaskStep
+from .thread_projection import delegation_of, resolve_projection
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,13 @@ class TeamConfig:
         voting_strategy: Voting strategy for collaborative/competitive
         timeout: Team execution timeout
         max_rounds: Maximum collaboration rounds
+        projection: Which of the team run's own steps each agent starts with
+            (:mod:`effgen.core.thread_projection`). The default carries
+            nothing, so each agent is asked exactly what it was asked before —
+            every pattern still builds the text it has always built. Ask for
+            ``"parent-answers"`` to have the agents that have already spoken
+            reach the next one as turns rather than as a block pasted in front
+            of its question.
         metadata: Additional metadata
     """
     name: str
@@ -150,6 +159,7 @@ class TeamConfig:
     voting_strategy: str = "majority"  # majority, unanimous, weighted
     timeout: int = 600
     max_rounds: int = 3
+    projection: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -244,6 +254,12 @@ class TeamResponse:
         selected_response: Selected response (for competitive)
         consensus_score: Consensus score (for collaborative)
         metadata: Additional metadata
+        thread: The team run's own conversation — what the team was asked, one
+            :class:`~effgen.core.thread.DelegationStep` per agent run carrying
+            that agent's own thread, and the answer. It is a field of its own
+            rather than a ``metadata`` key because ``metadata`` carries only
+            typed, redacted summaries, and a conversation is the text as it was
+            actually sent.
     """
     output: str
     success: bool = True
@@ -254,9 +270,30 @@ class TeamResponse:
     selected_response: dict[str, Any] | None = None
     consensus_score: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    thread: Any = None
+
+    def agent_threads(self) -> dict[str, Any]:
+        """The conversation each agent that ran had, by the id the team gave it.
+
+        A stage or a round is named ``"<agent name>"`` the first time it runs
+        and ``"<agent name>#<n>"`` after that, so an agent that speaks in three
+        rounds has three threads rather than one overwritten twice.
+
+        Returns:
+            ``{child_id: thread}``, in the order the agents ran, or an empty
+            mapping when no agent produced a conversation.
+        """
+        if self.thread is None or not hasattr(self.thread, "child_threads"):
+            return {}
+        threads: dict[str, Any] = self.thread.child_threads()
+        return threads
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        The run's conversation is written through the thread's own
+        serialisation, so the result stays a document a JSON writer accepts.
+        """
         return {
             "output": self.output,
             "success": self.success,
@@ -266,8 +303,73 @@ class TeamResponse:
             "rounds": self.rounds,
             "selected_response": self.selected_response,
             "consensus_score": self.consensus_score,
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "thread": self.thread.to_dict() if self.thread is not None else None,
         }
+
+
+class _TeamRun:
+    """The team run's own conversation, and what each agent starts with.
+
+    A team hands work to its members the way an agent hands work to a
+    sub-agent, so it keeps the same record: one
+    :class:`~effgen.core.thread.DelegationStep` per agent that ran, carrying
+    that agent's own :class:`~effgen.core.thread.AgentThread`. Agents in a
+    parallel pattern finish in any order, so the append is serialised here.
+
+    Args:
+        task: What the team was asked.
+        projection: Which of this thread's steps each agent starts with.
+    """
+
+    def __init__(self, task: str, projection: Any) -> None:
+        self.thread = AgentThread(steps=[TaskStep(text=task)])
+        self.projection = resolve_projection(projection)
+        self._lock = threading.Lock()
+        self._seen: dict[str, int] = {}
+
+    def prior_for(self, task: str) -> list[Any]:
+        """The steps the agent about to be asked *task* opens with."""
+        with self._lock:
+            return self.projection.project(self.thread, task=task)
+
+    def record(self, name: str, task: str, response: Any, *, role: str) -> str:
+        """Keep one agent's work on the team's conversation.
+
+        Args:
+            name: The agent's name.
+            task: What that agent was asked.
+            response: What it returned.
+            role: What it was doing, in the pattern's own vocabulary.
+
+        Returns:
+            The id this piece of work was recorded under — the agent's name the
+            first time, and ``"<name>#<n>"`` after that, so an agent that speaks
+            in several rounds keeps a thread per round.
+        """
+        with self._lock:
+            seen = self._seen.get(name, 0)
+            self._seen[name] = seen + 1
+            child_id = name if seen == 0 else f"{name}#{seen}"
+            step = delegation_of(
+                child_id, role=role, task=task, response=response,
+            )
+            self.thread.append(step)
+        return child_id
+
+    def finish(self, output: str, *, success: bool) -> AgentThread:
+        """Close the conversation with the team's answer and hand it back."""
+        with self._lock:
+            self.thread.append(AnswerStep(
+                text=output,
+                stop_reason="final_answer" if success else "sub_agent_failed",
+            ))
+            logger.info(
+                "[thread] the team recorded %d agent run(s), %d carrying the "
+                "agent's own conversation",
+                len(self.thread.delegations()), len(self.thread.child_threads()),
+            )
+            return self.thread
 
 
 class MultiAgentOrchestrator:
@@ -515,6 +617,7 @@ class MultiAgentOrchestrator:
         Messages are published on the bus and results stored in shared state.
         """
         current_task = task
+        run = _TeamRun(task, team.projection)
         responses = []
         cancel_event = self._cancel_events.get(team.name)
         cancelled = False
@@ -545,7 +648,11 @@ class MultiAgentOrchestrator:
 
             # Execute agent
             with execution_scope(role="stage", parent_agent=parent):
-                response = agent.run(current_task, mode=AgentMode.AUTO, context=context)
+                response = agent.run(
+                    current_task, mode=AgentMode.AUTO, context=context,
+                    _prior_steps=run.prior_for(current_task),
+                )
+            run.record(agent.name, current_task, response, role="stage")
             parent = agent.name
 
             # Track completion
@@ -625,6 +732,7 @@ class MultiAgentOrchestrator:
             pattern=OrchestrationPattern.SEQUENTIAL,
             agent_responses=responses,
             metadata=meta,
+            thread=run.finish(output, success=success),
         )
 
     def _execute_parallel(self,
@@ -638,8 +746,9 @@ class MultiAgentOrchestrator:
         """
         # Run all agents in parallel
         cancel_event = self._cancel_events.get(team.name)
+        run = _TeamRun(task, team.projection)
         responses = asyncio.run(
-            self._parallel_execution(task, team.agents, context, cancel_event)
+            self._parallel_execution(task, team.agents, context, cancel_event, run)
         )
 
         # Synthesize results
@@ -659,6 +768,7 @@ class MultiAgentOrchestrator:
             pattern=OrchestrationPattern.PARALLEL,
             agent_responses=responses,
             metadata=meta,
+            thread=run.finish(synthesis, success=success),
         )
 
     async def _parallel_execution(self,
@@ -666,8 +776,20 @@ class MultiAgentOrchestrator:
                                   agents: list[Agent],
                                   context: dict[str, Any],
                                   cancel_event: threading.Event | None = None,
+                                  run: Any = None,
                                   ) -> list[dict[str, Any]]:
-        """Execute agents in parallel."""
+        """Execute agents in parallel.
+
+        Args:
+            task: The task every member answers.
+            agents: The members.
+            context: The shared context each member is given.
+            cancel_event: Set to stop starting further members.
+            run: The team run's conversation, when one is keeping the record.
+
+        Returns:
+            One result dict per member, in the order the members were given.
+        """
         role = "member"  # parallel and competitive members are peers
 
         async def run_agent(agent: Agent):
@@ -688,8 +810,14 @@ class MultiAgentOrchestrator:
             ))
 
             # Run agent
+            prior = run.prior_for(task) if run is not None else None
             with execution_scope(role=role):
-                response = await agent.run_async(task, mode=AgentMode.AUTO, context=context)
+                response = await agent.run_async(
+                    task, mode=AgentMode.AUTO, context=context,
+                    **({"_prior_steps": prior} if prior else {}),
+                )
+            if run is not None:
+                run.record(agent.name, task, response, role=role)
 
             # Track completion
             self.execution_tracker.track_event(ExecutionEvent(
@@ -729,6 +857,7 @@ class MultiAgentOrchestrator:
 
         worker_names = [agent.name for agent in team.agents]
         manager_name = team.manager_agent.name
+        run = _TeamRun(task, team.projection)
 
         # Defensive language note, mirroring the fix applied to
         # DecompositionEngine's templates: team.manager_agent.run()
@@ -767,6 +896,9 @@ Use only the worker names listed above."""
                 mode=AgentMode.SINGLE,
                 context=context
             )
+        run.record(
+            manager_name, decomposition_prompt, manager_response, role="manager",
+        )
 
         # Parse subtasks (simple heuristic)
         subtasks = self._parse_subtasks(manager_response.output)
@@ -786,7 +918,11 @@ Use only the worker names listed above."""
             co_assigned = [a.name for a in targets] if len(targets) > 1 else []
             for agent in targets:
                 with execution_scope(role="worker", parent_agent=manager_name):
-                    response = agent.run(subtask, mode=AgentMode.AUTO, context=context)
+                    response = agent.run(
+                        subtask, mode=AgentMode.AUTO, context=context,
+                        _prior_steps=run.prior_for(subtask),
+                    )
+                run.record(agent.name, subtask, response, role="worker")
                 entry: dict[str, Any] = {
                     "agent_name": agent.name,
                     "subtask": subtask,
@@ -819,6 +955,7 @@ Provide a comprehensive final answer."""
                 mode=AgentMode.SINGLE,
                 context=context
             )
+        run.record(manager_name, synthesis_prompt, final_response, role="manager")
 
         # Success requires the manager's synthesis to succeed AND no worker to
         # have failed (a dropped/failed specialist must not pass silently).
@@ -850,6 +987,7 @@ Provide a comprehensive final answer."""
             pattern=OrchestrationPattern.HIERARCHICAL,
             agent_responses=responses,
             metadata=meta,
+            thread=run.finish(output, success=success),
         )
 
     def _execute_collaborative(self,
@@ -862,6 +1000,7 @@ Provide a comprehensive final answer."""
         Multiple rounds of discussion until consensus.
         """
         max_rounds = team.max_rounds
+        run = _TeamRun(task, team.projection)
         current_responses = []
         any_failure = False
         first_error: str | None = None
@@ -891,7 +1030,11 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                 # shown most recently, so the discussion links up in telemetry
                 # instead of reading as unconnected runs.
                 with execution_scope(role="collaborator", parent_agent=previous_speaker):
-                    response = agent.run(prompt, mode=AgentMode.AUTO, context=context)
+                    response = agent.run(
+                        prompt, mode=AgentMode.AUTO, context=context,
+                        _prior_steps=run.prior_for(prompt),
+                    )
+                run.record(agent.name, prompt, response, role="collaborator")
                 # Capture per-agent success/error like the other patterns — a
                 # failed agent must be visible, never an invisible silent pass.
                 entry = {
@@ -941,6 +1084,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         else:
             final_output = f"Error: {_error_text(meta['error'])}"
 
+        team_thread = run.finish(final_output, success=success)
         return TeamResponse(
             output=final_output,
             success=success,
@@ -949,6 +1093,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
             rounds=round_num,
             consensus_score=consensus_score,
             metadata=meta,
+            thread=team_thread,
         )
 
     def _execute_competitive(self,
@@ -962,8 +1107,9 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         """
         # All agents work on same task
         cancel_event = self._cancel_events.get(team.name)
+        run = _TeamRun(task, team.projection)
         responses = asyncio.run(
-            self._parallel_execution(task, team.agents, context, cancel_event)
+            self._parallel_execution(task, team.agents, context, cancel_event, run)
         )
 
         # Select best response
@@ -971,6 +1117,9 @@ Consider the above viewpoints and provide your perspective or refined answer."""
 
         meta: dict[str, Any] = dict(_aggregate_usage(responses))
         meta["voting_strategy"] = team.voting_strategy
+        competitive_thread = run.finish(
+            best_response["output"], success=bool(best_response["success"]),
+        )
         return TeamResponse(
             output=best_response["output"],
             success=best_response["success"],
@@ -978,6 +1127,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
             agent_responses=responses,
             selected_response=best_response,
             metadata=meta,
+            thread=competitive_thread,
         )
 
     def _execute_pipeline(self,

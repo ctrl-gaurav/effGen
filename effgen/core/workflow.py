@@ -27,6 +27,8 @@ from ..observability.tracing import (
     new_execution_id,
     record_skipped_step,
 )
+from .thread import AgentThread, DelegationStep, TaskStep
+from .thread_projection import ThreadProjection, resolve_projection
 from .workflow_checkpoint import CheckpointStore, WorkflowCheckpoint
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,22 @@ def _as_name_list(
             names.append(str(item))
         return names
     raise bad(f"{what} must be a list of names, got {type(value).__name__}.")
+
+
+def _thread_of(response: Any) -> Any:
+    """The conversation a node's agent had, when it built one.
+
+    Args:
+        response: Whatever the node's agent returned.
+
+    Returns:
+        The response's :class:`~effgen.core.thread.AgentThread`, or ``None``
+        when the node is not an agent at all — a callable, a stub, anything
+        that answers without a conversation.
+    """
+    meta = getattr(response, "metadata", None) or {}
+    thread = meta.get("thread") if isinstance(meta, dict) else None
+    return thread if isinstance(thread, AgentThread) else None
 
 
 def _redact(text: str) -> str:
@@ -136,6 +154,10 @@ class WorkflowNode:
     output: Any = None
     error: str | None = None
     execution_time: float = 0.0
+    #: The conversation this node's agent had, kept whether the node completed
+    #: or failed — a failed node's thread is what says how far it got. ``None``
+    #: for a node that never ran, or whose agent built no thread.
+    thread: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dict representation."""
@@ -147,6 +169,7 @@ class WorkflowNode:
             "status": self.status.value,
             "execution_time": round(self.execution_time, 3),
             "error": self.error,
+            "thread": self.thread.to_dict() if self.thread is not None else None,
             "metadata": self.metadata,
         }
 
@@ -168,15 +191,68 @@ class WorkflowResult:
     node_results: list[dict[str, Any]] = field(default_factory=list)
     execution_time: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Every node's conversation, by node id. A node that produced none is not
+    #: in the mapping. The same threads hang off :attr:`thread` as delegation
+    #: steps, and are what a checkpoint carries.
+    threads: dict[str, Any] = field(default_factory=dict)
+    #: The run's own conversation: what the workflow was asked, one
+    #: :class:`~effgen.core.thread.DelegationStep` per node carrying that node's
+    #: thread, and nothing else. A field of its own rather than a ``metadata``
+    #: key, because ``metadata`` carries typed, redacted summaries and a
+    #: conversation is the text as it was actually sent.
+    thread: Any = None
+
+    def node_thread(self, node_id: str) -> Any:
+        """The conversation one node's agent had.
+
+        Args:
+            node_id: The node to read.
+
+        Returns:
+            The node's :class:`~effgen.core.thread.AgentThread`, or ``None``
+            when that node produced none — it was skipped, it never ran, or it
+            is not an agent at all.
+        """
+        return self.threads.get(node_id)
+
+    def failed_nodes(self) -> list[dict[str, Any]]:
+        """Which nodes failed, why, and what each one's conversation held.
+
+        This is what a caller reads after a DAG stops: the node id, the typed
+        error the node recorded, and the thread as it stood when the node
+        failed — the steps it had taken, not a rendering of them.
+
+        Returns:
+            One entry per failed node, in topological order, each with
+            ``node_id``, ``error``, ``thread`` and the node's ``output`` as far
+            as it had one.
+        """
+        failed = []
+        for entry in self.node_results:
+            if entry.get("status") != NodeStatus.FAILED.value:
+                continue
+            nid = str(entry.get("id", ""))
+            failed.append({
+                "node_id": nid,
+                "error": entry.get("error"),
+                "thread": self.threads.get(nid),
+                "output": self.outputs.get(nid),
+            })
+        return failed
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable dict (output values truncated to 200 chars)."""
+        """Return a JSON-serializable dict (output values truncated to 200 chars).
+
+        The run's conversation is written through the thread's own
+        serialisation, so the result stays a document a JSON writer accepts.
+        """
         return {
             "success": self.success,
             "outputs": {k: str(v)[:200] for k, v in self.outputs.items()},
             "node_results": self.node_results,
             "execution_time": round(self.execution_time, 3),
             "metadata": self.metadata,
+            "thread": self.thread.to_dict() if self.thread is not None else None,
         }
 
 
@@ -188,7 +264,19 @@ class WorkflowDAG:
     Executes independent nodes in parallel via ``asyncio.gather``.
     """
 
-    def __init__(self, name: str = "workflow") -> None:
+    def __init__(self, name: str = "workflow", *, projection: Any = None) -> None:
+        """Build an empty graph.
+
+        Args:
+            name: What this workflow is called, in results and telemetry.
+            projection: Which of the run's own steps each node starts with
+                (:mod:`effgen.core.thread_projection`). The default carries
+                nothing, so a node is asked exactly what it was asked before —
+                the upstream outputs still reach it as the context block the
+                run has always built. Ask for ``"parent-answers"`` to have the
+                finished nodes reach the next one as turns of a conversation
+                instead.
+        """
         self.name = name
         self._nodes: dict[str, WorkflowNode] = {}
         self._edges: list[WorkflowEdge] = []
@@ -196,6 +284,7 @@ class WorkflowDAG:
         self._forward: dict[str, list[WorkflowEdge]] = defaultdict(list)
         self._reverse: dict[str, list[WorkflowEdge]] = defaultdict(list)
         self._sorted: list[str] | None = None  # cached topo order
+        self.projection: ThreadProjection = resolve_projection(projection)
 
     # -- Construction --
 
@@ -492,6 +581,7 @@ class WorkflowDAG:
             node.output = None
             node.error = None
             node.execution_time = 0.0
+            node.thread = None
 
         order = self.topological_order()
 
@@ -499,6 +589,16 @@ class WorkflowDAG:
         levels = self._compute_levels(order)
 
         outputs: dict[str, Any] = {}
+
+        # The run's own conversation: what the workflow was asked, then one
+        # record per node carrying that node's own thread. It is what
+        # ``WorkflowResult.thread`` hands back, what a projection reads to
+        # decide what the next node starts with, and what the checkpoint
+        # stores so a resumed run still has the nodes it has already run.
+        asked = "; ".join(
+            f"{nid}: {text}" for nid, text in initial_inputs.items() if str(text)
+        )
+        thread = AgentThread(steps=[TaskStep(text=asked)])
 
         # ------------------------------------------------------------------
         # Resume, if this run has been here before.
@@ -511,7 +611,16 @@ class WorkflowDAG:
                 node = self._nodes[nid]
                 node.status = NodeStatus.COMPLETED
                 node.output = value
+                node.thread = saved.thread_for(nid)
                 resumed_nodes.add(nid)
+                thread.append(DelegationStep(
+                    child_id=nid,
+                    role="node",
+                    task=str(saved.tasks.get(nid, "") or ""),
+                    thread=node.thread,
+                    output=str(value if value is not None else ""),
+                    success=True,
+                ))
             for nid, reason in saved.skipped.items():
                 node = self._nodes[nid]
                 node.status = NodeStatus.SKIPPED
@@ -523,6 +632,7 @@ class WorkflowDAG:
                     self.name, run_id, len(resumed_nodes), len(self._nodes),
                 )
 
+        node_tasks: dict[str, str] = {}
         for level_nodes in levels:
             tasks = []
             for nid in level_nodes:
@@ -597,9 +707,11 @@ class WorkflowDAG:
                     else:
                         node_input = context_str
 
+                node_tasks[nid] = node_input
                 tasks.append(self._run_node(
                     node, node_input, context,
                     execution_id=execution_id,
+                    prior_steps=self.projection.project(thread, task=node_input),
                 ))
 
             if tasks:
@@ -613,10 +725,24 @@ class WorkflowDAG:
                 # Also store under node id if output_key differs
                 if out_key != node.id:
                     outputs[node.id] = node.output
+                if nid in resumed_nodes:
+                    continue
+                # One record per node on the run's conversation, carrying the
+                # node's own thread — including a failed node's, which is what
+                # says where it got to.
+                thread.append(DelegationStep(
+                    child_id=nid,
+                    role="node",
+                    task=str(node_tasks.get(nid, "") or ""),
+                    thread=node.thread,
+                    output=str(node.output if node.output is not None else ""),
+                    success=node.status is not NodeStatus.FAILED,
+                    error=node.error,
+                ))
 
             # A finished level is the natural place to save: every node in it
             # has reached a terminal state, and the next level has not started.
-            self._save_checkpoint(checkpoint, run_id, outputs)
+            self._save_checkpoint(checkpoint, run_id, outputs, thread=thread)
 
         elapsed = time.time() - start
         success = all(
@@ -626,7 +752,9 @@ class WorkflowDAG:
 
         # Record the verdict, so a reader of the store can tell a run that
         # finished from one that stopped in the middle.
-        self._save_checkpoint(checkpoint, run_id, outputs, complete=success)
+        self._save_checkpoint(
+            checkpoint, run_id, outputs, complete=success, thread=thread,
+        )
 
         # Fold a running cost/token tab onto the result so a budget owner can read
         # workflow spend without summing node_results by hand. The tab sums the
@@ -648,11 +776,23 @@ class WorkflowDAG:
             except (TypeError, ValueError):
                 pass
 
+        node_threads = {
+            nid: node.thread
+            for nid, node in self._nodes.items()
+            if node.thread is not None
+        }
+        logger.info(
+            "[thread] the workflow recorded %d node(s), %d carrying the "
+            "node's own conversation",
+            len(thread.delegations()), len(thread.child_threads()),
+        )
         return WorkflowResult(
             success=success,
             outputs=outputs,
             node_results=[n.to_dict() for n in self._nodes.values()],
             execution_time=elapsed,
+            threads=node_threads,
+            thread=thread,
             metadata={
                 "name": self.name,
                 "node_count": len(self._nodes),
@@ -669,7 +809,8 @@ class WorkflowDAG:
 
     async def _run_node(self, node: WorkflowNode, task: str,
                         context: dict[str, Any],
-                        *, execution_id: str | None = None) -> None:
+                        *, execution_id: str | None = None,
+                        prior_steps: list[Any] | None = None) -> None:
         """Execute a single workflow node.
 
         A node is COMPLETED only when its agent returns a real, successful
@@ -683,7 +824,14 @@ class WorkflowDAG:
         workflow rather than standing alone.
         """
         node.status = NodeStatus.RUNNING
+        node.thread = None
         t0 = time.time()
+        # What the workflow decided this node should start with. Empty unless
+        # the caller asked for a projection, so a workflow that asks for
+        # nothing sends exactly the prompts it always did.
+        run_kwargs: dict[str, Any] = {"context": context}
+        if prior_steps:
+            run_kwargs["_prior_steps"] = prior_steps
         try:
             if node.agent is None:
                 raise ValueError(f"Node '{node.id}' has no agent assigned")
@@ -700,7 +848,7 @@ class WorkflowDAG:
             # Use async if available, else run in executor
             if hasattr(node.agent, "run_async"):
                 with execution_scope(**scope_kwargs):
-                    response = await node.agent.run_async(task, context=context)
+                    response = await node.agent.run_async(task, **run_kwargs)
             else:
                 loop = asyncio.get_running_loop()
 
@@ -708,10 +856,13 @@ class WorkflowDAG:
                     # A thread pool does not inherit the caller's context, so
                     # the scope is entered inside the worker.
                     with execution_scope(**scope_kwargs):
-                        return node.agent.run(task, context=context)
+                        return node.agent.run(task, **run_kwargs)
 
                 response = await loop.run_in_executor(None, _call)
 
+            # Keep the node's conversation before anything is decided about it,
+            # so a node that goes on to fail still says how far it got.
+            node.thread = _thread_of(response)
             node.output = response.output if hasattr(response, "output") else str(response)
 
             # Record this node's spend so the workflow can report a running tab
@@ -826,12 +977,22 @@ class WorkflowDAG:
         outputs: dict[str, Any],
         *,
         complete: bool = False,
+        thread: AgentThread | None = None,
     ) -> None:
         """Record where this run has got to.
 
         A store that cannot be written to must not take the run down with it:
         the run's own work is still valid, and losing the ability to resume is
         the smaller failure. The problem is logged rather than raised.
+
+        Args:
+            store: Where to write, or None to save nothing.
+            run_id: The id this run is saved under.
+            outputs: The output map as the run has it.
+            complete: Whether the run finished.
+            thread: The run's own conversation, whose delegation steps carry
+                each node's thread and the task each node was asked. Stored so
+                a resumed run has them back.
         """
         if store is None or not run_id:
             return
@@ -852,6 +1013,12 @@ class WorkflowDAG:
                 )
             elif node.status is NodeStatus.FAILED and node.error:
                 checkpoint.failed[nid] = node.error
+            if node.thread is not None:
+                checkpoint.threads[nid] = node.thread
+        if thread is not None:
+            for step in thread.delegations():
+                if step.task:
+                    checkpoint.tasks[step.child_id] = step.task
 
         try:
             store.save(checkpoint)

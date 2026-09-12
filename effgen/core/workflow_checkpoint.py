@@ -63,6 +63,24 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _thread_data(value: Any) -> Any:
+    """One node's conversation as plain data, however it was handed in.
+
+    Args:
+        value: An :class:`~effgen.core.thread.AgentThread`, the dict one
+            serialises to, or ``None``.
+
+    Returns:
+        The serialised thread, or ``None``.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        written: Any = value.to_dict()
+        return written
+    return _jsonable(value)
+
+
 @dataclass
 class WorkflowCheckpoint:
     """The state of one workflow run, as far as it got.
@@ -77,6 +95,14 @@ class WorkflowCheckpoint:
         skipped: Node ids that were skipped, with the reason.
         failed: ``{node_id: error}`` for nodes that ran and failed.
         outputs: The output map as the run had it, keyed as the run keys it.
+        threads: ``{node_id: thread}`` as plain data — each node's own
+            conversation, the steps it took rather than a rendering of them, so
+            a resumed run can still say how a node it is not re-running reached
+            its answer, and a failed node can be read back after the process
+            that ran it is gone.
+        tasks: ``{node_id: task}`` — what each node was actually asked, which
+            the task string alone does not record once upstream outputs have
+            been folded into it.
         updated_at: Unix time of the last write.
         metadata: Anything the caller wants carried alongside.
     """
@@ -88,8 +114,30 @@ class WorkflowCheckpoint:
     skipped: dict[str, str] = field(default_factory=dict)
     failed: dict[str, str] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
+    threads: dict[str, Any] = field(default_factory=dict)
+    tasks: dict[str, str] = field(default_factory=dict)
     updated_at: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def thread_for(self, node_id: str) -> Any:
+        """One node's conversation, rebuilt from what was stored.
+
+        Args:
+            node_id: The node to read.
+
+        Returns:
+            The node's :class:`~effgen.core.thread.AgentThread`, or ``None``
+            when nothing was stored for it — an older checkpoint, a node that
+            is not an agent, or a node that never ran.
+        """
+        from .thread import AgentThread
+
+        stored = self.threads.get(node_id)
+        if isinstance(stored, AgentThread):
+            return stored
+        if not isinstance(stored, dict):
+            return None
+        return AgentThread.from_dict(stored)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dict representation."""
@@ -101,6 +149,8 @@ class WorkflowCheckpoint:
             "skipped": dict(self.skipped),
             "failed": dict(self.failed),
             "outputs": {k: _jsonable(v) for k, v in self.outputs.items()},
+            "threads": {k: _thread_data(v) for k, v in self.threads.items()},
+            "tasks": {k: str(v) for k, v in self.tasks.items()},
             "updated_at": self.updated_at,
             "metadata": self.metadata,
         }
@@ -120,6 +170,8 @@ class WorkflowCheckpoint:
             skipped=dict(data.get("skipped") or {}),
             failed=dict(data.get("failed") or {}),
             outputs=dict(data.get("outputs") or {}),
+            threads=dict(data.get("threads") or {}),
+            tasks={k: str(v) for k, v in (data.get("tasks") or {}).items()},
             updated_at=float(data.get("updated_at") or 0.0),
             metadata=dict(data.get("metadata") or {}),
         )
