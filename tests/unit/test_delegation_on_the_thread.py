@@ -364,7 +364,7 @@ def test_a_second_child_sees_what_the_first_answered():
 
 
 # --------------------------------------------------------------------------- #
-# §G.3 — the shapes this was not written for
+# Shapes this was not written for
 # --------------------------------------------------------------------------- #
 def test_a_child_that_calls_a_tool_keeps_the_call_on_its_thread():
     model = _Scripted([
