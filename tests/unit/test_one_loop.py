@@ -150,7 +150,7 @@ def _agent(kind: str, script: list[dict] | None = None, **cfg: Any) -> Agent:
 
 
 # ---------------------------------------------------------------------------
-# One prompt frame (CE-1)
+# One prompt frame
 # ---------------------------------------------------------------------------
 
 
@@ -204,7 +204,7 @@ def test_a_react_frame_is_forced_on_both_paths_when_the_caller_asks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# One set of sampling settings (CE-2)
+# One set of sampling settings
 # ---------------------------------------------------------------------------
 
 _SAMPLING = {
@@ -246,7 +246,7 @@ def test_a_configured_seed_and_nucleus_reach_a_streamed_run(kind: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# One set of guards (CE-7)
+# One set of guards
 # ---------------------------------------------------------------------------
 
 
@@ -282,7 +282,7 @@ def test_the_guards_are_built_at_exactly_one_place() -> None:
 
 
 # ---------------------------------------------------------------------------
-# One terminal contract (CE-3, CE-4, CE-8)
+# One terminal contract
 # ---------------------------------------------------------------------------
 
 
@@ -332,7 +332,7 @@ def test_the_two_modes_of_one_stream_carry_the_same_text(kind: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# One safety pass (CE-6)
+# One safety pass
 # ---------------------------------------------------------------------------
 
 

@@ -172,9 +172,15 @@ _EDITORIALIZING_EXEMPT_FILES = {
 PATTERNS: dict[str, re.Pattern[str]] = {
     # internal tracking IDs from the build/audit process. ``BUG-12``/``ISSUE-7``
     # are the same shape from the same process — an internal finding number that
-    # means nothing to a reader outside the tracker it was filed in.
+    # means nothing to a reader outside the tracker it was filed in. Numbered
+    # acceptance criteria (``AC-1``) and change expectations (``CE-3``) are the
+    # same thing under another name: they index a brief the reader cannot read,
+    # and they reached shipped test files as section headers. The hyphen is
+    # required, so the JavaScript engine name ``V8`` and an ordinary "CE" stay
+    # untouched.
     "internal-tracking-id": re.compile(
-        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+|BUG-\d+|ISSUE-\d+)\b"
+        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+|BUG-\d+|ISSUE-\d+"
+        r"|AC-\d+|CE-\d+)\b"
         r"|Audit-2 #"
     ),
     # internal milestone / planning references. The separator between "Phase"

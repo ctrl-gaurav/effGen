@@ -168,7 +168,7 @@ def quiet_history(monkeypatch, tmp_path):
     return tmp_path
 
 
-# --------------------------------------------------------------- AC-1: it carries them
+# --------------------------------------------------- a checkpoint carries the run's steps
 class TestACheckpointCarriesTheRunsSteps:
     def test_a_periodic_checkpoint_stores_the_thread(self, tmp_path, quiet_history):
         agent = _agent()
@@ -217,7 +217,7 @@ class TestACheckpointCarriesTheRunsSteps:
         assert final.to_thread().to_text() == response.metadata["thread"].to_text()
 
 
-# --------------------------------------------- AC-3: a 1.1.0 checkpoint round-trips
+# ----------------------------------------------- a 1.1.0 checkpoint round-trips
 class TestA110CheckpointRoundTripsLosslessly:
     def _saved(self, tmp_path, quiet_history) -> tuple[Checkpoint, AgentThread]:
         agent = _agent()
@@ -264,7 +264,7 @@ class TestA110CheckpointRoundTripsLosslessly:
         assert action.arguments == {"expression": "17 * 23", "precision": 2}
 
 
-# ------------------------------------------- AC-2: a 1.0.x checkpoint still resumes
+# ------------------------------------------- a 1.0.x checkpoint still resumes
 class TestA10xCheckpointStillResumes:
     def _fixture(self) -> dict[str, Any]:
         return json.loads(V101_CHECKPOINT.read_text())
@@ -368,7 +368,7 @@ class TestA10xCheckpointStillResumes:
         )
 
 
-# ---------------------------------------------------- AC-4: resuming changes nothing
+# ---------------------------------------------------- resuming changes nothing
 class TestAResumedRunAgreesWithAnUninterruptedOne:
     def _uninterrupted(self, quiet_history) -> Any:
         agent = _agent()
