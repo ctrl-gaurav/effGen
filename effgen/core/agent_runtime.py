@@ -1345,6 +1345,7 @@ class AgentRuntimeMixin:
         *,
         tools_travel_as_parameter: bool,
         conversation_carries_earlier_turns: bool = False,
+        conversation_already_on_messages: bool = False,
     ) -> str:
         """Whether this turn sends messages or the flat transcript.
 
@@ -1355,7 +1356,10 @@ class AgentRuntimeMixin:
            conversation — see below;
         3. this turn's tool definitions do not travel as a request parameter —
            the ReAct-text branch, a caller's own template, a turn whose tools
-           the guards suppressed — so there is no protocol call to express;
+           the guards suppressed — so there is no protocol call to express,
+           **unless this run's conversation is already travelling as
+           messages**, in which case the turn goes out the way the rest of the
+           run went out;
         4. the model does not declare
            :meth:`~effgen.models.base.BaseModel.supports_message_protocol`;
         5. a real request on this model already came back refusing the shape.
@@ -1367,7 +1371,11 @@ class AgentRuntimeMixin:
         own tool call as something the user narrated, and would make it again —
         which the repeat guard then stops, costing the caller that turn. So a
         run continuing a conversation sends its steps as the turns they were,
-        and a run continuing nothing sends the string it always sent.
+        and a run continuing nothing sends the string it always sent. One
+        protocol means the whole of one run, so once a request has gone out as
+        messages the turns after it go out as messages too — including the
+        turn whose tools the guards stopped offering, which is a turn about
+        the same conversation and not the start of a new one.
 
         There is one loop and it sends messages, so a streamed run resolves
         exactly as a blocking one does; the ask is honoured rather than logged
@@ -1381,6 +1389,8 @@ class AgentRuntimeMixin:
             conversation_carries_earlier_turns: Whether the run continues a
                 conversation whose earlier exchanges are already travelling as
                 turns.
+            conversation_already_on_messages: Whether a request of this run has
+                already gone out as messages.
 
         Returns:
             ``"flat"`` or ``"messages"``.
@@ -1402,11 +1412,17 @@ class AgentRuntimeMixin:
         say = logger.warning if declared == "messages" else logger.info
 
         if not tools_travel_as_parameter:
-            say(
-                "[protocol] this turn's tool definitions do not travel as a "
-                "request parameter; the turn sends the flat transcript"
+            if not conversation_already_on_messages:
+                say(
+                    "[protocol] this turn's tool definitions do not travel as a "
+                    "request parameter; the turn sends the flat transcript"
+                )
+                return "flat"
+            logger.info(
+                "[protocol] the run's conversation is already travelling as "
+                "messages; this turn keeps it there, with no tool definitions "
+                "on the request"
             )
-            return "flat"
         model = getattr(self, "model", None)
         supports = getattr(model, "supports_message_protocol", None)
         if not (callable(supports) and supports()):

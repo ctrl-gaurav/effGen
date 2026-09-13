@@ -66,6 +66,7 @@ from .agent_config import AgentMode
 from .agent_response import AgentResponse, StreamEvent
 from .agent_runtime import (
     CONTINUE_REASONING_LINE,
+    DEFAULT_SYSTEM_PROMPT,
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
@@ -1179,22 +1180,50 @@ def step(
             turn_protocol = agent._resolve_prompt_protocol(
                 tools_travel_as_parameter=False,
                 conversation_carries_earlier_turns=bool(thread.prior_turns()),
+                conversation_already_on_messages=state.resolved_to_messages,
             )
             # ReAct mode: use enhanced ToolPromptGenerator
-            prompt = agent._tool_prompt_generator.generate_react_prompt(
-                task=task,
-                scratchpad=transcript,
-                conversation_history=conversation_history,
-                system_prompt=agent.config.system_prompt,
-                verbose=agent._verbose_tools,
-                closing_instruction=agent._context_answer_instruction(
+            react_frame = {
+                "task": task,
+                "scratchpad": transcript,
+                "verbose": agent._verbose_tools,
+                "closing_instruction": agent._context_answer_instruction(
                     guards.previous_actions,
                     cite_sources=_cite_sources,
                     numbered_passages=_numbered_passages,
                 ),
-                answer_shape=_answer_shape,
-                tool_contract=agent._tool_contract(),
+                "answer_shape": _answer_shape,
+                "tool_contract": agent._tool_contract(),
+            }
+            prompt = agent._tool_prompt_generator.generate_react_prompt(
+                conversation_history=conversation_history,
+                system_prompt=agent.config.system_prompt,
+                **react_frame,
             )
+            # This is the frame a turn whose tools the guards suppressed falls
+            # back to: the only one that can ask for an answer without offering
+            # a call. A run whose conversation is already travelling as messages
+            # keeps travelling that way — the scaffold becomes this turn's user
+            # message, the session's earlier turns stay the turns they were, and
+            # nothing puts tool definitions back on the request.
+            flat_prompt = prompt
+            if turn_protocol == "messages":
+                if frame_roles:
+                    # What the roles carry is removed from the string, exactly
+                    # as the native frame removes it: a persona stated twice is
+                    # a persona the model weighs twice.
+                    prompt = agent._tool_prompt_generator.generate_react_prompt(
+                        conversation_history="",
+                        system_prompt=(
+                            DEFAULT_SYSTEM_PROMPT
+                            if thread.persona_text()
+                            else agent.config.system_prompt
+                        ),
+                        **react_frame,
+                    )
+                prompt = agent._frame_as_messages(
+                    prompt, thread, carry_roles=frame_roles,
+                )
         if frame_parts and not isinstance(prompt, list):
             # A picture cannot ride in a string. The template already states the
             # persona and the earlier turns, so only the parts are added here.
@@ -1286,7 +1315,10 @@ def step(
             # re-learned every run. Both the retry and the fall-back are real
             # calls and are counted as such.
             if turn_protocol == "messages" and _is_request_shape_refusal(response):
-                if agent._message_protocol_probe() is None:
+                # Only the native frame sends an assistant turn carrying both
+                # text and a call, so only it has that shape to split. Every
+                # other frame's messages fall straight back to the string.
+                if turn_frame == "native" and agent._message_protocol_probe() is None:
                     logger.info(
                         "[protocol] the model refused an assistant turn "
                         "carrying both text and a tool call; retrying "
