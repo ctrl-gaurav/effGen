@@ -220,6 +220,8 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "ScienceDomain": ("effgen.domains.presets", "ScienceDomain"),
     "ShortTermMemory": ("effgen.memory.short_term", "ShortTermMemory"),
     "StreamChunk": ("effgen.models.anthropic_adapter", "StreamChunk"),
+    "SubAgentManager": ("effgen.core.sub_agent_manager", "SubAgentManager"),
+    "SubAgentResult": ("effgen.core.sub_agent_manager", "SubAgentResult"),
     "SubAgentRouter": ("effgen.core.router", "SubAgentRouter"),
     "SubTask": ("effgen.core.task", "SubTask"),
     "SuiteResults": ("effgen.eval.evaluator", "SuiteResults"),
@@ -607,6 +609,8 @@ __all__ = [
     "FileCheckpointStore",
     "InMemoryCheckpointStore",
     "SubAgentRouter",
+    "SubAgentManager",
+    "SubAgentResult",
     "RoutingStrategy",
     "RoutingDecision",
 

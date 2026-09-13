@@ -43,7 +43,7 @@ import json
 import re
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -206,6 +206,7 @@ AREAS: list[dict] = [
             "effgen.core.workflow",
             "effgen.core.workflow_checkpoint",
             "effgen.core.middleware",
+            "effgen.core.sub_agent_manager",
         ],
     },
     {
@@ -359,6 +360,10 @@ def parse_params(lines: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     name: str | None = None
     buf: list[str] = []
+    # The indent the current row started at. Set before the loop so the
+    # comparison below reads a defined value on every path, not only on the
+    # ones a short-circuit happens to skip.
+    base_indent = 0
     row = re.compile(r"^(\*{0,2}\w+)\s*(\([^)]*\))?\s*:\s*(.*)$")
 
     def flush() -> None:
@@ -530,7 +535,7 @@ def members_of(cls, exported: set[str]) -> list[dict]:
         for name, member in sorted(vars(klass).items()):
             if name.startswith("_") or name in seen:
                 continue
-            func = member.__func__ if isinstance(member, (classmethod, staticmethod)) else member
+            func = member.__func__ if isinstance(member, classmethod | staticmethod) else member
             inherited = None if klass is cls else klass.__name__
             if isinstance(member, property):
                 seen.add(name)
@@ -685,8 +690,9 @@ def collect_not_exported() -> list[dict]:
 
 
 def collect() -> dict:
-    import effgen
     from importlib.metadata import version
+
+    import effgen
 
     names = sorted(effgen.__all__)
     exported = set(names)
@@ -701,7 +707,7 @@ def collect() -> dict:
         kinds[entry["kind"]] = kinds.get(entry["kind"], 0) + 1
 
     return {
-        "derived_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "derived_at": datetime.now(UTC).strftime("%Y-%m-%d"),
         "version": version("effgen"),
         "public_names": len(effgen.__all__),
         "kind_counts": {k: kinds[k] for k in sorted(kinds)},
