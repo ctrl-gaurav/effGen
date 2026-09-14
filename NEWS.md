@@ -12,10 +12,6 @@ saved run resumes where it stopped instead of restarting the task. There is one 
 of three, so a streamed run sends what a blocking one sends. And a run that continues a session
 sends that conversation as the messages it was, on a model that takes them.
 
-None of this is tuned for a benchmark. These are changes to how the framework behaves. We ran public
-sample sets to check the changes helped rather than to chase a score, and where a change cost
-something we say so.
-
 Eleven changes are visible to existing code, and they are listed first.
 
 The public surface grew from 225 names to 250. Nothing was removed or renamed.
@@ -424,10 +420,6 @@ notes. Citation markers are opt-in instead of being added to every retrieval ans
 no longer stop a run that is still making progress. Every tool-calling path now tells the model what
 the tools are for. The budget check before each model call reads an index instead of the whole spend
 ledger. And the Groq default points at a model Groq still serves.
-
-None of this is tuned for a benchmark. These are changes to how the framework behaves. We ran public
-sample sets to check the changes helped rather than to chase a score, and where a change cost
-something we say so.
 
 Four changes are visible to existing code, and one of them changes what `success` means for a run
 that stopped part way. Those are listed first.

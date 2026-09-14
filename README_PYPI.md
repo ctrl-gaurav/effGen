@@ -377,7 +377,7 @@ No cloud model was measured.
 <br/>
 
 **This release fixes how the framework reports what a run did, what it puts in a prompt, and what
-its own bookkeeping costs.** None of it is tuned for a benchmark. Four changes are visible to
+its own bookkeeping costs.** Four changes are visible to
 existing code, and one of them changes what `success` means for a run that stopped part way.
 
 | Area | What changed |
