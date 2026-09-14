@@ -85,6 +85,7 @@ print(f"Answer: {result.output}")
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🧵 | **14 Sep 2026** | **v1.1.0 Released** — a run now keeps its conversation as typed steps instead of one growing string. `response.thread` is what the run did, and the command line (`effgen run --show-thread`), the run card, the debug inspector and the dashboard all render the same steps. A run is bounded by what it may send (`context_budget=`, default `"auto"`) and gives up its oldest material first. A saved run resumes where it stopped instead of restarting the task. One agent loop replaces three, so a streamed run sends the same prompt, tool definitions and sampling settings as a blocking one. New `prompt_protocol=` sends a conversation as turns; the default stays flat for a single-turn run, and why is in the changelog. A run sends 26% fewer prompt tokens at 1.5B and 18% fewer at 7B and makes about 16% fewer model calls, and three sample sets got worse. Public surface 225 → 250 names, nothing removed. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#110---2026-09-14) |
 | 🔧 | **8 Sep 2026** | **v1.0.1 Released** - fixes to how the framework reports what a run did, what it puts in a prompt, and what its own bookkeeping costs. A run that stops without an answer now reports `success=False`, `outcome="stopped"` and a typed `stop_reason`, keeps what it reached in `.partial`, and raises `RunStoppedError` under the default `raise_on_error=True`. Citation markers are opt-in (`cite_sources=`) and point at real sources when you ask for them. The loop guards no longer stop runs that are still working. Every tool-calling path tells the model what the tools are for. The budget check against a 500,000 row ledger went from 1,278 ms to 0.044 ms. The Groq default points at a model Groq still serves. A run costs 37% more model calls and 57% more prompt tokens than 1.0.0, and two retrieval sets got worse. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#101---2026-09-08) |
 | 🎉 | **14 Aug 2026** | **v1.0.0 Released** — the first stable release. Point effGen at any OpenAI-compatible server (`base_url`, vLLM/Ollama/LM Studio/a gateway), read back which tool calls a run made, wrap the agent loop in middleware, give one agent many conversations with `run(session=...)`, choose a context-compaction strategy, and resume a `WorkflowDAG` that died half way through. Plus `effgen code` (a terminal coding agent), a model/pricing browser, shareable HTML reports and run cards, `effgen top`, `effgen battle`, and a long pass over everything that used to report the wrong thing: a failed run raises, an unpriced model reports no cost, and a tool call written in an unfamiliar shape is understood. **Three breaking changes** (Python 3.11 floor, `raise_on_error=True`, an unreachable backend raises). [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#100---2026-08-14) |
 | ✨ | **5 Jul 2026** | **v0.3.2 Released** — Usability, Robustness & Polish: structured output + cost gates + document input on the CLI (`batch --schema`, `eval --fail-under`, `compare --optimize cost`, `run --file`), clinical-grade PHI redaction with a `phi` preset, native web-search sources that never vanish, sampling controls (`seed`/`frequency_penalty`) that take effect, a server that returns real HTTP status on failure, provider/model/status-labeled `/metrics` with top-level alerting/SLO exports, batch that survives malformed rows with per-job cost, spreadsheet ingestion, the `general` preset on Gemini, and prompt-library input validation. No breaking changes. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#032---2026-07-05) |
@@ -315,6 +316,62 @@ Observability<br/>
 </div>
 
 <details open>
+<summary><b>🆕 What's new in v1.1.0</b></summary>
+
+<br/>
+
+**A run now keeps its conversation as typed steps instead of one growing string.** That one change
+is the release: the loop builds an `AgentThread`, the prompt is rendered from it, the checkpoint
+stores it, and the caller can read it. Eleven changes are visible to existing code, and the public
+surface grew from 225 names to 250 with nothing removed or renamed.
+
+| Area | What changed |
+|------|--------------|
+| **A run says what it did** | `response.thread` is the run's conversation as `SystemStep`, `TaskStep`, `ThoughtStep`, `ActionStep`, `ObservationStep`, `NudgeStep`, `DelegationStep` and `AnswerStep`. The command line (`effgen run --show-thread`), the run card, the debug inspector and the dashboard all render the same steps. `to_dict()` is the serialisation; `json.dumps(response.metadata)` still raises on the live object. |
+| **A run is bounded by what it may send** | `AgentConfig(context_budget=...)`, default `"auto"`, derived from the model's own window and unbounded when the model declares none. Over budget, the run shortens the oldest tool result, then drops an old thought, then whole answered cycles — never the frame, the task, the last two cycles or the answer. `AgentConfig.max_context_length`, declared since 1.0 and read by nothing, now has an effect. |
+| **A saved run resumes where it stopped** | `Checkpoint.thread` carries the steps, and `agent.resume()` continues the run instead of restarting the task. A 1.0.x checkpoint still loads, rebuilding its steps from the transcript; the four things that rebuild cannot recover are listed in the changelog. |
+| **One agent loop instead of three** | A streamed run now sends the same prompt, the same tool definitions and the same sampling settings as a blocking one, reaches the same guards, and runs its output guardrails. First-prompt identity went from 31 of 45 to **45 of 45**; sampling fields that differed, from 6 of 9 to **0 of 9**. `run()` is byte-identical over a 366-run replay. |
+| **How a conversation reaches the model** | `AgentConfig(prompt_protocol="flat"/"messages"/"auto")`, default `"auto"`: a run continuing a session sends its turns as turns, a run continuing nothing keeps its own steps in the flat string. Why the default is not `messages` is in the changelog. |
+| **Threads through orchestration** | `AgentResponse.sub_agent_threads()`, `WorkflowResult.thread`/`.threads`/`.node_thread()`/`.failed_nodes()`, `TeamResponse.thread`/`.agent_threads()`, `SubAgentResult.thread`, and `projection=` on `WorkflowDAG`, `TeamConfig` and `SubAgentManager` — all defaulting to carrying nothing into a child run. |
+| **`effgen run --json` works on a tool run** | It raised `TypeError: Object of type ToolCall is not JSON serializable` for any run that called a tool, taking `-o` and `--card` with it. The `--json`, `-o` and `--card` documents are now scrubbed; the terminal answer panel still prints the run's own words unredacted. |
+
+```python
+from effgen import Agent, AgentConfig, thread_as_text
+
+agent = Agent(AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+))
+response = agent.run("What is 17 * 23?")
+
+print(response.output)
+print(thread_as_text(response.thread))        # the run, step by step
+print(response.metadata["context_budget"])    # what it was allowed to send
+```
+
+```python
+from effgen import AgentConfig
+
+print(AgentConfig(model="openai:gpt-5-nano").prompt_protocol)   # auto
+print(AgentConfig(model="openai:gpt-5-nano", prompt_protocol="messages").prompt_protocol)
+```
+
+```bash
+pip install --upgrade effgen
+effgen --version
+```
+
+**What it cost.** On the same ten public sample sets as the 1.0.1 baseline, a run sends 26% fewer
+prompt tokens at 1.5B and 18% fewer at 7B, and makes about 16% fewer model calls. It is not faster.
+Mean accuracy moved −2.67 (1.5B) and −3.53 (7B) with sets weighted equally, −0.42 and −1.48 with
+samples weighted equally; three sets got worse and two got better outside every band we computed.
+No cloud model was measured.
+
+[Full v1.1.0 changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#110---2026-09-14)
+
+</details>
+
+<details>
 <summary><b>🆕 What's new in v1.0.1</b></summary>
 
 <br/>
@@ -618,7 +675,7 @@ result = agent.run("Transcribe and summarize.", inputs=[aud])
 ```
 
 ```bash
-effgen run --preset multimodal "Describe this image" --image /tmp/photo.jpg
+effgen run --preset multimodal "Describe this image" --file /tmp/photo.jpg
 python -c "from effgen.models.capabilities import Capability; print(Capability.vision)"
 ```
 

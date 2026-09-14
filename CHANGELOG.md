@@ -7,6 +7,424 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-09-14
+
+### Highlights
+
+**A run now keeps its conversation as typed steps instead of one growing string.** That one change
+is the release. The string — the scratchpad — was assembled in three places, read back with regular
+expressions in four, and thrown away at the end of the run. In its place is `AgentThread`: an
+ordered list of `SystemStep`, `TaskStep`, `TurnStep`, `ThoughtStep`, `ActionStep`,
+`ObservationStep`, `NudgeStep`, `DelegationStep` and `AnswerStep`, which the loop builds, the
+prompt is rendered from, the checkpoint stores, and the caller can read.
+
+Four things follow from it. A finished run says what it did: `response.thread` is the conversation,
+and the command line, the run card, the debug inspector and the dashboard all render the same
+steps. A run says how many prompt tokens it may send and stays inside it, giving up the oldest
+material first rather than failing at the provider. A saved run resumes where it stopped instead of
+restarting the task. And there is now one agent loop rather than three, so a streamed run sends the
+same prompt, the same tool definitions and the same sampling settings as a blocking one.
+
+None of this is tuned for a benchmark. These are changes to how the framework behaves. We ran public
+sample sets to check the changes helped rather than to chase a score, and where a change cost
+something we say so: a run sends fewer prompt tokens and makes fewer model calls, it is not faster,
+and it cost accuracy on some sets. The figures are under "What it cost" at the end of this entry.
+
+**Nothing was removed or renamed.** The public surface grew from 225 names to 250. Eleven changes are
+visible to existing code and they are listed first.
+
+### Changed: what existing code sees
+
+#### 1. A run carries its conversation, and `response.metadata` is no longer plain data
+
+`AgentResponse.thread` is the run's `AgentThread`, or `None` for a run that recorded none.
+`response.metadata["thread"]` holds the same object.
+
+The thread opens with the run's frame: a `SystemStep` when tools are attached, and then always a
+`TaskStep`, before any step the model produced. Code that reads `thread.steps[0]` expecting the
+first thought will find the frame there instead.
+
+`to_text()` is unchanged and still renders the transcript a 1.0.x reader would recognise.
+**`to_dict()` is the documented serialisation**: `json.dumps(response.metadata)` raises on the
+thread object, because `metadata["thread"]` is the live object that `thread.delegations()`,
+`.child_threads()` and `.to_text()` are called on. `json.dumps(response.to_dict())` works and
+writes the thread through its own serialisation.
+
+*Migration:* serialise through `response.to_dict()`, or `response.thread.to_dict()`, rather than
+dumping `response.metadata` directly.
+
+A run against a model you serve yourself, start to finish:
+
+```python
+from effgen import Agent, AgentConfig, thread_as_text
+
+agent = Agent(AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+))
+response = agent.run("What is 17 * 23?")
+
+print(response.output)
+print(thread_as_text(response.thread))        # the run, step by step
+print(response.metadata["context_budget"])    # what it was allowed to send
+```
+
+`thread_as_text()` is one block of text; `render_thread()` hands back the same steps one at a time,
+with a position, a kind, a label, a body and a depth, so a caller can lay them out itself. Both
+redact by default and omit tool-call ids unless asked. The same rendering is on the command line as
+`effgen run --show-thread`, and the steps themselves are in `effgen run --json` under
+`metadata.thread`.
+
+```python
+from effgen import AgentThread, TaskStep, AnswerStep, render_thread, thread_as_text
+
+thread = AgentThread(steps=[TaskStep(text="What is 17 * 23?"), AnswerStep(text="391")])
+for step in render_thread(thread):
+    print(step.position, step.kind, step.label, "|", step.body)
+print(thread_as_text(thread))
+```
+
+`AgentThread.to_text()` is a different thing and is unchanged: it renders the run's **working** as
+the flat transcript a 1.0.x reader would recognise, which for a run that answered without using a
+tool is empty.
+
+#### 2. A session's earlier turns render differently inside the prompt
+
+A run continuing a session used to paste its history into the prompt under
+`=== Previous Conversation Context ===` with `[Turn n]` markers. It now renders as
+`Earlier in this conversation:` followed by `User:` / `Assistant:` lines. The old block is gone.
+
+That rendering is for a request that carries one string. On a model whose adapter takes a
+conversation, a run whose tools travel as a request parameter puts neither the history nor a
+persona inside the prompt: the session's earlier turns go out as their own `user` and `assistant`
+messages, and a caller's `system_prompt` goes out as the system message. That holds on every request
+of the run, including the one that asks for the answer after the guards stop offering tools, and
+whatever `prompt_protocol` says — the protocol decides how the run's own steps travel (change 11). A
+run with no tools, a run whose tools are written into the prompt, a caller's own
+`system_prompt_template` and a model whose adapter takes one string keep the rendering above.
+
+*Migration:* only code that matched on that header text, or that reads the request a provider
+receives, is affected. The history itself is unchanged, and `Session.last_thread()` reads the steps
+directly. No `prompt_protocol` value sends such a run as one string on a model that takes a
+conversation; `tool_calling_mode="react"`, which writes the tools into the prompt, does.
+
+#### 3. `AgentConfig(guardrails=...)` accepts a plain list and rejects what is not a guardrail
+
+A list of guardrails no longer has to be wrapped, and a non-guardrail in the list raises
+`TypeError` at construction instead of failing later inside a run.
+
+#### 4. A 1.0.x checkpoint still resumes, and what the reconstruction drops is documented
+
+`Checkpoint` has a new `thread` field carrying the same data as `response.thread.to_dict()`, and it
+writes the flat transcript beside it under `scratchpad`, so a file this release writes still
+resumes on a build that only knows the transcript. A file written by 1.0.x has no steps, so
+`Checkpoint.to_thread()` rebuilds them from the transcript and logs
+`[compat] rebuilt a thread from a flat transcript`.
+
+**Four things the rebuild cannot recover**, because the transcript never held them:
+
+* the provider's own call id — the recovered call is named from its position in the run;
+* a tool's arguments as values; they come back as the rendered string they were printed as;
+* whether a line was the framework's own, so an injected nudge is indistinguishable from a thought;
+* the whole frame — the persona, the tool contract, any earlier turns, and the task itself.
+
+Measured on runs a release really wrote: a 1.1.0 checkpoint round-trips **12/12 as text, 12/12 as a
+dict and 12/12 in its step kinds**; the same runs stored the way 1.0.x stored them come back
+**12/12 as text and 0/12 as a dict**. Both directions were checked against real files — a
+checkpoint written inside `v1.0.1` resumes here and completes, and a checkpoint this release writes
+was resumed by the released `v1.0.1` and reached the same answer.
+
+#### 5. `agent.resume()` continues an unfinished run instead of restarting the task
+
+The final checkpoint stores the run's steps where it used to store `scratchpad=""`, so resuming
+picks up the conversation the run had. On a fixed seed at temperature 0, a resumed run makes fewer
+model calls than an uninterrupted one because it does not redo the turns the checkpoint holds: over
+ten runs on `openai:gpt-5-nano`, **2.7 → 1.0** mean model calls, the same answer 10/10 and the same
+wording 10/10. An independent probe resumed mid-loop on 5/5 runs there, 4/4 on
+`gemini:gemini-3.1-flash-lite` and 3/3 on `groq:openai/gpt-oss-20b`, with equal or fewer tool calls
+on the resumed arm — where a 1.0.x build resumed mid-loop on none of them. A larger n on those two
+families is not measured: both rate-limited.
+
+#### 6. One agent loop, so `stream()` now behaves like `run()`
+
+The ReAct loop was written three times: once for `run()`, once for the prompt-scaffold branch of
+`stream()`, and once for the branch that dispatches a provider's streamed tool calls. There is one
+now, in a private module, and streaming is a decision taken at the end of a turn rather than a fork
+taken before the first prompt.
+
+**If your code called `run()`, nothing changed.** Replayed over a recorded 366-run corpus against
+the previous tree: **366/366 runs identical in every compared field and 1,628/1,628 prompts
+byte-identical**.
+
+**If your code called `stream()`, it changed — in its favour.** Measured before and after on the
+same profiles, a streamed run's first prompt now matches `run()`'s on 45 of 45, where 31 matched and
+12 differed, and every turn's prompt and the tool definitions sent with it match on 65 of 65. The
+sampling fields that differed from `run()` went from 6 of 9 on the text stream and 1 of 9 on the
+native stream to none. The loop guards fire on a streamed run exactly as on a blocking one, where
+two of three profiles never reached them before. 42 of 45 streamed runs now carry an
+`AgentResponse`, against 13 before; the three that do not are tool-free streams, which record
+nothing by design. Output guardrails are checked twice, as `run()` checks them, and a block raises
+from the iterator.
+
+*Migration:* a streamed run that was relying on the old behaviour — different sampling settings, a
+guard that never fired, an output guardrail that was never checked — will now behave as the
+blocking path always did. A streamed run is also now stoppable by an output guardrail, which raises
+out of the iterator.
+
+#### 7. A run is bounded by what it may send
+
+`AgentConfig.context_budget` (`"auto" | int | float | None`, default `"auto"`) and
+`AgentConfig.compaction` are new. `AgentConfig.max_context_length` — declared since 1.0 and read by
+nothing — is now the window override. The budget is `(window − output reserve) × 0.85`, and it is
+**unbounded when the model declares no window**, because guessing one would silently truncate a
+conversation that would have fitted.
+
+`response.metadata["context_budget"]` is reported on every outcome, including a run that used no
+tools. When the conversation will not fit, the run gives up the oldest material first — an old tool
+result is shortened, then an old thought dropped, then whole answered cycles replaced by one
+`NudgeStep` — and never touches the frame, the task, the most recent two complete cycles or the
+answer. A call and the result answering it always leave together. `ObservationStep` gained
+`compacted` and `original_chars` so a shortened result says so.
+
+`Session.keep_thread_history` defaults to `False`: an earlier turn's stored steps are reduced to
+their shape, and reading that turn's thread hands back an empty one. This is what keeps session
+files from growing — 12 turns went from 78,281 to 27,175 bytes, and 40 turns from 470,518 to
+80,877.
+
+A prompt larger than the model's window is now classified non-retryable, so it is sent once instead
+of three times.
+
+```python
+from effgen import AgentConfig
+
+config = AgentConfig(model="openai:gpt-5-nano")
+print(config.context_budget)        # auto — bounded by the model's own window
+print(AgentConfig(model="openai:gpt-5-nano", context_budget=8000).context_budget)
+print(AgentConfig(model="openai:gpt-5-nano", context_budget=None).context_budget)
+```
+
+*Migration:* none required; `"auto"` reproduces 1.0.x behaviour on any conversation that already
+fitted. Pass `context_budget=None` for the old unbounded behaviour, or an integer to name a budget
+yourself. Set `Session(keep_thread_history=True)` if you read the stored steps of earlier turns.
+
+#### 8. Orchestration results carry threads
+
+* a run with **no tools** now reports `response.metadata["thread"]`, where it reported none; its
+  prompts and its answer are unchanged;
+* `AgentResponse.sub_agent_threads()`, and a decomposed run's own `metadata["thread"]`;
+* `WorkflowResult.thread`, `.threads`, `.node_thread()` and `.failed_nodes()`, and
+  `WorkflowNode.thread` — all serialised into `to_dict()`;
+* `TeamResponse.thread` and `.agent_threads()`, serialised the same way;
+* `WorkflowCheckpoint.threads` and `.tasks`; an older reader ignores both and still resumes;
+* `SubAgentResult.thread`;
+* `WorkflowDAG(projection=...)`, `TeamConfig(projection=...)` and `SubAgentManager(projection=...)`,
+  all defaulting to carrying nothing into a child run — which is what every pattern did before.
+
+#### 9. `effgen run --json` works on a run that used a tool, and the documents are scrubbed
+
+`AgentResponse.to_dict()["execution_tree"]` carried `ToolCall` objects rather than data, so
+`json.dumps(response.to_dict())` raised `TypeError: Object of type ToolCall is not JSON
+serializable` for any run that called a tool — taking `effgen run --json`, `-o` and `--card` with
+it. `ExecutionNode.to_dict()` and `ExecutionEvent.to_dict()` now render through a converter that
+asks a record for its own `to_dict`, reads a dataclass field by field, and falls back to a string
+rather than dropping anything.
+
+`effgen run`'s `--json`, `-o` and `--card` documents now go through one scrubber, and
+`--show-thread` renders through the same one. **The terminal answer panel still prints the run's
+own words unredacted** — a tool that puts a key in the answer puts it in the answer. That asymmetry
+is deliberate and it is the one place a secret can still reach a terminal.
+
+#### 10. The debug trace carries steps
+
+`DebugIteration` gained `thread_snapshot`, and `DebugIteration.to_dict()` gained a `thread` key.
+The inspector's panel renders every iteration from it, not only behind `--step`.
+
+#### 11. A run continuing a session sends its conversation as messages, from its first request to its last
+
+Every 1.0.x run sent one flat string. At the new default, `prompt_protocol="auto"`, a run with tools
+that continues a session sends the session's earlier turns and its own steps as the messages they
+were, on a model that declares the message protocol and takes its tools as a request parameter. A
+run that continues nothing keeps its own steps in the flat string, and a run with no tools sends the
+one string it always sent: measured on ten public sample sets at two model sizes, the default sent
+messages **0** times, and a run with no tools attached sent them 0 times at either setting. Whether
+a caller's `system_prompt` and a session's earlier turns travel as their own messages is not this
+setting's to decide; change 2 says when they do.
+
+The protocol holds for the whole run. When the guards stop offering tools — the model has spent its
+allowance of multi-call turns, or repeated a call with nothing usable to fall back on — the turn
+that asks for the answer still goes out as messages: the session's earlier turns as separate
+messages, a persona stated once as the system turn, the answer scaffold as the last user message,
+and no `tools` or `tool_choice` on the request. The same holds for every run at an explicit
+`prompt_protocol="messages"`. That turn logs
+`[protocol] the run's conversation is already travelling as messages; this turn keeps it there, with no tool definitions on the request`
+at INFO; a run that never went out as messages still logs
+`[protocol] this turn's tool definitions do not travel as a request parameter; the turn sends the flat transcript`.
+A run whose persona or earlier turns travelled as their own messages keeps them there on that turn
+as well, at every `prompt_protocol`, and logs
+`[frame] the turn asking for the answer keeps the run's frame as messages`, so the turn does not
+change the request's shape. If the provider refuses the message list on that turn, the turn is sent
+again as the flat string.
+
+*Migration:* none for a run without a session. `AgentConfig(prompt_protocol="flat")` keeps a
+session run's own steps in one string, as 1.0.x did; its earlier turns and a persona still travel
+as their own messages where change 2 says they do.
+
+---
+
+### The prompt protocol
+
+`AgentConfig.prompt_protocol` is new: `"flat"`, `"messages"` or `"auto"`, **default `"auto"`**. It
+decides how a run's conversation reaches the model.
+
+* **`"flat"`** renders the run's own steps — its thoughts, calls and results — into one string. This
+  is what every effGen release before this one did, and it is still what a single-turn run does. On
+  a model whose adapter takes a conversation, a caller's `system_prompt` and a session's earlier
+  turns travel beside that string as their own messages (change 2).
+* **`"messages"`** sends the conversation as the turns it was: the frame as a system message, the
+  task as a user message, the run's own steps as the assistant/tool exchange they were, and the
+  closing instruction as its own user turn. `OpenAIAdapter` now carries a tool call into
+  `tool_calls` and a tool result into a `tool` message with its `tool_call_id`; both were dropped
+  silently before.
+* **`"auto"`** means one protocol for the whole of one conversation: a run **continuing a session**
+  sends its own steps as the turns they were, and a run **continuing nothing** keeps them in the
+  flat string.
+
+```python
+from effgen import AgentConfig
+
+print(AgentConfig(model="openai:gpt-5-nano").prompt_protocol)   # auto
+print(AgentConfig(model="openai:gpt-5-nano", prompt_protocol="messages").prompt_protocol)
+```
+
+**Why the default is not `messages`.** The rule was written down before anything was measured:
+the default would move to `"messages"` only if no sample set got worse beyond its noise band, mean
+accuracy rose by at least 1.66 points at one model size and fell by no more than that at the other,
+and prompt tokens and model calls rose by no more than 10%. Compared with `"flat"` on the same
+samples at two model sizes, `"messages"` met only the condition on mean accuracy: three sets got
+worse beyond their bands, and on others it sent up to half as many prompt tokens again. So
+`"messages"` ships opt-in, as `AgentConfig(prompt_protocol="messages")` — a configuration setting
+rather than a `run()` keyword, because the protocol has to hold for a whole conversation. The
+comparison was taken before the turn described in change 11 was fixed, and was not re-run after it.
+
+---
+
+### Added
+
+The public surface grew from **225 names to 250**. Nothing was removed or renamed.
+
+**The conversation itself** — `from effgen import ...`:
+
+- `AgentThread` — the conversation of one run, as typed steps
+- `Step` — one entry in a run's conversation
+- `SystemStep` — instruction the run is framed by: a persona, a contract, a format spec
+- `TaskStep` — what the caller asked, with any non-text parts it arrived with
+- `TurnStep` — one message from earlier in the session, before this run started
+- `ThoughtStep` — the model's own reasoning for a turn
+- `ActionStep` — a tool the turn asked for, with the arguments it asked for
+- `ObservationStep` — what a tool returned for the call before it
+- `NudgeStep` — a line the framework injected, not something the model or a tool said
+- `AnswerStep` — how the run ended: the answer it reached, or why it stopped without one
+- `DelegationStep` — work this run handed to another agent, and the conversation it had
+
+**Keeping a conversation inside its budget:**
+
+- `ContextBudgetExceededError` — raised when a run's conversation will not fit the tokens it may send
+- `CompactionPolicy` — how a run's thread is brought back under its budget
+- `ShortenOldestFirst` — the default policy: four rungs, and not one model call
+- `SummarizeWithModel` — opt-in: the dropped material leaves behind a model-written summary
+
+**What a child run starts with:**
+
+- `ThreadProjection` — which of a parent run's steps a child run starts with
+- `NoParentContext` — carry nothing: the child sees only the question it was asked (the default)
+- `ParentTask` — carry the job the parent was given, as one user turn
+- `ParentAnswers` — carry the parent's task and what its finished children answered
+- `LastCycles` — carry the parent's task and the last *n* complete cycles of its own work
+
+**Reading a conversation back:**
+
+- `RenderedStep` — one step of a conversation, ready to print
+- `render_thread` — render a conversation as steps, redacted by default, ids on request
+- `thread_as_text` — the conversation as one block of text, one heading and body per step
+
+**Managing sub-agents** — importable from `effgen`, where before they were reachable only through
+`effgen.core.sub_agent_manager`:
+
+- `SubAgentManager` — spawns the sub-agents a decomposed task is split across, runs them in
+  parallel or in sequence, and combines their results
+- `SubAgentResult` — what one sub-agent returned: its result or error, its time and tokens, and
+  its own conversation as `.thread`
+
+Also new, on types that already existed: `AgentResponse.thread` and `.sub_agent_threads()`,
+`Checkpoint.thread` and `.to_thread()`, `Session.last_thread()` and `Session.keep_thread_history`,
+`WorkflowResult.thread` / `.threads` / `.node_thread()` / `.failed_nodes()`, `WorkflowNode.thread`,
+`TeamResponse.thread` / `.agent_threads()`, `WorkflowCheckpoint.threads` / `.tasks`,
+`SubAgentResult.thread`, `ObservationStep.compacted` / `.original_chars`,
+`DebugIteration.thread_snapshot`, `AgentConfig.prompt_protocol` / `.context_budget` /
+`.compaction`, `BaseModel.supports_message_protocol()`, and `effgen run --show-thread`.
+
+`docs/guides/reading-a-run.md` is the guide to all of it.
+
+### Known issues
+
+These are open. Each is understood well enough to say what it is. The first is fixed in part, and the
+entry says what is still open.
+
+1. **A turn whose tools the guards have stopped offering still shows the model its own tool calls as
+   text.** Once a run spends its allowance of multi-call turns, or repeats a call with nothing
+   usable to fall back on, the turn that asks for the answer carries no tool definitions. On the
+   build the protocol comparison was taken on, that turn moved a run that was on messages to the
+   flat string for the rest of the run — on every run at `prompt_protocol="messages"`, and on any
+   run continuing a session at the default `"auto"`. In that comparison the switch is what the 31
+   fallbacks on one 7B set, and 1–5 on six others, recorded. **The switch is fixed:** the turn stays
+   on messages, with the session's earlier turns as separate messages, a persona stated once as the
+   system turn, and no `tools` or `tool_choice` on the request (change 11). **What remains** is the
+   last user message of that turn. It is the whole answer scaffold, which carries this run's own
+   calls and results as `Thought:` / `Action:` / `Observation:` lines and lists the tools in prose,
+   so on that one turn the model still reads its own calls as text inside the user's message. A run
+   with no session and no persona sends the same text the flat string carried, inside a message
+   list. And if a provider refuses that tool-free message list, the turn is sent again as the flat
+   string and the model is treated as refusing the message protocol for the rest of the process; a
+   run that carried only its persona or earlier turns as messages falls back the same way for the
+   rest of that run, without marking the model.
+2. **A streamed run can hand a tool a truncated argument.** On an arithmetic sample set at full
+   size, **62 of 557** streamed 7B tool calls carried an argument the tool could not use, against
+   **0 of 486** on the blocking path. The arguments arrive cut mid-JSON and are wrapped as
+   `{"__raw_input__": …}`. On the same set the streamed path answered 6.50 points below the blocking
+   one at 1.5B — a direction, not a result, at that sample size — and the samples with a truncated
+   argument account for only 1.00 of that.
+3. **`AgentConfig(model="openai:<id>", base_url=...)` sends the engine prefix on the wire.** Naming
+   a self-hosted OpenAI-protocol server with a prefixed id makes the server answer
+   `The model 'openai:<id>' does not exist`. Write the id without the prefix —
+   `AgentConfig(model="<id>", base_url=...)` — which is the form the documentation uses.
+4. **`ToolCall.arguments` is a string on one path and a mapping on the other**: text for the ReAct
+   path, whose action input is text, and a parsed dict for native tool calling. Fixing it changes a
+   document shape every caller of `AgentResponse.tool_calls` can read.
+5. **`reasoning_effort` reaches a streamed turn and not a blocking one.** Pre-existing; the archive
+   behaves identically.
+6. **A tool-free stream yields the model's own text, not the sanitized answer.** `run()` returns
+   `'36'` where the stream yields `'Thought: …\nFinal Answer: 36 '`. Pre-existing and unchanged.
+7. **`GuardrailChain.check(position=...)` is not forwarded.**
+8. **A spend cap still refuses a call that costs nothing.** Once a configured daily budget is spent,
+   the preflight refuses every call — including one to a model you serve yourself, because an
+   `openai_compatible` adapter is priced as `openai`. The refusal arrives as a failed generation
+   rather than an error, so a batch can complete with no errors and measure nothing. This was in
+   1.0.0 and 1.0.1 too.
+9. **The retrieval and open-ended gaps 1.0.1 recorded are unchanged.** Nothing in this release was
+   aimed at them.
+
+### What it cost
+
+On the same ten public sample sets and the same samples as the 1.0.1 baseline, a run sends 26% fewer
+prompt tokens at 1.5B and 18% fewer at 7B, and makes about 16% fewer model calls at both sizes. The
+saving is in tokens sent, not in time spent generating, so the framework is cheaper to run and no
+faster. Mean accuracy moved −2.67 at 1.5B and −3.53 at 7B with the sets weighted equally, and −0.42
+and −1.48 with the samples weighted equally. Three sets got worse and two got better beyond every
+noise band we computed, and the three that got worse are the sets where this release sends more, not
+less. No cloud model was measured, so nothing here is a claim about a cloud provider.
+
+---
+
 ## [1.0.1] - 2026-09-08
 
 ### Highlights
@@ -3014,6 +3432,7 @@ Thank you to all contributors who helped make effGen possible!
 ---
 
 [Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.0...HEAD
+[1.1.0]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ctrl-gaurav/effGen/compare/v0.3.2...v1.0.0
 [0.3.2]: https://github.com/ctrl-gaurav/effGen/compare/v0.3.1...v0.3.2
