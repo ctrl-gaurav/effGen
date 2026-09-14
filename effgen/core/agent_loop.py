@@ -349,6 +349,10 @@ class _RunState:
     tokens_used: int = 0
     resolved_to_messages: bool = False
     frame_carried_by_messages: bool = False
+    #: Whether a request of this run carried the persona or the session's
+    #: earlier turns as their own messages. The turn that asks for the answer
+    #: reads it, so a run keeps one request shape from its first turn to its last.
+    frame_roles_on_messages: bool = False
     debug_trace: Any = None
     checkpoints: Any = None
     iter_start: float = 0.0
@@ -1088,6 +1092,9 @@ def step(
     turn_protocol = "flat"
     flat_prompt = ""
     prompt: Any = ""
+    # What a turn that kept the run's frame on roles while resolving to the flat
+    # protocol would have sent without them; ``None`` on every other turn.
+    roles_fallback: Any = None
 
     # Whether the persona and the session's earlier turns can travel as their
     # own messages this turn. A string frame has one role, so on a model whose
@@ -1104,7 +1111,8 @@ def step(
         compaction, which is why the two lines it logs are guarded to fire once
         per run: a turn rebuilt eight times still reports its frame once.
         """
-        nonlocal prompt, turn_protocol, flat_prompt
+        nonlocal prompt, turn_protocol, flat_prompt, roles_fallback
+        roles_fallback = None
         transcript = thread.to_text()
         # The tool contract is not a reason on its own: the string frame
         # already states it, in its own place. What a string frame cannot
@@ -1132,6 +1140,8 @@ def step(
             if isinstance(tool_defs, list):
                 gen_kwargs["tools"] = tool_defs
             if frame_roles or frame_parts:
+                if frame_roles:
+                    state.frame_roles_on_messages = True
                 if not state.frame_carried_by_messages:
                     state.frame_carried_by_messages = True
                     logger.info(
@@ -1206,8 +1216,26 @@ def step(
             # keeps travelling that way — the scaffold becomes this turn's user
             # message, the session's earlier turns stay the turns they were, and
             # nothing puts tool definitions back on the request.
+            #
+            # The same holds for the frame alone. A run whose earlier requests
+            # carried the persona or the session's earlier turns as their own
+            # messages keeps them there whatever the protocol resolved to: they
+            # belong to the run, not to the turn, and folding them back into one
+            # string here would change the request's shape in the middle of the
+            # run and move the persona out of the system turn.
             flat_prompt = prompt
-            if turn_protocol == "messages":
+            keep_frame_roles = frame_roles and state.frame_roles_on_messages
+            if turn_protocol == "messages" or keep_frame_roles:
+                if turn_protocol != "messages":
+                    # What this turn sends if the provider refuses the list:
+                    # the request it would have been had the roles not been kept.
+                    roles_fallback = (
+                        agent._frame_as_messages(
+                            flat_prompt, thread, carry_roles=False,
+                        )
+                        if frame_parts
+                        else flat_prompt
+                    )
                 if frame_roles:
                     # What the roles carry is removed from the string, exactly
                     # as the native frame removes it: a persona stated twice is
@@ -1262,6 +1290,12 @@ def step(
             "%d tool results",
             len(prompt),
             *_count_tool_parts(prompt),
+        )
+    elif roles_fallback is not None:
+        logger.info(
+            "[frame] the turn asking for the answer keeps the run's frame as "
+            "messages: %d messages, no tool definitions",
+            len(prompt),
         )
     state.prompt = prompt
 
@@ -1344,6 +1378,22 @@ def step(
                         agent, flat_prompt, policy, gen_kwargs,
                         streamable=streamable,
                     )
+            # A turn that kept the run's frame on roles without the message
+            # protocol has the same way out: a provider that refuses the list is
+            # sent the request the turn would otherwise have been, and the run
+            # stops offering the shape it refused. The shape is the one its own
+            # tool turns already sent, so this is a net, not an expected path.
+            if roles_fallback is not None and _is_request_shape_refusal(response):
+                logger.warning(
+                    "[frame] the provider refused the run's frame as messages "
+                    "on a turn with no tool definitions; the run sends it as "
+                    "one string from here"
+                )
+                state.frame_roles_on_messages = False
+                response = yield from emitter.model_turn(
+                    agent, roles_fallback, policy, gen_kwargs,
+                    streamable=streamable,
+                )
             # The provider refused a prompt our own count said would fit. Its
             # number is the better one — it has just been shown to be right and
             # ours wrong in the direction that matters — so take it, give up one

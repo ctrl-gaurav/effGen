@@ -409,3 +409,126 @@ def test_the_message_is_one_the_framework_can_convert() -> None:
     _second_turn(agent, model)
 
     assert all(isinstance(m, Message) for m in model.requests[-1])
+
+
+# ---------------------------------------------------------------------------
+# A frame that travels as messages stays there on the answer turn
+# ---------------------------------------------------------------------------
+#
+# On an adapter that takes a conversation, a caller's persona and a session's
+# earlier turns travel as their own messages on every tool turn, whatever the
+# protocol resolved to. The turn the guards push towards an answer is one more
+# turn of the same run, so it carries them the same way instead of folding them
+# back into one string.
+
+PERSONA = "You are Ledgerly, a terse bookkeeper."
+
+
+def _roles(model: Recorder) -> list[list[Role]]:
+    return [
+        [m.role for m in r] if isinstance(r, list) else [] for r in model.requests
+    ]
+
+
+def test_a_persona_run_that_continues_nothing_keeps_one_request_shape() -> None:
+    """At the default, with no session, the persona stays the system turn."""
+    model = Recorder()
+    agent = _agent(model, "auto", enable_memory=False, system_prompt=PERSONA)
+    agent.run(TASK)
+
+    assert any(not k.get("tools") for k in model.kwargs), "no turn was suppressed"
+    assert set(_kinds(model)) == {"messages"}, _kinds(model)
+    roles = _roles(model)
+    assert all(r == roles[0] for r in roles), roles
+    assert roles[0][0] is Role.SYSTEM, roles
+
+
+def test_an_explicit_flat_session_run_keeps_one_request_shape() -> None:
+    """``"flat"`` keeps the run's own steps in one string; earlier turns stay turns."""
+    model = Recorder()
+    kinds = _second_turn(_agent(model, "flat"), model)
+
+    assert any(not k.get("tools") for k in model.kwargs), "no turn was suppressed"
+    assert set(kinds) == {"messages"}, kinds
+    roles = _roles(model)
+    assert all(r == roles[0] for r in roles), roles
+    assert Role.ASSISTANT in roles[-1], roles
+
+
+def test_the_answer_turn_at_flat_states_the_persona_and_earlier_turns_once() -> None:
+    """What the roles carry is not repeated inside the scaffold's text."""
+    model = Recorder()
+    agent = _agent(model, "flat", system_prompt=PERSONA)
+    _second_turn(agent, model)
+
+    last = model.requests[-1]
+    assert isinstance(last, list), type(last)
+    assert last[0].role is Role.SYSTEM
+    text = "\n".join(m.text for m in last)
+    assert text.count("Ledgerly") == 1, text
+    assert "Earlier in this conversation" not in text, text
+    assert "Final Answer" in last[-1].text
+    assert "tools" not in model.kwargs[-1], model.kwargs[-1]
+
+
+def test_carrying_the_frame_is_not_the_message_protocol() -> None:
+    """The run still reports the protocol it resolved to.
+
+    A guard: this reads the same before and after the answer turn kept the
+    frame's roles, and pins that the two are not conflated.
+    """
+    model = Recorder()
+    agent = _agent(model, "auto", enable_memory=False, system_prompt=PERSONA)
+    response = agent.run(TASK)
+
+    assert response.metadata["prompt_protocol"] == "flat"
+
+
+class _RefusesAToolFreeList(Recorder):
+    """Takes a message list that offers tools, refuses one that offers none."""
+
+    def generate(self, prompt, config=None, **kwargs: Any) -> GenerationResult:
+        if kwargs.get("tools"):
+            return super().generate(prompt, config, **kwargs)
+        self.requests.append(prompt)
+        self.kwargs.append(dict(kwargs))
+        if isinstance(prompt, list):
+            from effgen.models.errors import InvalidRequestError
+
+            raise InvalidRequestError(
+                "openai", self.model_name,
+                "a message list is not accepted without tool definitions",
+            )
+        return GenerationResult(
+            text=f"Final Answer: {ANSWER}", tokens_used=9, finish_reason="stop",
+            model_name=self.model_name,
+        )
+
+
+def test_a_provider_that_refuses_the_list_on_the_answer_turn_gets_the_string(
+    caplog,
+) -> None:
+    """The turn is sent again as the string it would have been, and answered."""
+    model = _RefusesAToolFreeList()
+    agent = _agent(model, "flat", enable_memory=False, system_prompt=PERSONA)
+    with caplog.at_level("INFO"):
+        response = agent.run(TASK)
+
+    assert "[frame] the provider refused the run's frame as messages" in caplog.text
+    assert _kinds(model)[-2:] == ["messages", "flat"], _kinds(model)
+    assert model.requests[-1].count("Ledgerly") == 1, model.requests[-1]
+    assert "36" in str(response.output), response.output
+
+
+def test_a_run_whose_tools_are_written_into_the_prompt_keeps_the_one_string() -> None:
+    """A run that never put its frame on roles does not start on the answer turn.
+
+    A guard: the ReAct-text frame is the only one this run ever sends.
+    """
+    model = Recorder()
+    kinds = _second_turn(
+        _agent(model, "flat", tool_calling_mode="react", system_prompt=PERSONA),
+        model,
+    )
+
+    assert set(kinds) == {"flat"}, kinds
