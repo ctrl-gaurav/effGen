@@ -445,6 +445,21 @@ def collect_cli() -> dict:
 _OPTION_HEAD = re.compile(r"^  (-[^\s].*?)(?:  +(.*))?$")
 
 
+def _join_wrapped(text: str, continuation: str) -> str:
+    """Rejoin one wrapped line of argparse help onto the text before it.
+
+    argparse wraps with ``textwrap``, which breaks a hyphenated word after its
+    hyphen, so ``gpt-oss-20b`` can arrive as ``gpt-`` and ``oss-20b`` on two
+    lines. A line that ends in a hyphen attached to a word is rejoined without
+    the space; every other line is rejoined with one.
+    """
+    if not text:
+        return continuation
+    if len(text) > 1 and text.endswith("-") and not text[-2].isspace():
+        return f"{text}{continuation}"
+    return f"{text} {continuation}"
+
+
 def _options(help_text: str) -> list[dict]:
     """Every option a command declares, read out of its own ``--help``.
 
@@ -473,8 +488,7 @@ def _options(help_text: str) -> list[dict]:
             current = {"name": head.group(1).strip(), "description": (head.group(2) or "").strip()}
             continue
         if current is not None and line.startswith("    "):
-            text = line.strip()
-            current["description"] = f"{current['description']} {text}".strip()
+            current["description"] = _join_wrapped(current["description"], line.strip())
     if current:
         options.append(current)
 

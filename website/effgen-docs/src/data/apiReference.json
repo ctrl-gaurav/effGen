@@ -1,11 +1,11 @@
 {
- "derived_at": "2026-09-12",
- "version": "1.0.1",
- "public_names": 248,
+ "derived_at": "2026-09-14",
+ "version": "1.1.0",
+ "public_names": 250,
  "kind_counts": {
   "alias": 1,
-  "class": 96,
-  "dataclass": 52,
+  "class": 97,
+  "dataclass": 53,
   "enum": 12,
   "exception": 19,
   "function": 67,
@@ -82,7 +82,7 @@
    "id": "orchestration",
    "title": "Orchestration and workflows",
    "blurb": "Splitting work across agents, running a DAG, checkpointing it, batching many tasks, and the middleware that wraps every step.",
-   "count": 24
+   "count": 26
   },
   {
    "id": "guardrails",
@@ -873,7 +873,7 @@
      "default": "'auto'",
      "required": false,
      "keyword_only": false,
-     "description": "How a run's conversation reaches the model. `\"flat\"` sends one string carrying the whole transcript. `\"messages\"` sends the conversation as the conversation it was \u2014 a system turn, the task, the model's own reasoning beside the tool call it made, and each tool result answering the call it belongs to \u2014 wherever the model declares it can carry that shape (`effgen.models.base.BaseModel.supports_message_protocol`). `\"auto\"` (the default) sends the whole of one conversation in one protocol: a run that continues a session sends its own steps as the turns they were, so the model is not shown its own tool call as something the user narrated; a run that continues nothing sends the flat string every release before this one sent. `\"messages\"` never fails a run that a `\"flat\"` run would have answered: a model, a loop or a turn that cannot carry the shape falls back to the flat transcript and says so in the log. The protocol a run actually used comes back on `response.metadata[\"prompt_protocol\"]`."
+     "description": "How a run's conversation reaches the model. `\"flat\"` puts the run's own steps into one string carrying the whole transcript. `\"messages\"` sends the conversation as the conversation it was \u2014 a system turn, the task, the model's own reasoning beside the tool call it made, and each tool result answering the call it belongs to \u2014 wherever the model declares it can carry that shape (`effgen.models.base.BaseModel.supports_message_protocol`). `\"auto\"` (the default) sends the whole of one conversation in one protocol: a run that continues a session sends its own steps as the turns they were, so the model is not shown its own tool call as something the user narrated; a run that continues nothing sends the flat string every release before this one sent. `\"messages\"` never fails a run that a `\"flat\"` run would have answered: a model, a loop or a turn that cannot carry the shape falls back to the flat transcript and says so in the log. The protocol a run actually used comes back on `response.metadata[\"prompt_protocol\"]`."
     },
     {
      "name": "name",
@@ -11303,6 +11303,230 @@
    "raises": [],
    "bases": [],
    "members": [],
+   "values": []
+  },
+  {
+   "name": "SubAgentManager",
+   "kind": "class",
+   "module": "effgen.core.sub_agent_manager",
+   "area": "orchestration",
+   "summary": "Manage sub-agent lifecycle and coordination.",
+   "signature": "(parent_agent: Any = None, config: dict[str, Any] | None = None, execution_tracker: ExecutionTracker | None = None, projection: Any = None) -> None",
+   "params": [
+    {
+     "name": "parent_agent",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "config",
+     "type": "dict[str, Any] | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "execution_tracker",
+     "type": "ExecutionTracker | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
+     "name": "projection",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "cleanup",
+     "kind": "method",
+     "signature": "() -> None",
+     "summary": "Clear tracked sub-agent state.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "execute_hybrid",
+     "kind": "method",
+     "signature": "(subtasks: list[SubTask], progress_callback: Callable | None = None) -> list[SubAgentResult]",
+     "summary": "Execute with hybrid strategy (parallel groups + sequential stages).",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "execute_parallel",
+     "kind": "method",
+     "signature": "(subtasks: list[SubTask], progress_callback: Callable | None = None) -> list[SubAgentResult]",
+     "summary": "Execute subtasks in parallel using sub-agents.",
+     "is_async": true,
+     "inherited_from": null
+    },
+    {
+     "name": "execute_sequential",
+     "kind": "method",
+     "signature": "(subtasks: list[SubTask], progress_callback: Callable | None = None) -> list[SubAgentResult]",
+     "summary": "Execute subtasks sequentially.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "get_active_count",
+     "kind": "method",
+     "signature": "() -> int",
+     "summary": "Get number of active sub-agents.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "projection",
+     "kind": "property",
+     "signature": "",
+     "summary": "Which of the parent run's steps each child starts with.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "record_delegation",
+     "kind": "method",
+     "signature": "(step: DelegationStep) -> None",
+     "summary": "Append one child's record to the parent run's conversation.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "spawn_sub_agent",
+     "kind": "method",
+     "signature": "(subtask: SubTask, specialization: str | None = None) -> Any",
+     "summary": "Create a specialized sub-agent.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "synthesize_results",
+     "kind": "method",
+     "signature": "(results: list[SubAgentResult], original_task: str, strategy: RoutingStrategy) -> dict[str, Any]",
+     "summary": "Combine sub-agent results into final answer.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
+   "name": "SubAgentResult",
+   "kind": "dataclass",
+   "module": "effgen.core.sub_agent_manager",
+   "area": "orchestration",
+   "summary": "Result from sub-agent execution.",
+   "signature": "(subtask_id: str, agent_id: str, success: bool, result: Any = None, error: str | None = None, execution_time: float = 0.0, tokens_used: int = 0, tool_calls: int = 0, thread: AgentThread | None = None, metadata: dict[str, Any] = <factory>) -> None",
+   "params": [
+    {
+     "name": "subtask_id",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "ID of completed subtask"
+    },
+    {
+     "name": "agent_id",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "ID of sub-agent"
+    },
+    {
+     "name": "success",
+     "type": "bool",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "Whether execution succeeded"
+    },
+    {
+     "name": "result",
+     "type": "Any",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Result data"
+    },
+    {
+     "name": "error",
+     "type": "str | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Error message if failed"
+    },
+    {
+     "name": "execution_time",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Time taken in seconds"
+    },
+    {
+     "name": "tokens_used",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Tokens consumed"
+    },
+    {
+     "name": "tool_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Number of tool calls made"
+    },
+    {
+     "name": "thread",
+     "type": "AgentThread | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The child's own conversation, as the steps it took. `None` when the child never reached a model \u2014 its task raised before the run started, or no parent model was available."
+    },
+    {
+     "name": "metadata",
+     "type": "dict[str, Any]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "Additional metadata"
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "Convert to dictionary.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
    "values": []
   },
   {
