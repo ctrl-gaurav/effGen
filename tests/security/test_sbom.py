@@ -17,7 +17,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -30,7 +29,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEFAULT_SBOM_PATH = REPO_ROOT / "sbom.cdx.json"
-OUTPUT_SBOM_PATH = REPO_ROOT / "dist" / "sbom.cdx.json"
 
 
 # ---------------------------------------------------------------------------
@@ -73,36 +71,30 @@ def _generate_sbom(output_path: Path) -> bool:
     return result.returncode == 0 and output_path.exists()
 
 
-def _load_or_generate_sbom() -> tuple[dict | None, str]:
+def _load_or_generate_sbom(output_path: Path) -> tuple[dict | None, str]:
     """
     Load an existing SBOM or generate one. Returns (sbom_dict, source_path).
     Returns (None, reason) if unavailable.
+
+    A generated SBOM is written to *output_path*, which is never inside the
+    repository: ``dist/`` is what a release uploads, and a file a test run left
+    there would be published beside the wheel.
     """
-    # Check existing outputs first
-    for candidate in [DEFAULT_SBOM_PATH, OUTPUT_SBOM_PATH]:
-        if candidate.exists():
-            try:
-                with open(candidate) as f:
-                    return json.load(f), str(candidate)
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    # Try generating on the fly
-    tmp = Path(tempfile.mktemp(suffix=".cdx.json"))
-    if _generate_sbom(tmp):
+    # CI generates one at the repository root before the tests run
+    if DEFAULT_SBOM_PATH.exists():
         try:
-            with open(tmp) as f:
-                sbom = json.load(f)
-            # Save to outputs for subsequent tests
-            OUTPUT_SBOM_PATH.parent.mkdir(parents=True, exist_ok=True)
-            import shutil as _sh
-
-            _sh.copy(tmp, OUTPUT_SBOM_PATH)
-            return sbom, str(tmp)
+            with open(DEFAULT_SBOM_PATH) as f:
+                return json.load(f), str(DEFAULT_SBOM_PATH)
         except (json.JSONDecodeError, OSError):
             pass
-        finally:
-            tmp.unlink(missing_ok=True)
+
+    # Try generating on the fly
+    if _generate_sbom(output_path):
+        try:
+            with open(output_path) as f:
+                return json.load(f), str(output_path)
+        except (json.JSONDecodeError, OSError):
+            pass
 
     return None, "cyclonedx-bom not available and no pre-generated sbom.cdx.json found"
 
@@ -113,9 +105,15 @@ def _load_or_generate_sbom() -> tuple[dict | None, str]:
 
 
 @pytest.fixture(scope="module")
-def sbom() -> dict:
+def sbom_output_path(tmp_path_factory) -> Path:
+    """Where this module writes the SBOM it generates, outside the repository."""
+    return tmp_path_factory.mktemp("sbom") / "sbom.cdx.json"
+
+
+@pytest.fixture(scope="module")
+def sbom(sbom_output_path) -> dict:
     """Load or generate the SBOM once for all tests in this module."""
-    data, source = _load_or_generate_sbom()
+    data, source = _load_or_generate_sbom(sbom_output_path)
     if data is None:
         pytest.skip(f"SBOM not available: {source}")
     return data
@@ -323,15 +321,14 @@ class TestSBOMGeneration:
         assert sbom.get("bomFormat") == "CycloneDX"
         assert len(sbom.get("components", [])) > 0
 
-    def test_sbom_output_saved_to_build_outputs(self):
-        """The SBOM output file must exist after generation."""
-        if not OUTPUT_SBOM_PATH.exists():
-            # Generate it now
-            OUTPUT_SBOM_PATH.parent.mkdir(parents=True, exist_ok=True)
-            success = _generate_sbom(OUTPUT_SBOM_PATH)
+    def test_generated_sbom_is_saved_outside_the_repository(self, sbom_output_path):
+        """A generated SBOM is kept where a release upload cannot pick it up."""
+        if not sbom_output_path.exists():
+            success = _generate_sbom(sbom_output_path)
             if not success:
                 pytest.skip("Could not generate SBOM — cyclonedx-bom not available")
-        assert OUTPUT_SBOM_PATH.exists(), f"SBOM output not found at {OUTPUT_SBOM_PATH}"
-        with open(OUTPUT_SBOM_PATH) as f:
+        assert sbom_output_path.exists(), f"SBOM output not found at {sbom_output_path}"
+        assert REPO_ROOT not in sbom_output_path.parents, sbom_output_path
+        with open(sbom_output_path) as f:
             sbom = json.load(f)
         assert sbom.get("bomFormat") == "CycloneDX"
