@@ -147,7 +147,8 @@ class AgentConfig:
             then the task and ``system_prompt``. Nothing effGen appends asks for
             a shape of its own, so a task that asks for a letter gets a letter.
         prompt_protocol: How a run's conversation reaches the model.
-            ``"flat"`` sends one string carrying the whole transcript.
+            ``"flat"`` puts the run's own steps into one string carrying the
+            whole transcript.
             ``"messages"`` sends the conversation as the conversation it was —
             a system turn, the task, the model's own reasoning beside the tool
             call it made, and each tool result answering the call it belongs
