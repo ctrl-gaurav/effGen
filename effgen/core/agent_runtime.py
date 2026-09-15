@@ -533,28 +533,41 @@ def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
     if not text or not isinstance(text, str) or not tool_names:
         return None
     names = set(tool_names)
-    scan = _INLINE_CODE_RE.sub(" ", _FENCED_CODE_RE.sub(" ", text))
-    for match in _WRITTEN_CALL_RE.finditer(scan):
-        if match.group("name") in names:
-            return match.group("name")
+    # As in sanitize_final_answer, each reader runs only when the text holds a
+    # character every match of it needs; one that cannot match finds nothing.
+    scan = text
+    if "```" in scan or "~~~" in scan:
+        scan = _FENCED_CODE_RE.sub(" ", scan)
+    if "`" in scan:
+        scan = _INLINE_CODE_RE.sub(" ", scan)
+    if "{" in scan:
+        for match in _WRITTEN_CALL_RE.finditer(scan):
+            if match.group("name") in names:
+                return match.group("name")
     # A tagged call the parser could not read (truncated or malformed JSON)
     # still names its tool in a "name" field.
-    if _TAGGED_CALL_RE.search(scan):
+    if ("<" in scan or "[" in scan) and _TAGGED_CALL_RE.search(scan):
         for field_match in _CALL_NAME_FIELD_RE.finditer(scan):
             if field_match.group(1) in names:
                 return field_match.group(1)
+    if "<" not in scan:
+        return _standalone_paren_call(scan, names) if "(" in scan and ")" in scan else None
     # A tagged call whose body is a query string rather than JSON.
-    for kv_match in _TAGGED_KV_CALL_RE.finditer(scan):
-        if kv_match.group("name") in names:
-            return kv_match.group("name")
+    if ">" in scan and "=" in scan:
+        for kv_match in _TAGGED_KV_CALL_RE.finditer(scan):
+            if kv_match.group("name") in names:
+                return kv_match.group("name")
     # A call written as nested tags, which carries no JSON for the readers above.
-    from .tool_calling import _xml_parameter_call
+    if "=" in scan:
+        from .tool_calling import _xml_parameter_call
 
-    xml_call = _xml_parameter_call(scan)
-    if xml_call is not None and xml_call[0] in names:
-        return xml_call[0]
+        xml_call = _xml_parameter_call(scan)
+        if xml_call is not None and xml_call[0] in names:
+            return xml_call[0]
     # Python call syntax, only when it is the entire answer.
-    return _standalone_paren_call(scan, names)
+    if "(" in scan and ")" in scan:
+        return _standalone_paren_call(scan, names)
+    return None
 
 
 def _json_object_end(text: str, start: int) -> int:
@@ -629,6 +642,24 @@ _GEMMA_STRAY_TOKEN_RE = re.compile(
     r"<\|?(?:channel|turn|think|tool|tool_call|tool_response|image|audio|video)\|?>"
 )
 
+#: The fixed openings every match of the two templated nudges starts with.
+_UNKNOWN_TOOL_OBS_HEAD = "No tool named '"
+_MUST_EXECUTE_HEAD = NUDGE_MUST_EXECUTE.split("{tool}")[0]
+
+
+def _may_contain(text: str, words: tuple[str, ...]) -> bool:
+    """Whether a case-insensitive pattern that needs one of *words* could match *text*.
+
+    On ASCII text, a case-insensitive match of a word is a plain match of it in
+    the lower-cased text. Any other text is always tried: Unicode case folding
+    lets a pattern's ``i`` match a dotless ``ı`` and its ``s`` a long ``ſ``, which
+    lower-casing does not reproduce.
+    """
+    if not text.isascii():
+        return True
+    low = text.lower()
+    return any(word in low for word in words)
+
 
 def sanitize_final_answer(text: str | None) -> str | None:
     """Strip internal ReAct/tool scaffolding from a user-facing answer.
@@ -647,27 +678,42 @@ def sanitize_final_answer(text: str | None) -> str | None:
     if not text or not isinstance(text, str):
         return text
     s = text
+    # Each pattern below runs only when the text in front of it holds something
+    # every match of that pattern contains. A pattern that cannot match returns
+    # the text unchanged, so skipping it changes nothing, while running every
+    # pattern over every answer costs about 40 microseconds per kilobyte each —
+    # over a millisecond for a two-kilobyte answer. Each check reads the text as
+    # the step before left it: removing one piece can join two others into
+    # something the next pattern matches.
     # 1. Remove literal loop-bookkeeping strings (with any adjacent newline).
-    for pat in _SCAFFOLD_LITERAL_RES:
-        s = pat.sub("", s)
+    for literal, pat in zip(_SCAFFOLD_LITERALS, _SCAFFOLD_LITERAL_RES):
+        if literal in s:
+            s = pat.sub("", s)
     # 1b. Remove the two nudges whose middle varies per agent: the unknown-tool
     # observation, which lists the agent's tools, and the execute nudge, which
     # names one of them.
-    s = _UNKNOWN_TOOL_OBS_RE.sub("", s)
-    s = _MUST_EXECUTE_RE.sub("", s)
+    if _UNKNOWN_TOOL_OBS_HEAD in s:
+        s = _UNKNOWN_TOOL_OBS_RE.sub("", s)
+    if _MUST_EXECUTE_HEAD in s:
+        s = _MUST_EXECUTE_RE.sub("", s)
     # 2. Remove tool-echo prefixes, keeping the result after the arrow.
-    s = _TOOL_ECHO_RE.sub("", s)
+    if "→" in s:
+        s = _TOOL_ECHO_RE.sub("", s)
     # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).
-    s = _TOOLCALL_CONSTRUCT_RE.sub("", s)
-    s = _XML_TAG_CALL_RE.sub("", s)
-    if _XML_ARG_TAG_RE.search(s):
-        # An argument tag survived the closed-construct pass, so a call was cut
-        # short. Only then is it safe to drop the rest of the text.
-        s = _XML_TRUNCATED_CALL_RE.sub("", s)
-        s = _XML_ARG_TAG_RE.sub("", s)
-    s = _TOOLCALL_TAG_RE.sub("", s)
+    if "{" in s and "}" in s and _may_contain(s, ("function", "tool_call")):
+        s = _TOOLCALL_CONSTRUCT_RE.sub("", s)
+    if "<" in s and ">" in s:
+        if _may_contain(s, ("function", "invoke", "tool")):
+            s = _XML_TAG_CALL_RE.sub("", s)
+        if _may_contain(s, ("param", "arg")) and _XML_ARG_TAG_RE.search(s):
+            # An argument tag survived the closed-construct pass, so a call was cut
+            # short. Only then is it safe to drop the rest of the text.
+            s = _XML_TRUNCATED_CALL_RE.sub("", s)
+            s = _XML_ARG_TAG_RE.sub("", s)
+        s = _TOOLCALL_TAG_RE.sub("", s)
     # 2c. Remove a leading bare "tool_name {json}" echo with no wrapping tag.
-    s = _LEADING_TOOLCALL_ECHO_RE.sub("", s)
+    if "{" in s and (s[:1] == "<" or s[:1] == "_" or "a" <= s[:1] <= "z"):
+        s = _LEADING_TOOLCALL_ECHO_RE.sub("", s)
 
     # 2d. Gemma 4 channel format: reasoning is wrapped in <|channel>...<channel|>
     #     with the answer after the close tag. Keep only the tail after the last
@@ -681,13 +727,20 @@ def sanitize_final_answer(text: str | None) -> str | None:
         s = _GEMMA_TOOLCALL_RE.sub("", s)
         s = _GEMMA_STRAY_TOKEN_RE.sub("", s)
     # 3. Drop trailing Observation/Thought/Question/Action bleed.
-    s = _TRAILING_BLEED_RE.sub("", s)
+    if "\n" in s and ":" in s and _may_contain(
+        s, ("observation", "thought", "question", "action"),
+    ):
+        s = _TRAILING_BLEED_RE.sub("", s)
     # 4. If a line-anchored answer label is present, the real answer is what
     #    follows the LAST such label (when that tail is non-empty). A dangling
     #    label with nothing after it (e.g. native web-search replies sometimes
     #    end with a bare "Final Answer:") is scaffolding — drop the label and
     #    keep the content before it.
-    labels = list(_ANSWER_LABEL_RE.finditer(s))
+    labels = (
+        list(_ANSWER_LABEL_RE.finditer(s))
+        if (":" in s or "-" in s) and _may_contain(s, ("answer",))
+        else []
+    )
     if labels:
         tail = s[labels[-1].end():].strip()
         if tail:
@@ -699,14 +752,18 @@ def sanitize_final_answer(text: str | None) -> str | None:
     # 5. Tidy separators left by removed scaffolding, without disturbing
     #    multi-line content (tables/code): collapse empty "| |" fragments and
     #    runs of spaces, then strip a dangling leading/trailing bare pipe.
-    s = re.sub(r"\|[ \t]*\|", "|", s)
-    s = re.sub(r"[ \t]{2,}", " ", s)
+    if "|" in s:
+        s = re.sub(r"\|[ \t]*\|", "|", s)
+    if "  " in s or "\t" in s:
+        s = re.sub(r"[ \t]{2,}", " ", s)
     s = s.strip()
     # Strip a dangling leading/trailing bare pipe only for single-line content,
     # so markdown tables (multi-line, pipe-delimited) are left intact.
     if "\n" not in s:
-        s = re.sub(r"^\|[ \t]*", "", s)
-        s = re.sub(r"[ \t]*\|$", "", s)
+        if s.startswith("|"):
+            s = re.sub(r"^\|[ \t]*", "", s)
+        if s.endswith("|"):
+            s = re.sub(r"[ \t]*\|$", "", s)
     return s.strip()
 
 
