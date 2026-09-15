@@ -150,6 +150,25 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
     tool_calls = data.get("tool_calls")
     if tool_calls is None:
         tool_calls = len(steps) if steps else None
+    # Where the run's time went: the full document carries the ledger, a stored
+    # history record carries its counters flat. A document with neither shows
+    # the cards it always did.
+    ledger = _mapping(metadata.get("ledger"))
+    llm_calls = ledger.get("llm_calls", data.get("llm_calls"))
+    framework_s = ledger.get("framework_s", data.get("framework_s"))
+    model_wait_s = ledger.get("model_wait_s", data.get("model_wait_s"))
+    tool_wait_s = ledger.get("tool_wait_s", data.get("tool_wait_s"))
+    spend_cards: list[tuple[str, str, str]] = []
+    if llm_calls is not None:
+        spend_cards.append(("Model calls", _int(llm_calls), (
+            f"{_secs(model_wait_s, 3)} waiting on the model"
+            if model_wait_s is not None else ""
+        )))
+    if framework_s is not None:
+        spend_cards.append((
+            "Framework time", _secs(framework_s, 3),
+            f"model {_secs(model_wait_s, 3)} · tools {_secs(tool_wait_s, 3)}",
+        ))
     parts.append(_cards([
         ("Duration", _secs(duration, 2), f"{_int(data.get('iterations'))} iterations"
          if data.get("iterations") is not None else ""),
@@ -168,6 +187,7 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
             else _unpriced_label(model, provider, total_tokens),
             "",
         ),
+        *spend_cards,
     ]))
 
     error = metadata.get("error")

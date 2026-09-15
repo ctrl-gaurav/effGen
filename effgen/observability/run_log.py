@@ -140,6 +140,12 @@ def record_run(
     parent_agent: str | None = None,
     role: str | None = None,
     thread: Any = None,
+    llm_calls: int | None = None,
+    tool_calls: int | None = None,
+    cached_input_tokens: int | None = None,
+    model_wait_s: float | None = None,
+    tool_wait_s: float | None = None,
+    framework_s: float | None = None,
 ) -> dict[str, Any]:
     """Append a run record to the ring buffer and the daily history file.
 
@@ -198,6 +204,14 @@ def record_run(
         not a truncated rendering of its text. This store is a bounded ring of
         previews; the conversation itself lives on the run's checkpoint, on the
         session turn and on ``response.metadata["thread"]``.
+    llm_calls, tool_calls:
+        Model requests and tool executions the run made itself.
+    cached_input_tokens:
+        Prompt tokens the provider served from its cache.
+    model_wait_s, tool_wait_s, framework_s:
+        Seconds the run spent inside model calls, inside tool executions, and
+        in effGen itself (see :mod:`effgen.core.ledger`). These six are stored
+        only when given, so a record written without them keeps its shape.
 
     Returns the record that was stored.
     """
@@ -234,6 +248,16 @@ def record_run(
         "error": _preview(error),
         **_thread_shape(thread),
     }
+    for key, value in (
+        ("llm_calls", llm_calls),
+        ("tool_calls", tool_calls),
+        ("cached_input_tokens", cached_input_tokens),
+        ("model_wait_s", model_wait_s),
+        ("tool_wait_s", tool_wait_s),
+        ("framework_s", framework_s),
+    ):
+        if value is not None:
+            record[key] = value
     with _lock:
         _runs.append(record)
     _append_to_file(record)

@@ -49,6 +49,13 @@ _LATENCY_BUCKETS: tuple[float, ...] = (
 )
 
 
+#: Framework-time buckets: 0.5 ms … 5 s. A run's own overhead is milliseconds,
+#: so the latency buckets would put nearly every run in the first one.
+_FRAMEWORK_BUCKETS: tuple[float, ...] = (
+    0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0
+)
+
+
 def _default_buckets() -> tuple[float, ...]:
     return _LATENCY_BUCKETS
 
@@ -296,6 +303,16 @@ tool_call_latency = LabeledHistogram(
     buckets=_LATENCY_BUCKETS,
 )
 
+#: Time per run spent in effGen itself: the run's wall time less its model
+#: calls, tool executions and waits on the caller.
+#: Labels: agent
+run_framework_seconds = LabeledHistogram(
+    name="effgen_run_framework_seconds",
+    help="Time per agent run spent in effGen itself (wall less model, tool and caller waits), in seconds",
+    label_names=("agent",),
+    buckets=_FRAMEWORK_BUCKETS,
+)
+
 #: Latency histogram for one agent iteration (prompt → model → tools → response).
 #: Labels: preset
 agent_iteration_latency = LabeledHistogram(
@@ -425,6 +442,17 @@ def record_tool_call(
     )
 
 
+def record_run_framework(*, agent: str, seconds: float) -> None:
+    """
+    Record one run's framework time.
+
+    Args:
+        agent: Name of the agent that ran.
+        seconds: The run's wall time less its model, tool and caller waits.
+    """
+    run_framework_seconds.observe(max(0.0, seconds), labels={"agent": agent})
+
+
 def record_agent_iteration(
     *,
     preset: str,
@@ -504,6 +532,7 @@ def export_metrics() -> str:
     sections = [
         model_call_latency.export(),
         tool_call_latency.export(),
+        run_framework_seconds.export(),
         agent_iteration_latency.export(),
         tokens_total.export(),
         http_requests_total.export(),
@@ -527,6 +556,7 @@ def reset_all() -> None:
     """Reset all metrics (used in tests)."""
     model_call_latency.reset()
     tool_call_latency.reset()
+    run_framework_seconds.reset()
     agent_iteration_latency.reset()
     tokens_total.reset()
     http_requests_total.reset()
@@ -540,6 +570,7 @@ __all__ = [
     # Metric instances
     "model_call_latency",
     "tool_call_latency",
+    "run_framework_seconds",
     "agent_iteration_latency",
     "tokens_total",
     "http_requests_total",
@@ -550,6 +581,7 @@ __all__ = [
     # Recording helpers
     "record_model_call",
     "record_tool_call",
+    "record_run_framework",
     "record_agent_iteration",
     "record_tokens",
     "record_http_request",
