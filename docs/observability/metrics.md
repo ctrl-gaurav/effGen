@@ -17,7 +17,7 @@ All latency histograms use logarithmic-ish bucket boundaries:
 **Type:** Histogram  
 **Labels:** `provider`, `model`, `outcome`
 
-Measures the wall-clock time from the first byte sent to a model provider to the last byte received.
+Measures one model call: the time inside the provider request, retries and the adapter's back-off between them included. An agent run records one observation per model call it made, labelled with that call's outcome, so the series' count is the number of model calls, not the number of runs. The same figures are on each run's ledger (`response.ledger`, `metadata["ledger"]["calls"]`).
 
 | Label | Values |
 |---|---|
@@ -44,6 +44,22 @@ except Exception:
                       outcome="error", latency=time.perf_counter() - t0)
     raise
 ```
+
+---
+
+### `effgen_run_framework_seconds`
+
+**Type:** Histogram  
+**Labels:** `agent`
+
+Time per agent run spent in effGen itself: the run's wall time less the time it waited on model calls, on tool executions and on the caller (a stream's consumer, a human approval). One observation per run. Buckets run from 0.5 ms to 5 s. The per-run and per-iteration figures are on the run's ledger (`response.ledger.framework_s`, `response.ledger.steps`).
+
+```python
+from effgen.observability.metrics import record_run_framework
+record_run_framework(agent="support-bot", seconds=0.004)
+```
+
+Cached prompt tokens a provider reports are counted in `effgen_tokens_total{kind="cached"}`.
 
 ---
 

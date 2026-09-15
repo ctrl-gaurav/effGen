@@ -1,11 +1,11 @@
 {
- "derived_at": "2026-09-14",
+ "derived_at": "2026-09-15",
  "version": "1.1.0",
- "public_names": 250,
+ "public_names": 251,
  "kind_counts": {
   "alias": 1,
   "class": 97,
-  "dataclass": 53,
+  "dataclass": 54,
   "enum": 12,
   "exception": 19,
   "function": 67,
@@ -82,7 +82,7 @@
    "id": "orchestration",
    "title": "Orchestration and workflows",
    "blurb": "Splitting work across agents, running a DAG, checkpointing it, batching many tasks, and the middleware that wraps every step.",
-   "count": 26
+   "count": 27
   },
   {
    "id": "guardrails",
@@ -311,6 +311,14 @@
      "summary": "Return the status of a background task.",
      "is_async": false,
      "inherited_from": "AgentOrchestrationMixin"
+    },
+    {
+     "name": "last_stream_ledger",
+     "kind": "property",
+     "signature": "",
+     "summary": "The ledger of the most recent completed `stream` call, or `None`.",
+     "is_async": false,
+     "inherited_from": "AgentStreamingMixin"
     },
     {
      "name": "last_stream_response",
@@ -10313,6 +10321,254 @@
      "value": "hybrid"
     }
    ]
+  },
+  {
+   "name": "RunLedger",
+   "kind": "dataclass",
+   "module": "effgen.core.ledger",
+   "area": "orchestration",
+   "summary": "What one run spent, and where its time went.",
+   "signature": "(kind: str = 'run', name: str = '', llm_calls: int = 0, tool_calls: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, cached_input_tokens: int = 0, cost_usd: float | None = None, unpriced_calls: int = 0, estimated_calls: int = 0, unreported_calls: int = 0, iterations: int = 0, wall_s: float = 0.0, model_wait_s: float = 0.0, tool_wait_s: float = 0.0, caller_wait_s: float = 0.0, child_wait_s: float = 0.0, framework_s: float = 0.0, process_peak_rss_mb: float | None = None, steps: list[StepLedger] = <factory>, calls: list[CallRecord] = <factory>, children: list[RunLedger] = <factory>, resumed_from: dict[str, Any] | None = None) -> None",
+   "params": [
+    {
+     "name": "kind",
+     "type": "str",
+     "default": "'run'",
+     "required": false,
+     "keyword_only": false,
+     "description": "`\"run\"`, `\"stream\"`, `\"workflow\"` or `\"team\"`."
+    },
+    {
+     "name": "name",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The agent, workflow or team name."
+    },
+    {
+     "name": "llm_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Model requests made, retries and failed calls included."
+    },
+    {
+     "name": "tool_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Tool executions (a fallback tool that ran counts as one)."
+    },
+    {
+     "name": "prompt_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Prompt tokens reported by the backend, summed."
+    },
+    {
+     "name": "completion_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Completion tokens reported by the backend, summed."
+    },
+    {
+     "name": "cached_input_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Prompt tokens served from a provider cache."
+    },
+    {
+     "name": "cost_usd",
+     "type": "float | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "Cost of the priced calls; `None` when no call was priced."
+    },
+    {
+     "name": "unpriced_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Calls whose model has no published price."
+    },
+    {
+     "name": "estimated_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Calls whose token counts were estimated locally."
+    },
+    {
+     "name": "unreported_calls",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Calls whose backend reported no token counts."
+    },
+    {
+     "name": "iterations",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Loop iterations the run took."
+    },
+    {
+     "name": "wall_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds from the start of the run to the end of it."
+    },
+    {
+     "name": "model_wait_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds inside model calls."
+    },
+    {
+     "name": "tool_wait_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds inside tool executions."
+    },
+    {
+     "name": "caller_wait_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds waiting on the caller."
+    },
+    {
+     "name": "child_wait_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds inside child runs that were not already inside one of this run's model or tool calls."
+    },
+    {
+     "name": "framework_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "`wall_s` less the four waits above."
+    },
+    {
+     "name": "process_peak_rss_mb",
+     "type": "float | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "The process's peak resident memory when the run ended. A process-wide number: never added across runs."
+    },
+    {
+     "name": "steps",
+     "type": "list[StepLedger]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "One `StepLedger` per iteration."
+    },
+    {
+     "name": "calls",
+     "type": "list[CallRecord]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "One `CallRecord` per model or tool call."
+    },
+    {
+     "name": "children",
+     "type": "list[RunLedger]",
+     "default": "<factory>",
+     "required": false,
+     "keyword_only": false,
+     "description": "The ledgers of runs this run started."
+    },
+    {
+     "name": "resumed_from",
+     "type": "dict[str, Any] | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": false,
+     "description": "On a resumed run, `{\"checkpoint_id\": ..., \"prior\": {...}}` with what the run had spent before the checkpoint. A value in `prior` is `None` when the checkpoint did not record it."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "cumulative",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "`total` plus what a resumed run spent before its checkpoint.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any]) -> RunLedger",
+     "summary": "Rebuild a ledger from `to_dict` output.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "own",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The run's own counters, children and earlier parts excluded.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The ledger as plain data: own counters, steps, calls, children, total.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "total",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The run's own counters with every child's `total` added once.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "total_tokens",
+     "kind": "property",
+     "signature": "",
+     "summary": "Prompt plus completion tokens of the run's own calls.",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
   },
   {
    "name": "RunStoppedError",

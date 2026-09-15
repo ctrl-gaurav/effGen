@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from .agent_runtime import _safe_float_or_none, _safe_int_or_none
+from .ledger import attach as _attach_ledger
 
 if TYPE_CHECKING:
     from .agent_response import AgentResponse
@@ -31,13 +32,19 @@ class AgentResultMixin:
         *,
         task: Any,
         started_at: str,
+        ledger: Any = None,
     ) -> AgentResponse:
         """Record what the run was, on the response, and return it.
 
         A result document is read long after the run, often by someone who did
         not start it, so it carries the task, the model and provider that
         answered it, and when it started.
+
+        *ledger* is the run's ledger recorder. Every way out of a run passes
+        through here, so this is where the ledger is closed and its final form
+        written to ``metadata["ledger"]``.
         """
+        _attach_ledger(response, ledger, close=True)
         if response.task is None and isinstance(task, str):
             response.task = task
         if response.model is None:
@@ -104,11 +111,26 @@ class AgentResultMixin:
         *,
         error: str | None = None,
         task: str | None = None,
+        ledger: Any = None,
     ) -> None:
-        """Record the run in the history store read by `effgen runs` and the dashboard."""
+        """Record the run in the history store read by `effgen runs` and the dashboard.
+
+        With the run's *ledger* the record also carries its model and tool call
+        counts, cached prompt tokens and the split of its time.
+        """
         try:
             from effgen.observability.run_log import record_run
 
+            spent: dict[str, Any] = {}
+            if ledger is not None:
+                spent = {
+                    "llm_calls": ledger.llm_calls,
+                    "tool_calls": ledger.tool_calls,
+                    "cached_input_tokens": ledger.cached_input_tokens,
+                    "model_wait_s": round(ledger.model_wait_s, 6),
+                    "tool_wait_s": round(ledger.tool_wait_s, 6),
+                    "framework_s": round(ledger.framework_s, 6),
+                }
             metadata = response.metadata or {}
             cost = metadata.get("cost_usd", metadata.get("cost"))
             output_tokens = metadata.get("output_tokens", metadata.get("completion_tokens"))
@@ -135,6 +157,7 @@ class AgentResultMixin:
                 session_id=self._session_id,
                 agent=self.name,
                 thread=metadata.get("thread"),
+                **spent,
             )
         except Exception:  # noqa: BLE001 - run history must not break runs
             logger.debug("Run history logging failed", exc_info=True)

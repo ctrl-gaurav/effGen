@@ -62,6 +62,7 @@ from ..observability.tracing import (
 )
 from ..utils.prometheus_metrics import metrics as prom_metrics
 from ..utils.structured_logging import get_structured_logger
+from . import ledger as _ledger
 from .agent_config import AgentMode
 from .agent_response import AgentResponse, StreamEvent
 from .agent_runtime import (
@@ -563,15 +564,19 @@ class _Deltas:
         failure: Exception | None = None
         stream_iter: Any = None
         emitted_here = False
+        # Only the time spent pulling the next piece is the model's; the time
+        # the consumer holds a piece this turn has yielded is not.
+        clock = _ledger.StreamClock(str(getattr(model, "model_name", "") or ""))
         try:
             # Opening the stream belongs inside the guard: the budget gate
             # wrapping ``generate_stream`` refuses synchronously, before the
             # iterator exists, so a refusal raised here would otherwise leave
             # the loop with no record and no fallback.
-            stream_iter = model.generate_stream(
+            stream_iter = clock.open(
+                model.generate_stream,
                 prompt, config=policy.gen_config, **model_call_kwargs(gen_kwargs)
             )
-            for token in stream_iter:
+            for token in clock.pieces(stream_iter):
                 if not token:
                     continue
                 raw += token
@@ -594,6 +599,7 @@ class _Deltas:
             close_stream = getattr(stream_iter, "close", None)
             if close_stream is not None:
                 close_stream()
+            clock.finish()
 
         if failure is not None:
             if emitted_here:
@@ -1078,6 +1084,7 @@ def step(
     kwargs = policy.call_kwargs
     state.iterations += 1
     iterations = state.iterations
+    _ledger.mark_iteration(iterations)
     state.iter_start = iter_start = time.time()
     conversation_history = state.conversation_history
 
@@ -2351,6 +2358,7 @@ def _write_periodic_checkpoint(
         return
     try:
         from .checkpoint import CheckpointManager as _CM2
+        spent = _ledger.current()
         cp = _CM2.snapshot_agent(
             agent,
             task=task,
@@ -2359,6 +2367,10 @@ def _write_periodic_checkpoint(
             tool_calls=state.tool_calls,
             tokens_used=state.tokens_used,
             metadata={"interval": interval},
+            ledger=(
+                spent.snapshot(state.iterations).cumulative()
+                if spent is not None else None
+            ),
         )
         agent._last_checkpoint_id = state.checkpoints.save(cp)
     except Exception as _e:

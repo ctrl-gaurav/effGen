@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import os
 import random
-import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +33,7 @@ from effgen.models._adapter_utils import (
     warn_reasoning_only_stream,
 )
 from effgen.models._cost import CostTracker
+from effgen.models._ledger_hook import backoff_sleep, provider_request
 from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models._usage import (
@@ -448,7 +448,8 @@ class TogetherAdapter(BaseModel):
         _last_exc: Exception | None = None
         for _attempt in range(1, _MAX_RETRIES + 1):
             try:
-                response = self._client.chat.completions.create(**request_params)
+                with provider_request():
+                    response = self._client.chat.completions.create(**request_params)
                 break
             except Exception as exc:
                 _last_exc = exc
@@ -528,7 +529,7 @@ class TogetherAdapter(BaseModel):
                         "Together transient error on attempt %d/%d — retrying in %.1fs: %s",
                         _attempt, _MAX_RETRIES, delay, exc,
                     )
-                    time.sleep(delay)
+                    backoff_sleep(delay)
                     continue
 
                 logger.error("Together API call failed: %s", exc)

@@ -385,10 +385,11 @@ def test_public_surface_anchor_unchanged():
     # BackendUnreachableError, the middleware surface, the tool-call records,
     # the compaction strategies, and the workflow checkpoint stores. 1.1.0
     # added 9 more: AgentThread, the Step protocol, and the seven kinds of
-    # step a run's conversation is made of. Growing this number is a
+    # step a run's conversation is made of. 1.2.0 added RunLedger, what a run
+    # spent and where its time went. Growing this number is a
     # deliberate act — update it in the same commit that widens the surface,
     # and say why.
-    assert len(effgen.__all__) == 250
+    assert len(effgen.__all__) == 251
 
 
 class TestLandingRendersEachLineAsOneSpan:

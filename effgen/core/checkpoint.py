@@ -108,6 +108,10 @@ class Checkpoint:
     tool_states: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    #: What the run had spent when the checkpoint was written — the counters of
+    #: :meth:`effgen.core.ledger.RunLedger.cumulative`. Empty on a checkpoint
+    #: written before ledgers were kept.
+    ledger: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the checkpoint as a JSON-serializable dict."""
@@ -350,6 +354,7 @@ class CheckpointManager:
         tokens_used: int = 0,
         metadata: dict[str, Any] | None = None,
         thread: Any = None,
+        ledger: dict[str, Any] | None = None,
     ) -> Checkpoint:
         """Build a Checkpoint by snapshotting an Agent's serializable state.
 
@@ -370,6 +375,9 @@ class CheckpointManager:
                 :class:`~effgen.core.thread.AgentThread` or as the data one
                 serialises to. Stored whole, so resuming gets the run's steps
                 back rather than a reading of their text.
+            ledger: What the run had spent so far, as the counters of
+                :meth:`effgen.core.ledger.RunLedger.cumulative`; a resumed run
+                reads them back as the spend before its checkpoint.
 
         Returns:
             The checkpoint, ready to persist.
@@ -412,6 +420,7 @@ class CheckpointManager:
             memory=memory_dict,
             tool_states=tool_states,
             metadata=metadata or {},
+            ledger=dict(ledger or {}),
         )
 
     @staticmethod

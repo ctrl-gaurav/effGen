@@ -39,7 +39,13 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
+from . import ledger as _ledger
+
 logger = logging.getLogger(__name__)
+
+
+def _model_label(model: Any) -> str:
+    return str(getattr(model, "model_name", "") or "")
 
 
 @dataclass
@@ -617,17 +623,22 @@ def _native_json_call(
             # Strongest path: strict json_schema (output is schema-guaranteed).
             try:
                 rf = _openai_strict_response_format(schema)
-                result = model.generate_structured(prompt, response_format=rf, config=config)
+                result = _ledger.timed_model_call(
+                    model.generate_structured, _model_label(model),
+                    prompt, response_format=rf, config=config,
+                )
                 text = result.text
             except Exception as e:
                 # Strict mode rejects some schema features; fall back to json_object.
                 logger.debug("OpenAI strict json_schema failed, trying json_object: %s", e)
-                result = model.generate(
+                result = _ledger.timed_model_call(
+                    model.generate, _model_label(model),
                     enhanced, config=config, response_format={"type": "json_object"},
                 )
                 text = result.text
         elif name in _OPENAI_COMPATIBLE_ADAPTERS:
-            result = model.generate(
+            result = _ledger.timed_model_call(
+                model.generate, _model_label(model),
                 enhanced, config=config, response_format={"type": "json_object"},
             )
             text = result.text
@@ -635,7 +646,9 @@ def _native_json_call(
             json_config = replace(
                 config, response_mime_type="application/json", response_schema=schema,
             )
-            result = model.generate(enhanced, config=json_config)
+            result = _ledger.timed_model_call(
+                model.generate, _model_label(model), enhanced, config=json_config,
+            )
             text = result.text
     except Exception as e:
         return None, None, None, f"native JSON call failed: {e}"
@@ -694,7 +707,9 @@ def _reprompt_once(
     )
 
     try:
-        result = model.generate(enhanced_prompt, config=config)
+        result = _ledger.timed_model_call(
+            model.generate, _model_label(model), enhanced_prompt, config=config,
+        )
         text = result.text if hasattr(result, "text") else str(result)
     except Exception as e:
         logger.debug("Reprompt attempt %d failed: %s", attempt + 1, e)

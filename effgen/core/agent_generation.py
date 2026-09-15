@@ -46,6 +46,7 @@ from ..observability.tracing import (
 from ..utils.structured_logging import (
     get_structured_logger,
 )
+from . import ledger as _ledger
 
 # When a reasoning model returns an empty, "length"-truncated result with the
 # default budget, grow the budget and retry once (×4, capped) before giving up
@@ -495,7 +496,11 @@ class AgentGenerationMixin:
                     # (the tool definitions, and whether a call is required).
                     extra_gen_kwargs = model_call_kwargs(kwargs)
 
-                    turn_result = current_model.generate(prompt, config=gen_config, **extra_gen_kwargs)
+                    turn_result = _ledger.timed_model_call(
+                        current_model.generate,
+                        str(getattr(current_model, "model_name", "") or ""),
+                        prompt, config=gen_config, **extra_gen_kwargs,
+                    )
 
                     # An adapter may answer with a result object or with the
                     # plain mapping the same fields live in; the lines below
@@ -592,7 +597,7 @@ class AgentGenerationMixin:
                             f"Empty response on attempt {attempt + 1}/{max_retries}, "
                             f"retrying in {backoff_delays[attempt]}s with temperature={retry_temperature:.2f}"
                         )
-                        time.sleep(backoff_delays[attempt])
+                        _ledger.backoff_sleep(time.sleep, backoff_delays[attempt])
                     else:
                         logger.warning(f"Empty response after {max_retries} attempts")
 
@@ -635,7 +640,7 @@ class AgentGenerationMixin:
                             f"Generation error on attempt {attempt + 1}/{max_retries} "
                             f"({err_class.category}): {e}, retrying in {backoff_delays[attempt]}s"
                         )
-                        time.sleep(backoff_delays[attempt])
+                        _ledger.backoff_sleep(time.sleep, backoff_delays[attempt])
                     else:
                         logger.error(f"Generation failed after {max_retries} attempts: {e}")
 
@@ -699,33 +704,60 @@ class AgentGenerationMixin:
         outcome: str,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
+        ledger: Any = None,
     ) -> None:
         """Feed the provider/model-labeled Prometheus series for one run.
 
         Populates ``effgen_model_call_latency_seconds{provider,model,outcome}``
-        and ``effgen_tokens_total{provider,model,kind}`` (declared in
-        ``effgen.observability.metrics`` but otherwise never written), so a
-        server operator can graph latency/error-rate per provider and model
-        and cost by model — not just the flat per-``agent_name`` aggregate.
+        and ``effgen_tokens_total{provider,model,kind}``, so a server operator
+        can graph latency/error-rate per provider and model and cost by model —
+        not just the flat per-``agent_name`` aggregate.
+
+        With the run's *ledger* the latency histogram gets one observation per
+        model call, timed inside the call and labelled with that call's
+        outcome, cached prompt tokens are counted under ``kind="cached"``, and
+        ``effgen_run_framework_seconds{agent}`` gets the run's framework time.
+        Without one the run is recorded as a single observation of
+        *execution_time* labelled *outcome*.
         """
         try:
-            from ..observability.metrics import record_model_call, record_tokens
+            from ..observability.metrics import (
+                record_model_call,
+                record_run_framework,
+                record_tokens,
+            )
         except Exception:  # pragma: no cover - metrics module always ships
             return
         provider = self._model_provider(self.model)
         model_name = getattr(self.model, "model_name", None) or self.model_name or "unknown"
-        record_model_call(
-            provider=provider,
-            model=model_name,
-            outcome=outcome,
-            latency=max(0.0, execution_time or 0.0),
-        )
-        if prompt_tokens or completion_tokens:
+        cached = 0
+        if ledger is not None:
+            for call in ledger.calls:
+                if call.kind == "model":
+                    record_model_call(
+                        provider=provider,
+                        model=model_name,
+                        outcome=call.outcome,
+                        latency=max(0.0, call.wait_s),
+                    )
+            record_run_framework(
+                agent=str(getattr(self, "name", "") or ""), seconds=ledger.framework_s,
+            )
+            cached = int(ledger.cached_input_tokens or 0)
+        else:
+            record_model_call(
+                provider=provider,
+                model=model_name,
+                outcome=outcome,
+                latency=max(0.0, execution_time or 0.0),
+            )
+        if prompt_tokens or completion_tokens or cached:
             record_tokens(
                 provider=provider,
                 model=model_name,
                 input_tokens=int(prompt_tokens or 0),
                 output_tokens=int(completion_tokens or 0),
+                cached_tokens=cached,
             )
 
     def _warn_reasoning_budget(self, max_tokens: int | None, structured_output: bool) -> None:
@@ -946,7 +978,15 @@ class AgentGenerationMixin:
         # and the effgen.tokens_used span, which both read response.tokens_used
         # after this point.
         if "total_tokens" in accum:
-            response.tokens_used = int(accum["total_tokens"])
+            # A decomposed run arrives here already carrying its sub-agents'
+            # tokens; the accumulator holds only the run's own calls (the
+            # decomposition and the synthesis), so the two are added rather than
+            # the children's being overwritten.
+            children = (
+                response.tokens_used
+                if getattr(response.mode, "value", None) == "sub_agents" else 0
+            )
+            response.tokens_used = int(accum["total_tokens"]) + int(children or 0)
 
     def _build_error_detail(self, exc: Exception, model: Any) -> dict[str, Any]:
         """Build a structured, redacted error record from an exception.
@@ -1157,7 +1197,11 @@ class AgentGenerationMixin:
             return None
 
         try:
-            return self._run_coroutine_sync(_speculate())
+            # The two requests run on worker threads, so they are counted here,
+            # once, as the wait for the first answer.
+            return _ledger.timed_model_call(
+                self._run_coroutine_sync, "speculative", _speculate(),
+            )
         except Exception as e:
             logger.warning("Speculative execution failed: %s", e)
             return None

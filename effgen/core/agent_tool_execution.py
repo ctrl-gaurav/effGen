@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any
 
+from . import ledger as _ledger
 from .execution_tracker import EventType, ExecutionEvent
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,8 @@ class AgentToolExecutionMixin:
         ) if tool_obj else False
         if self._approval_manager.should_request_approval(tool_name, _requires_approval):
             from .human_loop import ApprovalDecision
-            decision = self._approval_manager.request_approval(tool_name, tool_input)
+            with _ledger.caller_wait():
+                decision = self._approval_manager.request_approval(tool_name, tool_input)
             if decision != ApprovalDecision.APPROVED:
                 logger.info("Tool '%s' denied by human approval (%s)", tool_name, decision.value)
                 return f"Error executing tool '{tool_name}': execution denied by human approval ({decision.value})"
@@ -238,11 +240,14 @@ class AgentToolExecutionMixin:
 
             # Execute tool (handle both sync and async)
             try:
-                result = tool.execute(**input_dict)
+                # The tool's own time; parsing its input above and reading its
+                # result below are the framework's.
+                with _ledger.tool_wait(tool_name):
+                    result = tool.execute(**input_dict)
 
-                # Await a coroutine result before using it
-                if asyncio.iscoroutine(result):
-                    result = self._run_coroutine_sync(result)
+                    # Await a coroutine result before using it
+                    if asyncio.iscoroutine(result):
+                        result = self._run_coroutine_sync(result)
 
             except TypeError as e:
                 logger.error(f"Tool parameter error: {e}")

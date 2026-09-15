@@ -486,6 +486,30 @@ class AgentResponse:
         return children
 
     @property
+    def ledger(self) -> Any:
+        """What this run spent, and where its time went.
+
+        A :class:`~effgen.core.ledger.RunLedger` read from
+        ``metadata["ledger"]``, which holds the same thing as plain data: the
+        model calls and tool calls the run made, the tokens each model call
+        reported, cached prompt tokens, cost, and the run's wall time split into
+        ``model_wait_s``, ``tool_wait_s``, ``caller_wait_s`` and
+        ``framework_s`` (the time spent in effGen itself), per run and per
+        iteration. Runs this run started — sub-agents, workflow nodes, team
+        members — are its ``children``; ``ledger.total()`` counts each once.
+
+        Returns:
+            The run's ledger, or ``None`` for a response that carries none (one
+            built by hand, or read back from a document saved without one).
+        """
+        data = (self.metadata or {}).get("ledger")
+        if not isinstance(data, dict):
+            return None
+        from .ledger import RunLedger
+
+        return RunLedger.from_dict(data)
+
+    @property
     def text(self) -> str:
         """Read-only alias for :attr:`output` (familiar from other SDKs)."""
         return self.output

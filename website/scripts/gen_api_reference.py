@@ -207,6 +207,7 @@ AREAS: list[dict] = [
             "effgen.core.workflow_checkpoint",
             "effgen.core.middleware",
             "effgen.core.sub_agent_manager",
+            "effgen.core.ledger",
         ],
     },
     {

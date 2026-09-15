@@ -41,6 +41,7 @@ from effgen.models._base_url import (
     openai_client_base_url,
     resolve_base_url,
 )
+from effgen.models._ledger_hook import provider_request
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -736,7 +737,7 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            with timed_call("openai", self.model_name):
+            with timed_call("openai", self.model_name), provider_request():
                 response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
@@ -965,7 +966,8 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            response = self.client.chat.completions.create(**request_params)
+            with provider_request():
+                response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI structured call failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "structured", e, message="OpenAI structured generation failed", endpoint=self.base_url) from e
@@ -1049,7 +1051,8 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            response = self.client.chat.completions.create(**request_params)
+            with provider_request():
+                response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with system prompt failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation with system prompt failed", endpoint=self.base_url) from e
@@ -1138,7 +1141,8 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            response = self.client.chat.completions.create(**request_params)
+            with provider_request():
+                response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with tools failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI generation with tools failed", endpoint=self.base_url) from e
@@ -1275,7 +1279,8 @@ class OpenAIAdapter(FunctionCallingModel):
         params.update(kwargs)
 
         try:
-            response = self.client.responses.create(**params)
+            with provider_request():
+                response = self.client.responses.create(**params)
         except Exception as e:
             logger.error(f"OpenAI Responses API call failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI native tool generation failed", endpoint=self.base_url) from e
@@ -1480,7 +1485,8 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            response = self.client.chat.completions.create(**request_params)
+            with provider_request():
+                response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI chat failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "chat", e, message="OpenAI chat failed", endpoint=self.base_url) from e

@@ -29,6 +29,7 @@ from effgen.models._adapter_utils import (
     warn_empty_stream,
     warn_reasoning_only_stream,
 )
+from effgen.models._ledger_hook import backoff_sleep, provider_request
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -536,11 +537,12 @@ class GeminiAdapter(FunctionCallingModel):
                         contents=contents,
                         config=gen_config,
                     )
-                return self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=gen_config,
-                )
+                with provider_request():
+                    return self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=gen_config,
+                    )
             except Exception as exc:
                 last_exc = exc
                 exc_str = str(exc)
@@ -581,7 +583,7 @@ class GeminiAdapter(FunctionCallingModel):
                     "Gemini transient error on attempt %d/%d: %s — sleeping %.1fs",
                     attempt, attempts, type(exc).__name__, delay,
                 )
-                time.sleep(delay)
+                backoff_sleep(delay)
         if last_exc is None:
             raise RuntimeError(
                 f"Gemini made no request for '{self.model_name}': the retry "

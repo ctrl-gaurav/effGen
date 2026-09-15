@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Any
 
 from ..observability.tracing import execution_scope, new_execution_id
+from . import ledger as _ledger
 from .agent import Agent, AgentMode
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .lifecycle import AgentRegistry
@@ -547,9 +548,12 @@ class MultiAgentOrchestrator:
             # One id for the whole team run: every member's spans and stored run
             # records carry it, so the runs regroup into the execution they
             # belong to instead of reading as unrelated traces.
+            # Every member's run is a child of the team's ledger, which the
+            # response carries under ``metadata["ledger"]``.
+            team_ledger = _ledger.open_run("team", team.name)
             with execution_scope(
                 kind="team", name=team.name, execution_id=execution_id,
-            ) as execution:
+            ) as execution, _ledger.activate(team_ledger):
                 # Execute based on pattern
                 if team.pattern == OrchestrationPattern.SEQUENTIAL:
                     response = self._execute_sequential(task, team, context)
@@ -569,6 +573,8 @@ class MultiAgentOrchestrator:
             response.metadata.setdefault("execution_id", execution["execution_id"])
             response.metadata.setdefault("topology", team.to_dict())
             response.execution_time = time.time() - start_time
+            if team_ledger is not None:
+                response.metadata["ledger"] = team_ledger.close().to_dict()
 
             # Track completion
             self.execution_tracker.track_event(ExecutionEvent(

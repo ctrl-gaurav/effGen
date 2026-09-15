@@ -25,6 +25,7 @@ from effgen.models._adapter_utils import (
     not_loaded_error,
     provider_runtime_error,
 )
+from effgen.models._ledger_hook import provider_request
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models._usage import tool_call_entry
 from effgen.models.anthropic_cache import validate_breakpoint_count
@@ -646,7 +647,7 @@ class AnthropicAdapter(FunctionCallingModel):
 
         try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)
-            with timed_call("anthropic", self.model_name):
+            with timed_call("anthropic", self.model_name), provider_request():
                 response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
@@ -1003,7 +1004,8 @@ class AnthropicAdapter(FunctionCallingModel):
 
         try:
             request = self._build_request(prompt, config, system_prompt, tools, kwargs)
-            response = self.client.messages.create(**request)
+            with provider_request():
+                response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
@@ -1158,7 +1160,8 @@ class AnthropicAdapter(FunctionCallingModel):
 
             request.update(kwargs)
             _translate_tool_choice(request)
-            response = self.client.messages.create(**request)
+            with provider_request():
+                response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)

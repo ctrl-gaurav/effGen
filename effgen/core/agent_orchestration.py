@@ -36,6 +36,7 @@ from ..utils.structured_logging import (
     generate_run_id,
     get_structured_logger,
 )
+from . import ledger as _ledger
 from .agent_config import _RUN_KWARGS, AgentMode
 from .agent_response import AgentResponse
 from .agent_runtime import _strip_run_citation_markers, sanitize_final_answer
@@ -168,6 +169,13 @@ class AgentOrchestrationMixin:
             )
 
         start_time = time.time()
+        # What this run spends, from here to the response it returns. A run
+        # already in progress in this context (a parent that started this one)
+        # receives the finished ledger as a child.
+        _ledger_rec = _ledger.open_run("run", str(getattr(self, "name", "") or ""))
+        _resume_ledger = kwargs.pop("_resume_ledger", None)
+        if _ledger_rec is not None and isinstance(_resume_ledger, dict):
+            _ledger_rec.prior = _resume_ledger
         started_at = datetime.now(UTC).isoformat(timespec="seconds")
         context = context or {}
 
@@ -200,7 +208,7 @@ class AgentOrchestrationMixin:
                         "retryable": False,
                     },
                 },
-            ), task=task, started_at=started_at)
+            ), task=task, started_at=started_at, ledger=_ledger_rec)
 
         # Hooks around this run. A per-call middleware= list is appended to
         # the configured ones for this call only, and is what _execute_tool and
@@ -224,7 +232,7 @@ class AgentOrchestrationMixin:
                 # refusal. after_run still sees it, so the chain stays symmetric.
                 return self._stamp_run_identity(
                     _chain.after_run(_mw_run_ctx, _short_circuit),
-                    task=task, started_at=started_at,
+                    task=task, started_at=started_at, ledger=_ledger_rec,
                 )
             if isinstance(task, str):
                 task = _mw_run_ctx.task
@@ -272,7 +280,7 @@ class AgentOrchestrationMixin:
                     success=False,
                     execution_time=time.time() - start_time,
                     metadata={"guardrail_blocked": True, "guardrail_reason": gr.reason},
-                ), task=task, started_at=started_at)
+                ), task=task, started_at=started_at, ledger=_ledger_rec)
             if gr.modified_content is not None:
                 task = gr.modified_content
                 # Record what the input redaction removed so a run is auditable
@@ -308,6 +316,7 @@ class AgentOrchestrationMixin:
         # collide with a concurrent or prior call on this Agent instance.
         _task_preview = self._extract_task_preview(task, 200)
         with self._agent_call_scope(), \
+             _ledger.activate(_ledger_rec), \
              start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
             # Track task start
@@ -444,6 +453,9 @@ class AgentOrchestrationMixin:
                 # Surface this run's cost + token usage on the result so callers
                 # can budget per call without a side channel.
                 self._finalize_cost_metadata(response)
+                # The ledger as it stands, for the telemetry recorded below; the
+                # response carries the final one, closed when the run returns.
+                _run_ledger = _ledger.attach(response, _ledger_rec, close=False)
 
                 # Surface retrieved evidence: if the run consulted a knowledge
                 # base / search tool, expose its passages as sources + inline
@@ -469,9 +481,19 @@ class AgentOrchestrationMixin:
 
                 # Metrics: record latency and tokens
                 prom_metrics.response_latency.observe(response.execution_time, labels=labels)
-                if response.tokens_used:
-                    prom_metrics.token_usage.observe(response.tokens_used, labels=labels)
-                    prom_metrics.tokens_used.inc(response.tokens_used, labels=labels)
+                # The run's own tokens: a decomposed run's tokens_used also holds
+                # its sub-agents' tokens, which each sub-agent's run records, so
+                # these counters take only the calls the run made itself.
+                _own_tokens = int(response.tokens_used or 0)
+                if getattr(response.mode, "value", None) == "sub_agents":
+                    _accum = getattr(self, "_run_cost_accum", None) or {}
+                    _own_tokens = (
+                        int(_accum["total_tokens"])
+                        if _accum.get("calls") and "total_tokens" in _accum else 0
+                    )
+                if _own_tokens:
+                    prom_metrics.token_usage.observe(_own_tokens, labels=labels)
+                    prom_metrics.tokens_used.inc(_own_tokens, labels=labels)
                 # A failed response with raise_on_error set is about to be turned
                 # into a raised exception below and recorded once, with a precise
                 # classify_provider_error() outcome, in the except block — recording
@@ -482,6 +504,7 @@ class AgentOrchestrationMixin:
                         outcome="ok" if response.success else "error",
                         prompt_tokens=response.metadata.get("prompt_tokens"),
                         completion_tokens=response.metadata.get("completion_tokens"),
+                        ledger=_run_ledger,
                     )
 
                 # A run that reports failure without raising still records the
@@ -521,7 +544,7 @@ class AgentOrchestrationMixin:
                     tool_calls=response.tool_calls,
                     success=response.success,
                 )
-                self._record_dashboard_run(response, task=task)
+                self._record_dashboard_run(response, task=task, ledger=_run_ledger)
 
                 # Store conversation in short-term memory for context retention
                 if response.success and response.output:
@@ -590,6 +613,10 @@ class AgentOrchestrationMixin:
                             tool_calls=response.tool_calls,
                             tokens_used=response.tokens_used,
                             metadata={"final": True, "success": response.success},
+                            ledger=(
+                                _ledger_rec.snapshot(response.iterations).cumulative()
+                                if _ledger_rec is not None else None
+                            ),
                         )
                         self._last_checkpoint_id = mgr.save(cp)
                         response.metadata["checkpoint_id"] = self._last_checkpoint_id
@@ -613,7 +640,7 @@ class AgentOrchestrationMixin:
                     raise self._reconstruct_error(response.metadata, response)
 
                 return self._stamp_run_identity(
-                    response, task=task, started_at=started_at
+                    response, task=task, started_at=started_at, ledger=_ledger_rec,
                 )
 
             except Exception as e:
@@ -630,6 +657,9 @@ class AgentOrchestrationMixin:
                     self._record_provider_metrics(
                         execution_time=time.time() - start_time,
                         outcome=classify_provider_error(e).category,
+                        ledger=(
+                            _ledger_rec.snapshot() if _ledger_rec is not None else None
+                        ),
                     )
                     raise
                 # Track failure
@@ -656,13 +686,17 @@ class AgentOrchestrationMixin:
                     execution_tree=self.execution_tracker.generate_execution_tree(),
                     metadata={"reason": "run_failed", "error": detail, "run_id": run_id}
                 )
-                self._record_dashboard_run(response, error=redacted_msg, task=task)
+                _run_ledger = _ledger.attach(response, _ledger_rec, close=False)
+                self._record_dashboard_run(
+                    response, error=redacted_msg, task=task, ledger=_run_ledger,
+                )
                 self._record_provider_metrics(
                     execution_time=response.execution_time,
                     outcome=classify_provider_error(e).category,
+                    ledger=_run_ledger,
                 )
                 return self._stamp_run_identity(
-                    response, task=task, started_at=started_at
+                    response, task=task, started_at=started_at, ledger=_ledger_rec,
                 )
 
             finally:
@@ -736,6 +770,19 @@ class AgentOrchestrationMixin:
             kwargs.setdefault("_resume_thread", thread.to_dict())
         kwargs.setdefault("_resume_scratchpad", cp.scratchpad)
         kwargs.setdefault("checkpoint_dir", checkpoint_dir)
+        # What the run spent before the checkpoint, so the resumed run's ledger
+        # can report the whole task. A checkpoint written before ledgers were
+        # kept knows only its token total.
+        kwargs.setdefault("_resume_ledger", {
+            "checkpoint_id": cp.checkpoint_id or checkpoint_id,
+            "prior": dict(cp.ledger) if getattr(cp, "ledger", None) else {
+                "total_tokens": cp.tokens_used,
+                "tool_calls": cp.tool_calls,
+                "llm_calls": None,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+            },
+        })
         return self.run(cp.task, **kwargs)
 
     def run_background(self, task: str, priority: int = 5, **run_kwargs: Any) -> str:

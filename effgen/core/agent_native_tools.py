@@ -17,6 +17,7 @@ from typing import Any
 from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
 from ..models.errors import generation_failure_text
+from . import ledger as _ledger
 from .agent_config import AgentMode
 from .agent_response import AgentResponse
 from .agent_runtime import (
@@ -90,7 +91,8 @@ class AgentNativeToolsMixin:
         )
 
         try:
-            result = adapter.generate_with_native_tools(
+            result = _ledger.timed_model_call(
+                adapter.generate_with_native_tools, str(adapter.model_name or ""),
                 prompt=task,
                 native_tool_specs=native_specs,
                 function_tool_specs=function_specs if function_specs else None,
@@ -154,7 +156,9 @@ class AgentNativeToolsMixin:
                 obs_text = "\n".join(observations)
                 followup = f"Tool results:\n{obs_text}\n\nBased on these results, answer the user's question: {task}"
                 try:
-                    followup_result = adapter.generate(followup)
+                    followup_result = _ledger.timed_model_call(
+                        adapter.generate, str(adapter.model_name or ""), followup,
+                    )
                     return AgentResponse(
                         output=sanitize_final_answer(followup_result.text) or followup_result.text,
                         success=True,
@@ -291,7 +295,10 @@ class AgentNativeToolsMixin:
         prompt = f"{system_note}{task}"
 
         try:
-            result = self.model.generate(prompt, config=gen_config, tools=all_tools)
+            result = _ledger.timed_model_call(
+                self.model.generate, str(getattr(self.model, "model_name", "") or ""),
+                prompt, config=gen_config, tools=all_tools,
+            )
         except Exception as exc:
             logger.debug("Gemini native tool generation failed", exc_info=True)
             detail = self._build_error_detail(exc, self.model)
@@ -363,7 +370,10 @@ class AgentNativeToolsMixin:
             obs_text = "\n".join(observations)
             followup = f"Tool results:\n{obs_text}\n\nBased on these results, answer: {task}"
             try:
-                followup_result = self.model.generate(followup, config=gen_config)
+                followup_result = _ledger.timed_model_call(
+                    self.model.generate, str(getattr(self.model, "model_name", "") or ""),
+                    followup, config=gen_config,
+                )
                 followup_answer = (
                     sanitize_final_answer(followup_result.text) or followup_result.text
                 )

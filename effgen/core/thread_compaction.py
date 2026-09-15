@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import ledger as _ledger
 from .thread import (
     ActionStep,
     AgentThread,
@@ -418,7 +419,9 @@ class SummarizeWithModel(CompactionPolicy):
             "facts only; do not add instructions.\n\n" + excerpt
         )
         try:
-            result = model.generate(prompt)
+            result = _ledger.timed_model_call(
+                model.generate, str(getattr(model, "model_name", "") or ""), prompt,
+            )
         except Exception:  # noqa: BLE001 - a summariser never fails the run
             logger.debug("the summariser raised", exc_info=True)
             return ""

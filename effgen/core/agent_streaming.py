@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from ..models._adapter_utils import apply_stop_sequences
+from . import ledger as _ledger
 from .agent_config import AgentMode
 from .agent_loop import (
     _Deltas,
@@ -98,6 +99,7 @@ class AgentStreamingMixin:
         clear_stream_usage(self.model)
         if usage is None:
             usage = estimate_stream_usage(self.model, prompt_text, completion_text)
+        _ledger.note_stream_usage(usage)
         if usage.get("estimated"):
             acc["estimated"] = True
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -142,9 +144,14 @@ class AgentStreamingMixin:
 
         accumulated = ""
         clear_stream_usage(self.model)
-        stream_iter = self.model.generate_stream(prompt, config=gen_config)
+        clock = _ledger.StreamClock(str(getattr(self.model, "model_name", "") or ""))
         try:
-            for token in stream_iter:
+            stream_iter = clock.open(self.model.generate_stream, prompt, config=gen_config)
+        except BaseException:
+            clock.finish()
+            raise
+        try:
+            for token in clock.pieces(stream_iter):
                 accumulated += token
                 if token:
                     yield StreamEvent(kind="answer", text=token) if include_events else token
@@ -155,6 +162,7 @@ class AgentStreamingMixin:
             close_stream = getattr(stream_iter, "close", None)
             if close_stream is not None:
                 close_stream()
+            clock.finish()
 
         if _usage_acc is not None:
             self._fold_stream_usage(_usage_acc, prompt, accumulated)
@@ -249,7 +257,11 @@ class AgentStreamingMixin:
         # tool-free stream — never leaves the previous stream's record readable
         # as if it were this one's.
         self._last_stream_response = None
-        for item in self._stream_impl(
+        # The stream's ledger is current only while the stream is producing its
+        # next item; the time the consumer holds an item is the caller's, and a
+        # run the consumer starts meanwhile is not this stream's child.
+        ledger_rec = _ledger.open_run("stream", self.name)
+        items: Iterator[Any] = self._stream_impl(
             task,
             mode=mode,
             context=context,
@@ -261,7 +273,15 @@ class AgentStreamingMixin:
             include_events=include_events,
             _usage_acc=usage_acc,
             **kwargs,
-        ):
+        )
+        while True:
+            ledger_token = _ledger.enter(ledger_rec)
+            try:
+                item = next(items)
+            except StopIteration:
+                break
+            finally:
+                _ledger.leave(ledger_token)
             if ttft is None:
                 is_answer_text = (
                     bool(item.text) and item.kind == "answer"
@@ -270,7 +290,19 @@ class AgentStreamingMixin:
                 )
                 if is_answer_text:
                     ttft = time.perf_counter() - started
+            handed_over = time.perf_counter()
             yield item
+            if ledger_rec is not None:
+                ledger_rec.caller_wait(time.perf_counter() - handed_over)
+
+        stream_response = getattr(self, "_last_stream_response", None)
+        run_ledger = (
+            ledger_rec.close(getattr(stream_response, "iterations", None))
+            if ledger_rec is not None else None
+        )
+        self._last_stream_ledger = run_ledger
+        if stream_response is not None and run_ledger is not None:
+            stream_response.metadata["ledger"] = run_ledger.to_dict()
 
         usage = dict(usage_acc)
         # Every key is always present so a consumer can read the dict without
@@ -315,6 +347,19 @@ class AgentStreamingMixin:
         :class:`StreamEvent` carries.
         """
         return getattr(self, "_last_stream_usage", None)
+
+    @property
+    def last_stream_ledger(self) -> Any:
+        """The ledger of the most recent completed :meth:`stream` call, or ``None``.
+
+        A :class:`~effgen.core.ledger.RunLedger`: the stream's model and tool
+        calls, the tokens they reported, and its time split into model wait,
+        tool wait, framework time and ``caller_wait_s`` — the time the stream
+        sat suspended while the consumer handled what it was given. Set once the
+        iterator is exhausted. A stream that entered the tool loop also carries
+        it on ``last_stream_response.metadata["ledger"]``.
+        """
+        return getattr(self, "_last_stream_ledger", None)
 
     def _stream_impl(self,
                      task: "str | Message | list[Any]",

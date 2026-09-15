@@ -27,6 +27,7 @@ from ..observability.tracing import (
     new_execution_id,
     record_skipped_step,
 )
+from . import ledger as _ledger
 from .thread import AgentThread, DelegationStep, TaskStep
 from .thread_projection import ThreadProjection, resolve_projection
 from .workflow_checkpoint import CheckpointStore, WorkflowCheckpoint
@@ -547,6 +548,26 @@ class WorkflowDAG:
             ValueError: *checkpoint* was given without *run_id*, or the saved
                 run belongs to a different set of nodes than this graph has.
         """
+        # Every node's run is a child of the workflow's ledger, which the
+        # result carries under ``metadata["ledger"]``.
+        workflow_ledger = _ledger.open_run("workflow", self.name)
+        with _ledger.activate(workflow_ledger):
+            result = await self._run_async(
+                initial_inputs, context, checkpoint=checkpoint, run_id=run_id,
+            )
+        if workflow_ledger is not None:
+            result.metadata["ledger"] = workflow_ledger.close().to_dict()
+        return result
+
+    async def _run_async(
+        self,
+        initial_inputs: dict[str, Any] | str | None,
+        context: dict[str, Any] | None,
+        *,
+        checkpoint: CheckpointStore | None,
+        run_id: str | None,
+    ) -> WorkflowResult:
+        """Execute the workflow; :meth:`run_async` keeps the ledger around it."""
         start = time.time()
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
