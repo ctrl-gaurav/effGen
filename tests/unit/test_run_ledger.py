@@ -292,6 +292,58 @@ def test_a_decomposed_run_adds_each_childs_tokens_to_the_token_counters_once():
     assert counted == response.ledger.total()["total_tokens"] == 3 * (PROMPT_TOKENS + COMPLETION_TOKENS)
 
 
+def test_a_streamed_calls_cached_prompt_tokens_reach_the_ledger(monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    usage = {"prompt_tokens": 40, "completion_tokens": 6, "total_tokens": 46,
+             "prompt_tokens_details": {"cached_tokens": 32}}
+
+    class _OpenAIProtocolStream(BaseHTTPRequestHandler):
+        """Streams one answer; the last event carries usage, as the protocol sends it."""
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            base = {"id": "c", "object": "chat.completion.chunk", "created": 0, "model": body["model"]}
+            events = [
+                {**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": "four"},
+                                      "finish_reason": None}]},
+                {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            ]
+            if (body.get("stream_options") or {}).get("include_usage"):
+                events.append({**base, "choices": [], "usage": usage})
+            for event in events:
+                self.wfile.write(b"data: " + json.dumps(event).encode() + b"\n\n")
+            self.wfile.write(b"data: [DONE]\n\n")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "EMPTY")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OpenAIProtocolStream)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        agent = Agent(AgentConfig(
+            name="cached", model="served-model",
+            base_url=f"http://127.0.0.1:{server.server_address[1]}/v1",
+            enable_memory=False, enable_sub_agents=False, raise_on_error=False,
+        ))
+        text = "".join(agent.stream("what is 2+2?"))
+    finally:
+        server.shutdown()
+        server.server_close()
+    ledger = agent.last_stream_ledger
+
+    assert "four" in text
+    assert (ledger.llm_calls, ledger.prompt_tokens, ledger.completion_tokens) == (1, 40, 6)
+    assert ledger.cached_input_tokens == 32
+    # The stream's usage keys a caller reads are unchanged.
+    assert agent.last_stream_usage["prompt_tokens"] == 40
+
+
 def test_a_workflow_ledger_holds_every_node_run_once():
     from effgen.core.workflow import WorkflowDAG, WorkflowNode
 

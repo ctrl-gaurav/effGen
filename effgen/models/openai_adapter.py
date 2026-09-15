@@ -907,7 +907,10 @@ class OpenAIAdapter(FunctionCallingModel):
                 cost = self._record_cost(
                     prompt_tokens, completion_tokens, total_tokens, cached_tokens
                 )
-                record_stream_usage(self, prompt_tokens, completion_tokens, cost)
+                record_stream_usage(
+                    self, prompt_tokens, completion_tokens, cost,
+                    cached_input_tokens=cached_tokens or None,
+                )
             except Exception:  # noqa: BLE001 - usage accounting must not break streaming
                 logger.debug("OpenAI stream usage recording failed", exc_info=True)
 

@@ -257,6 +257,7 @@ def record_stream_usage(
     prompt_tokens: int | None,
     completion_tokens: int | None,
     cost_usd: float | None = None,
+    cached_input_tokens: int | None = None,
 ) -> None:
     """Record the token counts and cost of the streaming call that just ended.
 
@@ -271,19 +272,26 @@ def record_stream_usage(
         prompt_tokens: Input tokens the provider reported, when it did.
         completion_tokens: Output tokens the provider reported, when it did.
         cost_usd: What the stream cost, when the provider prices it.
+        cached_input_tokens: Prompt tokens the provider served from its cache,
+            when it reported them. Stored under ``cached_input_tokens`` only
+            when given, so the run's ledger counts them for a streamed call as
+            it does for a blocking one.
     """
     if prompt_tokens is None and completion_tokens is None and cost_usd is None:
         return
     total: int | None = None
     if prompt_tokens is not None or completion_tokens is not None:
         total = int(prompt_tokens or 0) + int(completion_tokens or 0)
+    usage: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total,
+        "cost_usd": cost_usd,
+    }
+    if cached_input_tokens is not None:
+        usage["cached_input_tokens"] = int(cached_input_tokens)
     try:
-        model._last_stream_usage = {  # type: ignore[attr-defined]
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total,
-            "cost_usd": cost_usd,
-        }
+        model._last_stream_usage = usage  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - usage accounting must not break streaming
         logger.debug("Could not record stream usage", exc_info=True)
 
