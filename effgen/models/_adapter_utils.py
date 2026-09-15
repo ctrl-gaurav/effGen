@@ -37,6 +37,8 @@ These are internal helpers (no public API surface change).
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import replace
 from typing import Any
 
@@ -77,6 +79,26 @@ _bpe_unavailable_warned: set[str] = set()
 #: Characters per token in the fallback estimate. English prose and code both sit
 #: near this ratio for the BPE vocabularies the cloud providers use.
 _CHARS_PER_TOKEN = 4
+
+#: Token counts already made, keyed by encoding and text, oldest first. A run
+#: measures the prompt it is about to send more than once — the context budget
+#: checks it, the adapter checks it against the context window, the calibration
+#: counts it again once the provider has answered — and the prompt grows with
+#: every step, so encoding it afresh each time made a run's counting grow with
+#: the square of its length. An encoding's count of a text never changes, so a
+#: text counted recently is answered from here.
+_token_counts: OrderedDict[tuple[Any, str], int] = OrderedDict()
+_token_counts_lock = threading.Lock()
+_token_counts_chars = 0
+#: At most this many counts are kept, holding at most this many characters of
+#: text between them; the least recently used go first.
+_TOKEN_COUNTS_MAX_ENTRIES = 1024
+_TOKEN_COUNTS_MAX_CHARS = 4_000_000
+#: A text shorter than this is encoded every time: remembering it costs about
+#: what encoding it does.
+_TOKEN_COUNTS_MIN_CHARS = 64
+#: How many texts were encoded, and how many counts were answered from memory.
+_token_count_stats: dict[str, int] = {"encoded": 0, "reused": 0}
 
 
 def get_bpe_encoding(name: str = "cl100k_base", *, model: str | None = None) -> Any:
@@ -132,21 +154,52 @@ def estimate_tokens(text: str, *, name: str = "cl100k_base", model: str | None =
 
     Falls back to a character-length estimate when it is not, so a caller always
     gets a number. Empty text is zero tokens; any non-empty text is at least one.
+    The count of a text of 64 characters or more is remembered, so counting the
+    same text again with the same encoding does not encode it again.
 
     Args:
         text: The text to count.
         name: The BPE encoding to use when no *model* is given.
         model: A model id whose own encoding is preferred over *name*.
     """
+    global _token_counts_chars
     if not text:
         return 0
     encoding = get_bpe_encoding(name, model=model)
-    if encoding is not None:
-        try:
-            return max(1, len(encoding.encode(text)))
-        except Exception:  # noqa: BLE001 - a surrogate or control character the BPE rejects
-            pass
-    return max(1, len(text) // _CHARS_PER_TOKEN)
+    if encoding is None:
+        return max(1, len(text) // _CHARS_PER_TOKEN)
+    if len(text) < _TOKEN_COUNTS_MIN_CHARS:
+        return _encoded_count(encoding, text)
+    key = (encoding, text)
+    with _token_counts_lock:
+        count = _token_counts.get(key)
+        if count is not None:
+            _token_counts.move_to_end(key)
+            _token_count_stats["reused"] += 1
+            return count
+    count = _encoded_count(encoding, text)
+    if len(text) <= _TOKEN_COUNTS_MAX_CHARS:
+        with _token_counts_lock:
+            if key not in _token_counts:
+                _token_counts[key] = count
+                _token_counts_chars += len(text)
+                while (
+                    len(_token_counts) > _TOKEN_COUNTS_MAX_ENTRIES
+                    or _token_counts_chars > _TOKEN_COUNTS_MAX_CHARS
+                ):
+                    (_, dropped), _ = _token_counts.popitem(last=False)
+                    _token_counts_chars -= len(dropped)
+    return count
+
+
+def _encoded_count(encoding: Any, text: str) -> int:
+    """Encode *text* and return its token count, or the character estimate if the BPE refuses it."""
+    with _token_counts_lock:
+        _token_count_stats["encoded"] += 1
+    try:
+        return max(1, len(encoding.encode(text)))
+    except Exception:  # noqa: BLE001 - a surrogate or control character the BPE rejects
+        return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
 def missing_torch_error(engine: str) -> ImportError:
