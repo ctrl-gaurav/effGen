@@ -30,6 +30,7 @@ from effgen.models._adapter_utils import (
     extract_reasoning_text,
     extract_reasoning_tokens,
     model_not_found_error,
+    needs_reasoning_headroom,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
@@ -610,9 +611,13 @@ class OpenAIAdapter(FunctionCallingModel):
                 f"'{self.model_name}' is not a reasoning model — dropping silently."
             )
 
-        # GPT-5 family and reasoning models don't accept the 'stop' parameter.
-        # Drop it silently so the Agent's default stop_sequences don't break calls.
-        if config.stop_sequences and not self._is_reasoning_model and not self.model_name.startswith("gpt-5"):
+        # A model that reasons does not accept the 'stop' parameter, so it is
+        # dropped silently rather than breaking the call. Which models those are
+        # is asked of the one shared declaration — the same one that picks the
+        # output budget — instead of being decided here from a name: the two
+        # used to disagree about the whole gpt-5 family, so a run got the
+        # reasoning budget and the stop sequences at the same time.
+        if config.stop_sequences and not needs_reasoning_headroom(self):
             params["stop"] = config.stop_sequences
         if config.seed is not None:
             params["seed"] = config.seed

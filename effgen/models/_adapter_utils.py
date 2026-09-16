@@ -497,6 +497,10 @@ def normalize_tools_call_args(
 # non-reasoning chat model yet which burns output budget on reasoning).
 _REASONING_NAME_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
+#: Models already reported as answering "yes" from the name list alone, so the
+#: line below is logged once per model rather than on every call.
+_name_prefix_reasoning_reported: set[str] = set()
+
 
 def needs_reasoning_headroom(model: Any) -> bool:
     """Return True if *model* spends output budget on hidden reasoning tokens.
@@ -505,6 +509,19 @@ def needs_reasoning_headroom(model: Any) -> bool:
     small (the budget is consumed by reasoning before any visible token), so the
     agent gives them a larger default budget and treats a ``"length"``-truncated
     empty as truncation rather than a retryable empty response.
+
+    Three sources answer, in order, and the first that says yes decides:
+
+    1. the adapter's own declaration (``_is_reasoning_model``, read from the
+       provider catalog), which is the same statement that decides whether
+       ``reasoning_effort`` travels and whether stop sequences are sent;
+    2. a local model's own chat template, which is that model's statement about
+       itself;
+    3. the name list, which is a guess and the only source here that reads a
+       model id. It fires only when the two declarations above said nothing, and
+       it says so in the log, naming the model — a budget chosen from a name
+       while the adapter declares the opposite is a disagreement a reader can
+       act on, and it used to be silent.
     """
     if getattr(model, "_is_reasoning_model", False):
         return True
@@ -512,7 +529,116 @@ def needs_reasoning_headroom(model: Any) -> bool:
         return True
     name = (getattr(model, "model_name", "") or "").lower()
     name = name.split(":", 1)[-1]  # drop any "provider:" prefix
-    return name.startswith(_REASONING_NAME_PREFIXES)
+    if not name.startswith(_REASONING_NAME_PREFIXES):
+        return False
+    if name not in _name_prefix_reasoning_reported:
+        _name_prefix_reasoning_reported.add(name)
+        logger.info(
+            "[budget] reasoning headroom for '%s' comes from the name list, "
+            "not from a declaration: the adapter does not declare this model a "
+            "reasoning model, so it gets the reasoning budget without the "
+            "reasoning controls",
+            name,
+        )
+    return True
+
+
+#: The output budget a model that reasons is never given less than when the
+#: framework chooses the budget itself. A reasoning model spends the first part
+#: of its budget on a chain nobody sees, so a budget chosen from a declared
+#: shape — a one-field schema, a short-answer style — would leave it nothing to
+#: answer with and return an empty, billed result. A budget the caller pinned is
+#: theirs and is never raised to this.
+REASONING_OUTPUT_FLOOR = 4096
+
+#: The smallest budget derived from a declared output schema. A schema for one
+#: integer bounds the answer at a few tokens, but the model still writes an
+#: envelope, and a provider that pads or repeats needs room to finish the object
+#: it started rather than being cut off mid-value.
+SCHEMA_BUDGET_FLOOR = 256
+
+#: Tokens allowed for the JSON envelope itself — braces, keys, separators.
+_SCHEMA_ENVELOPE_TOKENS = 64
+#: Tokens allowed per declared field, by the JSON type the schema declares. An
+#: array or a free string is open-ended, so both get the generous allowance; a
+#: number, a boolean and an enumerated string are bounded by their own type.
+_SCHEMA_FIELD_TOKENS: dict[str, int] = {
+    "boolean": 16,
+    "integer": 16,
+    "number": 16,
+    "null": 8,
+    "string": 256,
+    "array": 1024,
+}
+_SCHEMA_UNKNOWN_FIELD_TOKENS = 256
+_SCHEMA_MAX_DEPTH = 4
+
+
+def budget_for_output_schema(schema: Any, *, _depth: int = 0) -> int:
+    """Return an output-token bound derived from a declared *schema*.
+
+    The bound is an envelope plus one allowance per declared field, chosen from
+    the JSON type the field declares and from nothing else: a bounded type gets
+    a small allowance, an array or an unconstrained string gets a generous one,
+    and a nested object is measured the same way. Nothing here reads the task,
+    the field names, the model or a benchmark — only what the caller declared
+    about the answer.
+
+    Args:
+        schema: A JSON-Schema mapping, or anything that is not one.
+        _depth: Recursion depth, so a self-referential schema terminates.
+
+    Returns:
+        The bound, never below :data:`SCHEMA_BUDGET_FLOOR`.
+    """
+    total = _SCHEMA_ENVELOPE_TOKENS + _schema_field_tokens(schema, _depth)
+    return max(SCHEMA_BUDGET_FLOOR, total)
+
+
+def _schema_field_tokens(schema: Any, depth: int) -> int:
+    """Tokens one schema node is allowed, summed over its declared fields."""
+    if not isinstance(schema, dict) or depth > _SCHEMA_MAX_DEPTH:
+        return _SCHEMA_UNKNOWN_FIELD_TOKENS
+    declared = schema.get("type")
+    if declared == "object" or "properties" in schema:
+        properties = schema.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            return _SCHEMA_UNKNOWN_FIELD_TOKENS
+        return sum(
+            _schema_field_tokens(field, depth + 1) for field in properties.values()
+        )
+    if declared == "array":
+        return _SCHEMA_FIELD_TOKENS["array"]
+    if declared == "string" and schema.get("enum"):
+        return 24
+    if isinstance(declared, list):
+        return max(
+            (_SCHEMA_FIELD_TOKENS.get(str(one), _SCHEMA_UNKNOWN_FIELD_TOKENS)
+             for one in declared),
+            default=_SCHEMA_UNKNOWN_FIELD_TOKENS,
+        )
+    return _SCHEMA_FIELD_TOKENS.get(str(declared), _SCHEMA_UNKNOWN_FIELD_TOKENS)
+
+
+def declared_max_output_tokens(model: Any) -> int | None:
+    """The largest output *model* declares it will produce, or ``None``.
+
+    Read from the adapter's own published attribute, never from a name. An
+    adapter that publishes nothing answers ``None`` and caps nothing, which is
+    what every adapter in this tree does today; the seam is here so a budget
+    chosen by the framework can never exceed what a provider will accept once an
+    adapter does publish it.
+    """
+    for attr in ("max_output_tokens", "max_output"):
+        try:
+            value = getattr(model, attr, None)
+        except Exception:  # noqa: BLE001 - a property that raises declares nothing
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _local_template_reasons(model: Any) -> bool:
@@ -1239,6 +1365,10 @@ __all__ = [
     "normalize_tools_call_args",
     "needs_reasoning_headroom",
     "default_max_output_tokens",
+    "budget_for_output_schema",
+    "declared_max_output_tokens",
+    "REASONING_OUTPUT_FLOOR",
+    "SCHEMA_BUDGET_FLOOR",
     "build_error_context",
     "device_memory_hint",
     "provider_runtime_error",
