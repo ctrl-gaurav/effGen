@@ -227,6 +227,37 @@ GEMINI_MODEL_ALIASES: dict[str, str] = {
 # Default model for free-tier live testing (cheap + tool-calling).
 GEMINI_DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
+#: The shortest prompt prefix each model will serve from its implicit context
+#: cache. A prompt shorter than this is simply not cached; the number is
+#: reported so a run can say why it saw no hit, and is never used to pad a
+#: prompt up to it. Models published before implicit caching existed are absent
+#: and take the conservative default below.
+CACHE_MIN_PREFIX_TOKENS: dict[str, int] = {
+    "gemini-2.5-flash":        2048,
+    "gemini-2.5-flash-lite":   2048,
+    "gemini-2.5-pro":          2048,
+    "gemini-3-flash-preview":  4096,
+    "gemini-3.1-flash-lite":   4096,
+    "gemini-3.1-pro-preview":  4096,
+}
+
+_DEFAULT_CACHE_MIN_PREFIX_TOKENS = 4096
+
+
+def get_cache_min_prefix_tokens(model_id: str) -> int:
+    """Return the shortest cacheable prompt prefix for *model_id*.
+
+    Args:
+        model_id: The Gemini model id, alias or canonical.
+
+    Returns:
+        The published minimum in tokens, or the larger default for an id this
+        table does not carry, so the number is never optimistic.
+    """
+    return CACHE_MIN_PREFIX_TOKENS.get(
+        _resolve(model_id), _DEFAULT_CACHE_MIN_PREFIX_TOKENS
+    )
+
 
 # ---------------------------------------------------------------------------
 # Helper functions

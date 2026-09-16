@@ -16,7 +16,13 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from .base import BaseModel, GenerationConfig, GenerationResult, TokenCount
+from .base import (
+    BaseModel,
+    GenerationConfig,
+    GenerationResult,
+    PromptCachePolicy,
+    TokenCount,
+)
 
 
 class LazyModel(BaseModel):
@@ -143,6 +149,18 @@ class LazyModel(BaseModel):
     def supports_message_protocol(self) -> bool:
         """Delegate to the wrapped model."""
         return self._inner.supports_message_protocol()
+
+    def supports_forced_tool_call(self) -> bool:
+        """Delegate to the wrapped model."""
+        return self._inner.supports_forced_tool_call()
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """Delegate to the wrapped model."""
+        return self._inner.supports_suppressed_tool_call()
+
+    def prompt_cache_policy(self) -> "PromptCachePolicy | None":
+        """Delegate to the wrapped model."""
+        return self._inner.prompt_cache_policy()
 
     def get_metadata(self) -> dict[str, Any]:
         """Delegate to the wrapped model."""

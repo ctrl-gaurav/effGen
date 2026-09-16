@@ -35,12 +35,17 @@ from effgen.models._multimodal import (
     require_video_support,
     require_vision_support,
 )
-from effgen.models._usage import record_tracker_cost, tool_call_entry
+from effgen.models._usage import (
+    log_cache_hit,
+    record_tracker_cost,
+    tool_call_entry,
+)
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
     GenerationResult,
     ModelType,
+    PromptCachePolicy,
     TokenCount,
     clear_stream_tool_calls,
     fold_call_totals,
@@ -288,8 +293,28 @@ class GeminiAdapter(FunctionCallingModel):
             completion_tokens / 1_000_000
         ) * cost_entry[1]
 
+    @staticmethod
+    def _cached_content_tokens(usage_metadata: Any) -> int:
+        """Prompt tokens this response says came from Gemini's context cache.
+
+        Gemini caches implicitly on its newer models and reports what it reused
+        in ``usage_metadata.cached_content_token_count``. The field is absent on
+        a response that reused nothing and on the older models, both of which
+        read as 0.
+
+        Args:
+            usage_metadata: The response's usage block.
+
+        Returns:
+            The cached prompt-token count, or 0 when none was reported.
+        """
+        try:
+            return max(0, int(getattr(usage_metadata, "cached_content_token_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def _record_to_cost_tracker(
-        self, prompt_tokens: int, completion_tokens: int
+        self, prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
     ) -> float | None:
         """Record this call in the process-global cost tracker.
 
@@ -303,10 +328,15 @@ class GeminiAdapter(FunctionCallingModel):
             prompt_tokens,
             completion_tokens,
             log=logger,
+            cached_tokens=cached_tokens,
         )
 
     def _settle_cost(
-        self, prompt_tokens: int, completion_tokens: int, total_tokens: int
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        cached_tokens: int = 0,
     ) -> float | None:
         """Price this call and fold it into the adapter's running session totals.
 
@@ -320,7 +350,12 @@ class GeminiAdapter(FunctionCallingModel):
         from effgen.models._cost import pricing_status
 
         unpriced = pricing_status("gemini", self.model_name) == "unpriced"
-        cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
+        cost = self._record_to_cost_tracker(
+            prompt_tokens, completion_tokens, cached_tokens
+        )
+        log_cache_hit(
+            logger, "gemini", self.model_name, cached_tokens, prompt_tokens
+        )
         if cost is None and not unpriced:
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
         fold_call_totals(self, cost, total_tokens)
@@ -936,6 +971,7 @@ class GeminiAdapter(FunctionCallingModel):
                 completion_tokens = um.candidates_token_count or 0
                 total_tokens = um.total_token_count or (prompt_tokens + completion_tokens)
                 thoughts_tokens = getattr(um, "thoughts_token_count", None) or 0
+                cached_tokens = self._cached_content_tokens(um)
             except AttributeError:
                 prompt_tokens = self.count_tokens(
                     prompt if isinstance(prompt, str) else str(prompt)
@@ -943,12 +979,15 @@ class GeminiAdapter(FunctionCallingModel):
                 completion_tokens = self.count_tokens(generated_text).count
                 total_tokens = prompt_tokens + completion_tokens
                 thoughts_tokens = 0
+                cached_tokens = 0
 
             # Persist + price via the shared catalog-backed tracker so
             # `effgen cost` includes Gemini spend and the number matches the
             # model catalog; falls back to the local estimate if tracking is
             # unavailable.
-            cost = self._settle_cost(prompt_tokens, completion_tokens, total_tokens)
+            cost = self._settle_cost(
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens
+            )
 
             raw_finish_reason = None
             if hasattr(response, "candidates") and response.candidates:
@@ -983,6 +1022,7 @@ class GeminiAdapter(FunctionCallingModel):
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
                 "thoughts_token_count": thoughts_tokens,
+                "cached_input_tokens": cached_tokens,
                 # ``cost_usd`` is the canonical per-call cost key shared by every
                 # adapter. ``total_cost`` is a different number, not an alias: the
                 # cumulative cost across every call made on this adapter instance
@@ -1189,8 +1229,14 @@ class GeminiAdapter(FunctionCallingModel):
                 prompt_tokens = _usage_metadata.prompt_token_count or 0
                 completion_tokens = _usage_metadata.candidates_token_count or 0
                 total_tokens = _usage_metadata.total_token_count or (prompt_tokens + completion_tokens)
-                cost = self._settle_cost(prompt_tokens, completion_tokens, total_tokens)
-                record_stream_usage(self, prompt_tokens, completion_tokens, cost)
+                cached_tokens = self._cached_content_tokens(_usage_metadata)
+                cost = self._settle_cost(
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens
+                )
+                record_stream_usage(
+                    self, prompt_tokens, completion_tokens, cost,
+                    cached_input_tokens=cached_tokens,
+                )
             except Exception:
                 logger.debug("Failed to record streaming usage for Gemini", exc_info=True)
 
@@ -1290,6 +1336,23 @@ class GeminiAdapter(FunctionCallingModel):
     def streams_tool_calls(self) -> bool:
         """True: a streamed turn's native function calls are recorded."""
         return True
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """Gemini caches implicitly and says how much of the prompt it reused.
+
+        Nothing is marked on the request: the newer models cache a prompt whose
+        leading content they have seen recently, and report the result in
+        ``usage_metadata.cached_content_token_count``. The minimum prefix comes
+        from this provider's own catalog, where the rest of its per-model facts
+        live, and is reported rather than enforced.
+        """
+        from effgen.models.gemini_models import get_cache_min_prefix_tokens
+
+        return PromptCachePolicy(
+            style="automatic",
+            min_prefix_tokens=get_cache_min_prefix_tokens(self.model_name),
+            reports_cached_tokens=True,
+        )
 
     def count_tokens(self, text: str) -> TokenCount:
         """Count tokens via the Gemini API (length/4 approximation on failure)."""

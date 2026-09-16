@@ -31,7 +31,9 @@ from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models._tool_wire import messages_to_openai
 from effgen.models._usage import (
     accumulate_stream_tool_call_deltas,
+    cached_prompt_tokens,
     cost_label,
+    log_cache_hit,
     stream_tool_call_entries,
     tool_calls_from_message,
 )
@@ -39,6 +41,7 @@ from effgen.models.base import (
     BaseModel,
     GenerationConfig,
     GenerationResult,
+    PromptCachePolicy,
     TokenCount,
     accumulate_stream_cost,
     clear_stream_tool_calls,
@@ -454,6 +457,7 @@ class CerebrasAdapter(BaseModel):
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
+        cached_tokens = cached_prompt_tokens(usage)
 
         tool_calls = tool_calls_from_message(message)
 
@@ -465,7 +469,9 @@ class CerebrasAdapter(BaseModel):
                 model=self.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
             )
+        log_cache_hit(logger, "cerebras", self.model_name, cached_tokens, prompt_tokens)
 
         logger.info(
             "Cerebras generated %d tokens (prompt=%d, completion=%d, cost=%s)",
@@ -494,6 +500,7 @@ class CerebrasAdapter(BaseModel):
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "provider": "cerebras",
+            "cached_input_tokens": cached_tokens,
             "cost_usd": cost,
             "tool_calls": tool_calls,
         }
@@ -583,6 +590,7 @@ class CerebrasAdapter(BaseModel):
 
                 prompt_tokens = 0
                 completion_tokens = 0
+                cached_tokens = 0
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
                 reasoning_buf: list[str] = []
                 stream_usage: Any = None
@@ -598,6 +606,7 @@ class CerebrasAdapter(BaseModel):
                         stream_usage = usage
                         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                        cached_tokens = cached_prompt_tokens(usage)
 
                     if not chunk.choices:
                         continue
@@ -649,6 +658,7 @@ class CerebrasAdapter(BaseModel):
                     model=self.model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
                 )
                 accumulate_stream_cost(
                     self,
@@ -656,6 +666,11 @@ class CerebrasAdapter(BaseModel):
                     prompt_tokens + completion_tokens,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_input_tokens=cached_tokens,
+                )
+                log_cache_hit(
+                    logger, "cerebras", self.model_name, cached_tokens,
+                    prompt_tokens, stream=True,
                 )
 
             if self._rate_limiter is not None:
@@ -769,6 +784,22 @@ class CerebrasAdapter(BaseModel):
         no call to carry, so the declaration follows
         :meth:`supports_tool_calling`.
         """
+        return self.supports_tool_calling()
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """Cerebras matches the rendered prefix itself and reports what it reused.
+
+        Nothing is marked on the request, and no minimum prefix length is
+        published, so none is declared; the cached-token count is read from the
+        OpenAI-shaped usage payload when the endpoint reports one.
+        """
+        return PromptCachePolicy(
+            style="automatic",
+            reports_cached_tokens=True,
+        )
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice="none"`` is honoured here."""
         return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:

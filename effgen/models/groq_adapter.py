@@ -38,7 +38,9 @@ from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models._usage import (
     accumulate_stream_tool_call_deltas,
+    cached_prompt_tokens,
     cost_label,
+    log_cache_hit,
     stream_tool_call_entries,
     tool_call_entry,
     tool_calls_from_message,
@@ -47,6 +49,7 @@ from effgen.models.base import (
     BaseModel,
     GenerationConfig,
     GenerationResult,
+    PromptCachePolicy,
     TokenCount,
     accumulate_stream_cost,
     clear_stream_tool_calls,
@@ -752,6 +755,7 @@ class GroqAdapter(BaseModel):
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
+        cached_tokens = cached_prompt_tokens(usage)
 
         tool_calls = tool_calls_from_message(message)
 
@@ -777,7 +781,9 @@ class GroqAdapter(BaseModel):
                 model=self.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
             )
+        log_cache_hit(logger, "groq", self.model_name, cached_tokens, prompt_tokens)
 
         logger.info(
             "Groq generated %d tokens (prompt=%d, completion=%d, cost=%s)",
@@ -797,6 +803,7 @@ class GroqAdapter(BaseModel):
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "provider": "groq",
+            "cached_input_tokens": cached_tokens,
             "cost_usd": cost,
             "estimated_usage": estimated_usage,
             "tool_calls": tool_calls,
@@ -927,6 +934,7 @@ class GroqAdapter(BaseModel):
 
                 prompt_tokens = 0
                 completion_tokens = 0
+                cached_tokens = 0
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
                 reasoning_buf: list[str] = []
                 stream_usage: Any = None
@@ -941,6 +949,7 @@ class GroqAdapter(BaseModel):
                         stream_usage = usage
                         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                        cached_tokens = cached_prompt_tokens(usage)
 
                     if not chunk.choices:
                         continue
@@ -989,6 +998,7 @@ class GroqAdapter(BaseModel):
                     model=self.model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
                 )
                 accumulate_stream_cost(
                     self,
@@ -996,6 +1006,11 @@ class GroqAdapter(BaseModel):
                     prompt_tokens + completion_tokens,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_input_tokens=cached_tokens,
+                )
+                log_cache_hit(
+                    logger, "groq", self.model_name, cached_tokens,
+                    prompt_tokens, stream=True,
                 )
 
         except Exception as exc:
@@ -1079,6 +1094,33 @@ class GroqAdapter(BaseModel):
         :meth:`supports_tool_calling`.
         """
         return self.supports_tool_calling()
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """Groq matches the rendered prefix itself and reports what it reused.
+
+        Nothing is marked on the request: the provider decides, from the prefix
+        it is sent, and states the result in
+        ``usage.prompt_tokens_details.cached_tokens``. The published minimum
+        varies by model, so the larger of the published range is declared —
+        below it a hit is possible but not promised, and this number is reported
+        rather than enforced.
+        """
+        return PromptCachePolicy(
+            style="automatic",
+            min_prefix_tokens=1024,
+            reports_cached_tokens=True,
+        )
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """False: forbidding a call here can cost the whole completion.
+
+        This provider rejects a completion outright when a model writes a call
+        on a request that forbade one, which is the failure the
+        ``tool_use_failed`` recovery above exists to rescue. A turn that wants
+        the answer stated asks for it in words instead, which costs a prefix but
+        never a turn.
+        """
+        return False
 
     def supports_forced_tool_call(self) -> bool:
         """True when tools are offered: ``tool_choice`` is honoured here.

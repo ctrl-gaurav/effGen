@@ -36,7 +36,9 @@ from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models._tool_wire import messages_to_openai
 from effgen.models._usage import (
     accumulate_stream_tool_call_deltas,
+    cached_prompt_tokens,
     cost_label,
+    log_cache_hit,
     stream_tool_call_entries,
     tool_calls_from_message,
 )
@@ -44,6 +46,7 @@ from effgen.models.base import (
     BaseModel,
     GenerationConfig,
     GenerationResult,
+    PromptCachePolicy,
     TokenCount,
     accumulate_stream_cost,
     clear_stream_tool_calls,
@@ -88,6 +91,52 @@ _FIREWORKS_PREFIX = "accounts/fireworks/models/"
 class _FireworksModelType:
     """Sentinel so ModelType enum doesn't need patching."""
     value = _FIREWORKS_MODEL_TYPE_VALUE
+
+
+def _keep_unmodelled_usage_fields() -> bool:
+    """Let this SDK's usage object keep the fields its model does not declare.
+
+    The provider states a cache hit in ``usage.prompt_tokens_details``, and it
+    is on the wire — but the SDK parses usage into a model that declares three
+    fields and discards everything else, so the count never reaches an adapter
+    however carefully the adapter reads it. Widening that one model to keep what
+    it was sent is what makes the hit readable at all; it adds fields to a usage
+    object and takes none away, so nothing that read the object before reads it
+    differently.
+
+    Done once, on load, and treated as best-effort: an SDK that already keeps
+    them, or whose model cannot be widened, is left exactly as it is.
+
+    Returns:
+        bool: True when the usage model now keeps the fields it is sent.
+    """
+    try:
+        from fireworks.client import api as sdk_api
+    except Exception:  # noqa: BLE001 - an older SDK simply keeps today's behaviour
+        return False
+    usage_model = getattr(sdk_api, "UsageInfo", None)
+    config = getattr(usage_model, "model_config", None)
+    if usage_model is None or not isinstance(config, dict):
+        return False
+    if config.get("extra") == "allow":
+        return True
+    try:
+        config["extra"] = "allow"
+        usage_model.model_rebuild(force=True)
+        # A response model compiled its own validator from the narrow usage
+        # model, so widening that model alone changes nothing until the models
+        # that hold one are rebuilt against it.
+        for candidate in vars(sdk_api).values():
+            if (
+                isinstance(candidate, type)
+                and "usage" in (getattr(candidate, "model_fields", None) or {})
+                and hasattr(candidate, "model_rebuild")
+            ):
+                candidate.model_rebuild(force=True)
+    except Exception:  # noqa: BLE001 - leave the SDK as it was
+        logger.debug("could not widen the Fireworks usage model", exc_info=True)
+        return False
+    return True
 
 
 class FireworksAdapter(BaseModel):
@@ -227,6 +276,8 @@ class FireworksAdapter(BaseModel):
                 "Fireworks API key not found. Set the FIREWORKS_API_KEY "
                 "environment variable or pass api_key= to FireworksAdapter."
             )
+
+        _keep_unmodelled_usage_fields()
 
         self._client = Fireworks(
             api_key=self._api_key or os.getenv("FIREWORKS_API_KEY"),
@@ -482,6 +533,7 @@ class FireworksAdapter(BaseModel):
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
+        cached_tokens = cached_prompt_tokens(usage)
 
         tool_calls = tool_calls_from_message(message)
 
@@ -492,7 +544,9 @@ class FireworksAdapter(BaseModel):
                 model=self.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
             )
+        log_cache_hit(logger, "fireworks", self.model_name, cached_tokens, prompt_tokens)
 
         logger.info(
             "Fireworks generated %d tokens (prompt=%d, completion=%d, cost=%s)",
@@ -511,6 +565,7 @@ class FireworksAdapter(BaseModel):
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "provider": "fireworks",
+            "cached_input_tokens": cached_tokens,
             "cost_usd": cost,
             "tool_calls": tool_calls,
         }
@@ -630,6 +685,7 @@ class FireworksAdapter(BaseModel):
 
                 prompt_tokens = 0
                 completion_tokens = 0
+                cached_tokens = 0
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
                 reasoning_buf: list[str] = []
                 stream_usage: Any = None
@@ -644,6 +700,7 @@ class FireworksAdapter(BaseModel):
                         stream_usage = usage
                         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                        cached_tokens = cached_prompt_tokens(usage)
 
                     if not chunk.choices:
                         continue
@@ -692,6 +749,7 @@ class FireworksAdapter(BaseModel):
                     model=self.model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
                 )
                 accumulate_stream_cost(
                     self,
@@ -699,6 +757,11 @@ class FireworksAdapter(BaseModel):
                     prompt_tokens + completion_tokens,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
+                    cached_input_tokens=cached_tokens,
+                )
+                log_cache_hit(
+                    logger, "fireworks", self.model_name, cached_tokens,
+                    prompt_tokens, stream=True,
                 )
 
         except Exception as exc:
@@ -771,6 +834,23 @@ class FireworksAdapter(BaseModel):
         no call to carry, so the declaration follows
         :meth:`supports_tool_calling`.
         """
+        return self.supports_tool_calling()
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """Fireworks caches every prompt prefix by default and reports the hit.
+
+        Nothing is marked on the request; a single changed token invalidates the
+        cache from that token on, which is exactly what keeping the prefix
+        stable is for. No minimum prefix length is published, so none is
+        declared.
+        """
+        return PromptCachePolicy(
+            style="automatic",
+            reports_cached_tokens=True,
+        )
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice="none"`` is honoured here."""
         return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:

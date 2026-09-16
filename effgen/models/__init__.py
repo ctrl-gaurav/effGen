@@ -69,6 +69,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     ModelType,
+    PromptCachePolicy,
     TokenCount,
 )
 from effgen.models.batching import ContinuousBatcher
@@ -186,6 +187,7 @@ __all__ = [
     # Data classes
     "GenerationConfig",
     "GenerationResult",
+    "PromptCachePolicy",
     "TokenCount",
 
     # Engine implementations

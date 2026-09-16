@@ -32,6 +32,45 @@ class ModelType(Enum):
     MLX_VLM = "mlx_vlm"
 
 
+@dataclass(frozen=True)
+class PromptCachePolicy:
+    """What a provider's prompt cache needs, as the adapter declares it.
+
+    A provider only caches a prompt prefix that reaches it in a form it can
+    recognise, and the two families want different things: some match the
+    rendered prefix themselves, and some want the caller to say where the
+    stable part ends. An adapter that returns one of these from
+    :meth:`BaseModel.prompt_cache_policy` is saying which family it is in and
+    what its usage payload reports back, so a run can ask for a cache, read the
+    hit and price it without anything upstream naming a provider or a model.
+
+    Attributes:
+        style: ``"automatic"`` when the provider matches the prefix itself and
+            the request needs no marker, ``"explicit"`` when the caller places
+            the breakpoints and the adapter renders them.
+        min_prefix_tokens: The shortest prefix the provider will cache, when it
+            publishes one; ``None`` when it publishes none. Reported, never
+            enforced — a prefix below it is simply not cached, and padding one
+            to reach it would be buying a discount with tokens the caller did
+            not ask for.
+        max_breakpoints: How many breakpoints one request may carry. ``0`` on
+            an automatic policy, which carries none.
+        reports_cached_tokens: The usage payload carries the number of prompt
+            tokens served from the cache.
+        reports_cache_writes: The usage payload carries the number of prompt
+            tokens written to the cache, which is billed above the input rate.
+        ttl_options: The cache lifetimes the provider accepts, when it accepts
+            a choice.
+    """
+
+    style: Literal["automatic", "explicit"]
+    min_prefix_tokens: int | None = None
+    max_breakpoints: int = 0
+    reports_cached_tokens: bool = False
+    reports_cache_writes: bool = False
+    ttl_options: tuple[str, ...] = ()
+
+
 @dataclass
 class GenerationConfig:
     """Configuration for text generation."""
@@ -258,6 +297,7 @@ def record_stream_usage(
     completion_tokens: int | None,
     cost_usd: float | None = None,
     cached_input_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> None:
     """Record the token counts and cost of the streaming call that just ended.
 
@@ -276,6 +316,10 @@ def record_stream_usage(
             when it reported them. Stored under ``cached_input_tokens`` only
             when given, so the run's ledger counts them for a streamed call as
             it does for a blocking one.
+        cache_write_tokens: Prompt tokens the provider wrote to its cache, when
+            it reports them separately. A write is billed above the input rate,
+            so a run that only ever writes is spending more than one that never
+            cached at all — and no reader can see that unless it is recorded.
     """
     if prompt_tokens is None and completion_tokens is None and cost_usd is None:
         return
@@ -290,6 +334,8 @@ def record_stream_usage(
     }
     if cached_input_tokens is not None:
         usage["cached_input_tokens"] = int(cached_input_tokens)
+    if cache_write_tokens is not None:
+        usage["cache_write_tokens"] = int(cache_write_tokens)
     try:
         model._last_stream_usage = usage  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - usage accounting must not break streaming
@@ -441,6 +487,8 @@ def accumulate_stream_cost(
     tokens: int | None = None,
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
+    cached_input_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> None:
     """Fold a completed streaming call's cost and tokens onto the model's totals.
 
@@ -462,10 +510,20 @@ def accumulate_stream_cost(
     ``completion_tokens``, when supplied, are also recorded as this call's own
     usage (see :func:`record_stream_usage`) so the caller can read the split and
     the cost for the turn it just streamed, not only the running totals.
+    ``cached_input_tokens``/``cache_write_tokens`` travel with them, so a
+    streamed turn reports what the provider served from its cache exactly as a
+    blocking one does.
     """
     fold_call_totals(model, cost, tokens)
     if prompt_tokens is not None or completion_tokens is not None:
-        record_stream_usage(model, prompt_tokens, completion_tokens, cost)
+        record_stream_usage(
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cost,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
 
 
 def _warn_if_silently_empty(model: "BaseModel", result: Any) -> None:
@@ -877,6 +935,51 @@ class BaseModel(ABC):
         Returns:
             bool: True if a conversation's tool call and tool result reach the
             provider intact.
+        """
+        return False
+
+    def prompt_cache_policy(self) -> "PromptCachePolicy | None":
+        """What this provider's prompt cache needs, or ``None`` for no cache.
+
+        A growing conversation repeats a long, unchanging head on every turn —
+        the instructions, the tool definitions, the task — and most providers
+        will serve that head from a cache and charge less for it. What they
+        need in order to do so differs: some match the rendered prefix
+        themselves, and some want ``cache_control``-style breakpoints saying
+        where the stable part ends.
+
+        The default is ``None``: an adapter caches only once it says it does,
+        so a provider with no cache (and any adapter written before this
+        existed) receives exactly the request it received before. An adapter
+        that declares the ``"explicit"`` style is also declaring that it knows
+        how to render the breakpoints a caller asks for — a run hands it the
+        ask, never a provider's marker shape.
+
+        Nothing reads a model id or a provider name to decide this; a per-model
+        minimum belongs in the adapter's own catalog, which is where the rest of
+        that provider's per-model facts already live.
+
+        Returns:
+            The policy, or ``None`` when this provider caches nothing.
+        """
+        return None
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """Whether a turn can offer tools and still forbid a call.
+
+        Offering tools and permitting one are separate: a run that has what it
+        needs and wants the answer stated has to stop the model calling again,
+        and the cheap way to do that is to send the same request with the call
+        forbidden. The alternative — dropping the definitions and rewriting the
+        turn — throws away the prefix every provider's cache was matching.
+
+        The default is ``False``: an adapter advertises this only once
+        ``tool_choice="none"`` is known to reach the provider in a form it
+        honours, so an adapter that has not considered it keeps today's
+        behaviour and asks in words instead.
+
+        Returns:
+            bool: True if a request offering tools can forbid a call.
         """
         return False
 

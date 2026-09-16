@@ -150,6 +150,11 @@ STATIC_METHODS = ("_free_vram_gb", "_is_cuda_device_side_assert")
 #: a multi-turn tool loop is portable across providers. Recorded here rather
 #: than silently absorbed, because this list is the anchor that says the surface
 #: only changes on purpose.
+#:
+#: ``prompt_cache_policy`` / ``supports_suppressed_tool_call`` were added on
+#: 2026-09-15, also on ``BaseModel``, so a run can ask an adapter what its
+#: provider's prompt cache needs instead of deciding from a provider name. This
+#: engine inherits both and declines both.
 ENGINE_MEMBERS = (
     "_HF_GEN_PARAMS",
     "_abc_impl",
@@ -186,6 +191,7 @@ ENGINE_MEMBERS = (
     "get_total_cost",
     "is_loaded",
     "load",
+    "prompt_cache_policy",
     "reset_cost",
     "streams_tool_calls",
     # Inherited from BaseModel, which answers False: the local engine has no
@@ -197,6 +203,10 @@ ENGINE_MEMBERS = (
     # call and a tool turn carrying a result have nowhere to go.
     "supports_conversation",
     "supports_message_protocol",
+    # Inherited from BaseModel and answering None/False: a model served from
+    # local weights has no provider cache to keep a prefix in, and no request
+    # layer that could carry "offer these tools but do not call one".
+    "supports_suppressed_tool_call",
     "supports_tool_calling",
     "tool_call_support",
     "unload",

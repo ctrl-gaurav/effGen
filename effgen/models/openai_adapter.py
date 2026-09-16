@@ -51,6 +51,7 @@ from effgen.models._usage import (
     accumulate_stream_tool_call_deltas,
     cost_label,
     extract_openai_usage,
+    log_cache_hit,
     record_tracker_cost,
     stream_tool_call_entries,
     stringify_tool_arguments,
@@ -62,6 +63,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     ModelType,
+    PromptCachePolicy,
     TokenCount,
     clear_stream_tool_calls,
     fold_call_totals,
@@ -684,7 +686,9 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt_tokens,
             completion_tokens,
             log=logger,
+            cached_tokens=cached_tokens,
         )
+        log_cache_hit(logger, "openai", self.model_name, cached_tokens, prompt_tokens)
         return cost
 
     # ------------------------------------------------------------------
@@ -1551,6 +1555,31 @@ class OpenAIAdapter(FunctionCallingModel):
         message answering that call id. A model with no native tool calling has
         no call to carry, so the declaration follows
         :meth:`supports_tool_calling`.
+        """
+        return self.supports_tool_calling()
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """OpenAI matches the rendered prefix itself and reports what it reused.
+
+        Nothing has to be marked: the provider caches a request whose rendered
+        prefix it has seen recently and says how much of the prompt that was, in
+        ``usage.prompt_tokens_details.cached_tokens``, which this adapter
+        already reads. The published minimum applies to OpenAI's own service; an
+        endpoint the caller pointed this adapter at is some other server, whose
+        minimum is that server's business, so none is claimed for it.
+        """
+        return PromptCachePolicy(
+            style="automatic",
+            min_prefix_tokens=1024 if self._catalog_backed and not self.base_url else None,
+            reports_cached_tokens=True,
+        )
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice="none"`` is honoured here.
+
+        The request keeps its definitions and forbids a call, which is what lets
+        a run ask for the answer without rebuilding the prompt it has been
+        reusing all along.
         """
         return self.supports_tool_calling()
 

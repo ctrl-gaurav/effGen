@@ -34,6 +34,81 @@ def extract_openai_usage(usage: Any) -> tuple[int, int, int, int]:
     return prompt_tokens, completion_tokens, total_tokens, cached_tokens
 
 
+def cached_prompt_tokens(usage: Any) -> int:
+    """Prompt tokens *usage* says the provider served from its cache.
+
+    The OpenAI-shaped usage payload reports a cache hit under
+    ``prompt_tokens_details.cached_tokens``, which every provider speaking that
+    protocol either fills in or leaves absent. Absent, ``None`` and a details
+    block that is a plain mapping all read as 0, so an adapter never has to
+    guard the shape itself — and 0 means "this provider reported no hit", not
+    "there was nothing to hit".
+
+    Args:
+        usage: The provider's usage object or mapping.
+
+    Returns:
+        The cached prompt-token count, or 0 when the payload reports none.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None and isinstance(usage, dict):
+        details = usage.get("prompt_tokens_details")
+    if details is None:
+        return 0
+    value = (
+        details.get("cached_tokens")
+        if isinstance(details, dict)
+        else getattr(details, "cached_tokens", 0)
+    )
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def log_cache_hit(
+    log: logging.Logger,
+    provider: str,
+    model: str,
+    cached_tokens: int,
+    prompt_tokens: int,
+    *,
+    stream: bool = False,
+    cache_write_tokens: int = 0,
+) -> None:
+    """Say, once per call, how much of a prompt the provider served from cache.
+
+    A run that asks for a cache and never gets one looks exactly like a run that
+    never asked, so the hit is stated where it happens rather than only summed
+    at the end. Nothing is logged for a call that reported neither a read nor a
+    write, which is every call to a provider that does not cache.
+
+    Args:
+        log: The adapter's logger.
+        provider: The provider that served the call.
+        model: The model id the call used.
+        cached_tokens: Prompt tokens served from the cache.
+        prompt_tokens: The call's whole prompt-token count.
+        stream: Whether the call was streamed.
+        cache_write_tokens: Prompt tokens written into the cache.
+    """
+    if cached_tokens <= 0 and cache_write_tokens <= 0:
+        return
+    kind = "streamed call" if stream else "call"
+    if cached_tokens > 0:
+        share = (cached_tokens / prompt_tokens * 100.0) if prompt_tokens else 0.0
+        log.info(
+            "[cache] provider served %d of %d prompt tokens from its cache "
+            "(%.1f%%) on a %s to %s/%s",
+            cached_tokens, prompt_tokens, share, kind, provider, model,
+        )
+    if cache_write_tokens > 0:
+        log.info(
+            "[cache] provider wrote %d prompt tokens to its cache on a %s to %s/%s",
+            cache_write_tokens, kind, provider, model,
+        )
+
+
 def cost_label(cost: float | None) -> str:
     """Render a per-call cost for a log line, or say the model has no price."""
     return "unpriced" if cost is None else f"${cost:.6f}"
@@ -46,6 +121,7 @@ def usage_metadata(
     cached_tokens: int,
     cost: float | None,
     total_cost: float,
+    cache_write_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Build the canonical per-call token/cost metadata block.
 
@@ -62,13 +138,18 @@ def usage_metadata(
         cached_tokens: Prompt tokens served from the provider's cache.
         cost: This call's cost in US dollars, or ``None`` when unpriced.
         total_cost: Cumulative cost across the adapter instance, this call included.
+        cache_write_tokens: Prompt tokens written to the provider's cache, on a
+            provider that reports writes separately and bills them above the
+            input rate. The key is added only when a number was given, so a
+            provider that reports no writes carries no key rather than a ``0``
+            a reader cannot tell from "it wrote nothing".
 
     Returns:
         The per-call token and cost block, in the shape an adapter stamps onto
         its result. Local engines report tokens without a cost and leave
         ``cost_usd`` off entirely.
     """
-    return {
+    block: dict[str, Any] = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
@@ -76,6 +157,9 @@ def usage_metadata(
         "cost_usd": cost,
         "total_cost": total_cost,
     }
+    if cache_write_tokens is not None:
+        block["cache_write_tokens"] = int(cache_write_tokens)
+    return block
 
 
 def stringify_tool_arguments(arguments: Any) -> str:
@@ -256,6 +340,8 @@ def record_tracker_cost(
     completion_tokens: int,
     *,
     log: logging.Logger,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> float | None:
     """Record one call in the process-global :class:`CostTracker`.
 
@@ -271,6 +357,12 @@ def record_tracker_cost(
         prompt_tokens: Input tokens the call consumed.
         completion_tokens: Output tokens the call produced.
         log: Logger a tracker failure is confined to.
+        cached_tokens: How many of *prompt_tokens* the provider served from its
+            cache. Priced at the catalog's cached-input rate where the provider
+            publishes one, and at the ordinary input rate where it does not —
+            a saving is never assumed on the caller's behalf.
+        cache_write_tokens: Prompt tokens written to the cache, billed above the
+            input rate on the providers that report them.
     """
     try:
         from effgen.models._cost import CostTracker
@@ -280,6 +372,8 @@ def record_tracker_cost(
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cached_tokens=cached_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
     except BudgetExceededError:
         raise
@@ -289,7 +383,9 @@ def record_tracker_cost(
 
 
 __all__ = [
+    "cached_prompt_tokens",
     "extract_openai_usage",
+    "log_cache_hit",
     "cost_label",
     "usage_metadata",
     "stringify_tool_arguments",

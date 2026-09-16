@@ -49,11 +49,16 @@ from effgen.models._adapter_utils import (
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
-from effgen.models._usage import tool_calls_from_message
+from effgen.models._usage import (
+    cached_prompt_tokens,
+    log_cache_hit,
+    tool_calls_from_message,
+)
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
     GenerationResult,
+    PromptCachePolicy,
     TokenCount,
     accumulate_stream_cost,
 )
@@ -677,6 +682,7 @@ class HFInferenceAdapter(BaseModel):
             reasoning_text=extract_reasoning_text(choice.message),
             reasoning_tokens=extract_reasoning_tokens(usage),
             max_tokens=call_kwargs.get("max_tokens"),
+            cached_tokens=cached_prompt_tokens(usage),
         )
 
     def _generate_text(
@@ -808,10 +814,14 @@ class HFInferenceAdapter(BaseModel):
         reasoning_text: str = "",
         reasoning_tokens: int = 0,
         max_tokens: int | None = None,
+        cached_tokens: int = 0,
     ) -> GenerationResult:
         """Assemble a GenerationResult and record cost."""
         cost_usd = self._price_tokens(input_tokens, output_tokens)
         self._record_cost(input_tokens, output_tokens, cost_usd)
+        log_cache_hit(
+            logger, "hf_inference", self.model_name, cached_tokens, input_tokens
+        )
 
         metadata = {
             "provider": "hf_inference",
@@ -824,6 +834,7 @@ class HFInferenceAdapter(BaseModel):
             # accounting reads the same keys across every provider.
             "prompt_tokens": input_tokens,
             "completion_tokens": output_tokens,
+            "cached_input_tokens": cached_tokens,
             "cost_usd": cost_usd,
             "tool_calls": tool_calls,
             "usage": {
@@ -961,6 +972,7 @@ class HFInferenceAdapter(BaseModel):
             self._last_stream_api_usage = None
             input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
             output_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+            cached_tokens = cached_prompt_tokens(usage) if usage else 0
             if not (input_tokens or output_tokens):
                 input_tokens = self._estimate_tokens_from_chars(prompt_chars)
                 output_tokens = self._estimate_tokens_from_chars(output_chars)
@@ -974,6 +986,11 @@ class HFInferenceAdapter(BaseModel):
                 input_tokens + output_tokens,
                 prompt_tokens=input_tokens,
                 completion_tokens=output_tokens,
+                cached_input_tokens=cached_tokens,
+            )
+            log_cache_hit(
+                logger, "hf_inference", self.model_name, cached_tokens,
+                input_tokens, stream=True,
             )
         except BudgetExceededError:
             raise
@@ -1169,6 +1186,24 @@ class HFInferenceAdapter(BaseModel):
         no call to carry, so the declaration follows
         :meth:`supports_tool_calling`.
         """
+        return self.supports_tool_calling()
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """The router's endpoints cache what they cache, and report it here.
+
+        Nothing is marked on the request: a serverless model behind the HF
+        router is served by whichever provider holds it, and what that provider
+        cached comes back in the OpenAI-shaped
+        ``usage.prompt_tokens_details``. No minimum prefix is published across
+        that set of providers, so none is declared.
+        """
+        return PromptCachePolicy(
+            style="automatic",
+            reports_cached_tokens=True,
+        )
+
+    def supports_suppressed_tool_call(self) -> bool:
+        """True when tools are offered: ``tool_choice="none"`` is honoured here."""
         return self.supports_tool_calling()
 
     def supports_forced_tool_call(self) -> bool:
