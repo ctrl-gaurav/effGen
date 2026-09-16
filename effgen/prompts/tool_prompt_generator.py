@@ -54,12 +54,18 @@ class ToolPromptGenerator:
                     return family
         return "generic"
 
-    def generate_tools_section(self, verbose: bool = True) -> str:
+    def generate_tools_section(
+        self, verbose: bool = True, rules: bool = True
+    ) -> str:
         """
         Generate the complete tools description section for the prompt.
 
         Args:
             verbose: If True, include full parameter details and examples.
+            rules: State the rules about the tools under the list. Pass ``False``
+                where the prompt already carries them — the framework's own
+                generated system prompt says the same five things — so they are
+                read once rather than twice on every request of every turn.
 
         Returns:
             Formatted tools section string.
@@ -72,9 +78,10 @@ class ToolPromptGenerator:
             sections.append(self._format_tool(tool, i, verbose))
 
         tools_text = "\n\n".join(sections)
-        rules = self._generate_rules_section()
+        if not rules:
+            return tools_text
 
-        return f"{tools_text}\n\n{rules}"
+        return f"{tools_text}\n\n{self._generate_rules_section()}"
 
     def _format_tool(self, tool: BaseTool, index: int, verbose: bool) -> str:
         """Format a single tool description."""
@@ -168,6 +175,7 @@ class ToolPromptGenerator:
         closing_instruction: str = "",
         answer_shape: str = "",
         tool_contract: str = "",
+        rules_already_stated: bool = False,
     ) -> str:
         """
         Generate a complete ReAct prompt with enhanced tool descriptions.
@@ -191,11 +199,27 @@ class ToolPromptGenerator:
                 so the two are read together, and repeated on every turn
                 because the whole scaffold is re-rendered every turn. Empty
                 leaves the prompt unchanged.
+            rules_already_stated: *system_prompt* is the framework's own
+                generated one, which already names the tools, says the input
+                must be valid JSON, says not to invent a tool, asks for a
+                ``Final Answer:`` label and says what to do when a tool fails —
+                and already says the model can reason step by step and use
+                tools. Both restatements are left out, so the same sentences
+                are not paid for twice on every request. Default ``False``
+                states everything, which is what a caller's own system prompt
+                gets.
 
         Returns:
             Complete formatted ReAct prompt string.
         """
-        tools_section = self.generate_tools_section(verbose=verbose)
+        tools_section = self.generate_tools_section(
+            verbose=verbose, rules=not rules_already_stated
+        )
+        if rules_already_stated:
+            logger.info(
+                "[prompt] the tool rules are stated once: the generated system "
+                "prompt already carries them"
+            )
 
         # Apply model-specific formatting
         prompt = self._apply_model_format(
@@ -205,6 +229,7 @@ class ToolPromptGenerator:
             task=task,
             scratchpad=scratchpad,
             tool_contract=tool_contract,
+            restate_capability=not rules_already_stated,
         )
 
         if answer_shape:
@@ -239,6 +264,7 @@ class ToolPromptGenerator:
         task: str,
         scratchpad: str,
         tool_contract: str = "",
+        restate_capability: bool = True,
     ) -> str:
         """
         Apply model-family-specific prompt formatting.
@@ -260,25 +286,18 @@ class ToolPromptGenerator:
 
         # Model-specific wrapping
         if self._model_family == "qwen":
-            return self._format_qwen(
-                system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad, tool_contract
-            )
+            formatter = self._format_qwen
         elif self._model_family == "llama":
-            return self._format_llama(
-                system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad, tool_contract
-            )
+            formatter = self._format_llama
         elif self._model_family == "phi":
-            return self._format_phi(
-                system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad, tool_contract
-            )
+            formatter = self._format_phi
         else:
-            return self._format_generic(
-                system_prompt, conversation_history, tools_section,
-                react_instructions, task, scratchpad, tool_contract
-            )
+            formatter = self._format_generic
+        return formatter(
+            system_prompt, conversation_history, tools_section,
+            react_instructions, task, scratchpad, tool_contract,
+            restate_capability,
+        )
 
     @staticmethod
     def _with_contract(tools_block: str, tool_contract: str) -> str:
@@ -290,18 +309,49 @@ class ToolPromptGenerator:
         """
         return f"{tools_block}\n\n{tool_contract}" if tool_contract else tools_block
 
+    @staticmethod
+    def _opening(system_prompt: str, restate_capability: bool) -> str:
+        """The first line: the persona, and what it may do where that is new.
+
+        The framework's own generated system prompt already says the model can
+        reason step by step and use tools, so restating it there adds a second
+        copy of a sentence the model has just read.
+        """
+        if restate_capability:
+            return f"{system_prompt} You can reason step-by-step and use tools."
+        return system_prompt
+
+    @staticmethod
+    def _history_block(conversation_history: str) -> list[str]:
+        """The line pointing at earlier context, when there is earlier context.
+
+        A run with no session has nothing above the tools, so the instruction
+        points at nothing and is left out entirely — the line and the blank line
+        that followed it. A run that carries a session keeps both exactly as
+        they were.
+        """
+        if not conversation_history:
+            return []
+        return [
+            (
+                "IMPORTANT: If there is previous conversation context above, "
+                "use that information."
+            ),
+            "",
+        ]
+
     def _format_generic(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad, tool_contract=""
+        react_instructions, task, scratchpad, tool_contract="",
+        restate_capability=True,
     ) -> str:
         """Default prompt format."""
         parts = [
-            f"{system_prompt} You can reason step-by-step and use tools.",
+            self._opening(system_prompt, restate_capability),
             conversation_history,
             self._with_contract(f"Available tools:\n{tools_section}", tool_contract),
             "",
-            "IMPORTANT: If there is previous conversation context above, use that information.",
-            "",
+            *self._history_block(conversation_history),
             react_instructions,
             "",
             "Begin!",
@@ -313,19 +363,19 @@ class ToolPromptGenerator:
 
     def _format_qwen(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad, tool_contract=""
+        react_instructions, task, scratchpad, tool_contract="",
+        restate_capability=True,
     ) -> str:
         # Qwen2.5 format: structured with clear section markers
         """Qwen-optimized prompt format with chat template hints."""
         parts = [
-            f"{system_prompt} You can reason step-by-step and use tools.",
+            self._opening(system_prompt, restate_capability),
             conversation_history,
             self._with_contract(
                 f"<|tools|>\nAvailable tools:\n{tools_section}\n<|/tools|>", tool_contract
             ),
             "",
-            "IMPORTANT: If there is previous conversation context above, use that information.",
-            "",
+            *self._history_block(conversation_history),
             react_instructions,
             "",
             "Begin!",
@@ -337,18 +387,18 @@ class ToolPromptGenerator:
 
     def _format_llama(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad, tool_contract=""
+        react_instructions, task, scratchpad, tool_contract="",
+        restate_capability=True,
     ) -> str:
         # Llama-3 format: system-style instructions
         """Llama-optimized prompt format."""
         parts = [
             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>",
-            f"{system_prompt} You can reason step-by-step and use tools.",
+            self._opening(system_prompt, restate_capability),
             conversation_history,
             self._with_contract(f"Available tools:\n{tools_section}", tool_contract),
             "",
-            "IMPORTANT: If there is previous conversation context above, use that information.",
-            "",
+            *self._history_block(conversation_history),
             react_instructions,
             "<|eot_id|><|start_header_id|>user<|end_header_id|>",
             "",
@@ -359,11 +409,12 @@ class ToolPromptGenerator:
 
     def _format_phi(
         self, system_prompt, conversation_history, tools_section,
-        react_instructions, task, scratchpad, tool_contract=""
+        react_instructions, task, scratchpad, tool_contract="",
+        restate_capability=True,
     ) -> str:
         """Phi-optimized prompt: more concise instructions."""
         parts = [
-            f"{system_prompt} You can reason step-by-step and use tools.",
+            self._opening(system_prompt, restate_capability),
             conversation_history,
             self._with_contract(f"Tools:\n{tools_section}", tool_contract),
             "",

@@ -1270,6 +1270,9 @@ def step(
                 ),
                 "answer_shape": _answer_shape,
                 "tool_contract": agent._tool_contract(),
+                "rules_already_stated": bool(
+                    getattr(agent, "_framework_system_prompt", False)
+                ),
             }
             prompt = agent._tool_prompt_generator.generate_react_prompt(
                 conversation_history=conversation_history,

@@ -412,8 +412,15 @@ class Agent(
         self._system_prompt_builder = AgentSystemPromptBuilder(
             model_name=self.model_name or "",
         )
+        # Whether the system prompt this agent sends is the framework's own,
+        # built from the tools just attached. It already names the tools and
+        # states the rules for using them, so whatever assembles a prompt
+        # around it can say each of those once instead of twice. A caller's own
+        # system prompt leaves this False and nothing is left out.
+        self._framework_system_prompt = False
         if config.tools and config.system_prompt == "You are a helpful AI assistant.":
             self.config.system_prompt = self._build_system_prompt()
+            self._framework_system_prompt = True
 
         # State management
         self.state = AgentState(agent_id=self.name)
