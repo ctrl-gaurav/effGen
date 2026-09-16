@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 # model both to work a calculation out itself and never to compute in its head.
 # A category with nothing operational to add has no entry, and
 # ``_build_category_tips`` leaves it out.
+#
+# None of them asks for more text either. "Inform the user and try an
+# alternative approach" read as an instruction to narrate the failure, which is
+# a paragraph bought for an answer the caller did not ask to be told about; the
+# loop already reports a failed call, and how much to write is said once by
+# :mod:`effgen.prompts.answer_style`.
 CATEGORY_INSTRUCTIONS: dict[ToolCategory, str] = {
     ToolCategory.INFORMATION_RETRIEVAL: (
         "- If your first search returns no results, try rephrasing with different keywords."
@@ -36,8 +42,7 @@ CATEGORY_INSTRUCTIONS: dict[ToolCategory, str] = {
         "- Be careful with system operations — only run safe commands."
     ),
     ToolCategory.EXTERNAL_API: (
-        "- Some tools call external APIs. Results may take a moment.\n"
-        "- If an API call fails, inform the user and try an alternative approach."
+        "- Some tools call external APIs. Results may take a moment."
     ),
     ToolCategory.DATA_PROCESSING: (
         "- Break complex data transformations into steps."

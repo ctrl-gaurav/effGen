@@ -13,8 +13,8 @@ So the text is chosen from what the tools *are* — their declared
 texts cover the eight categories:
 
 ``TOOL_CONTRACT_VERIFY``
-    The tool checks work the model can do itself, so reasoning comes first and
-    the tool confirms it.
+    The tool checks work the model can do itself, so it says which steps to
+    hand it and how to act on what comes back.
 ``TOOL_CONTRACT_EXECUTE``
     The tool does work the model cannot do in its head, so the tool does the
     task and the model reads the result back.
@@ -26,6 +26,15 @@ texts cover the eight categories:
     mixed tool set all receive: a specific contract is only true because it is
     true of the tool, and on a mixed set none of the three is true of every tool
     held.
+
+None of the four says anything about how *long* the answer should be, or asks
+for reasoning to be written out before a call. Attaching a tool is no reason to
+ask for more text: the run had a form before the framework touched it — the
+question's own wording, the caller's system prompt, a declared output schema —
+and a contract that also demanded prose silently overruled all three. A
+multiple-choice run was measured emitting 195 output tokens for the letter "C".
+What the answer should look like is said once, last, by
+:mod:`effgen.prompts.answer_style`; these four say only what the tools are for.
 
 Every member of ``ToolCategory`` has an explicit entry in :data:`TOOL_CONTRACTS`
 so a category added later fails the test that enumerates them rather than
@@ -61,27 +70,32 @@ logger = logging.getLogger(__name__)
 #: a tool that declares no category at all, and for a set of tools that map to
 #: more than one contract.
 TOOL_CONTRACT_GENERAL = (
-    "Work through this task one step at a time. Before each tool call, say in "
-    "one line what that step works out. Give a tool a single step, not the "
-    "whole task at once, and use the result it returns rather than working it "
-    "out again yourself. When every step is done, state the final answer."
+    "Work through this task one step at a time. Give a tool a single step, not "
+    "the whole task at once, and use the result it returns rather than working "
+    "it out again yourself. When every step is done, state the final answer."
 )
 
 #: Stated for tools that check arithmetic or symbolic work the model can also do
-#: itself. Reasoning first, tool second: a model that hands the whole task to a
-#: calculator loses the steps it would otherwise have written down.
+#: itself. One step per call, and the tool has the last word where the two
+#: disagree: a model that hands the whole task to a calculator loses the steps
+#: it would otherwise have taken.
 TOOL_CONTRACT_VERIFY = (
-    "First work the task out yourself, in your own words, step by step, and say "
-    "what each step gives. Then use the tools to check the steps you are least "
-    "sure of, one step per call, and correct yourself if a tool disagrees with "
-    "you. Do not hand a tool the whole task at once, and do not skip the "
-    "reasoning and call a tool instead. Finish by stating the final answer."
+    "Use the tools to check the steps you are least sure of, one step per call, "
+    "and correct yourself if a tool disagrees with you. Do not hand a tool the "
+    "whole task at once."
 )
 
 #: Stated for tools that run code or system commands — work the model cannot
 #: carry out in its head. Describing what the code would print is not the same
 #: as running it, and a model that does the former reports a result nothing
 #: produced.
+#:
+#: This is the one contract that still asks for a line of narration before the
+#: call. Taking it out is **unmeasured**: the run that appeared to condemn it
+#: also moved where the contract was read, and the movement belonged to the
+#: placement rather than to the wording. A tool that does work the model cannot
+#: do is the case where saying what is about to be computed plausibly earns its
+#: tokens, so the shipped wording stays until something measures it alone.
 TOOL_CONTRACT_EXECUTE = (
     "Use the tools to do this task rather than working it out in your head. Say "
     "in one line what you are about to compute, call the tool to compute it, "
@@ -98,8 +112,7 @@ TOOL_CONTRACT_EXECUTE = (
 TOOL_CONTRACT_LOOKUP = (
     "The tools bring back source material, not the answer. Answer the question "
     "yourself, in the form it asks for, from what they return, and do not "
-    "return a passage as the answer. If what comes back does not answer the "
-    "question, say so and name what is missing."
+    "return a passage as the answer."
 )
 
 
@@ -276,13 +289,16 @@ def select_tool_contract(tools: Iterable[Any]) -> str:
     some of them. Two tools of the same category are not mixed.
 
     Logs ``tool contract: <name>`` once per selection, which is once per prompt
-    that carries one.
+    that carries one, and states that the text carries no demand on the
+    answer's own length — the property the four texts are written to hold and
+    the one a reader can check a prompt against.
     """
     contracts = {contract_for_category(_category_of(tool)) for tool in tools}
     if not contracts:
         return ""
     contract = contracts.pop() if len(contracts) == 1 else TOOL_CONTRACT_GENERAL
     logger.info("tool contract: %s", CONTRACT_NAMES.get(contract, "general"))
+    logger.info("[answer] tool contract stated without an output demand")
     return contract
 
 

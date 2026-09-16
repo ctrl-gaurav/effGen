@@ -176,6 +176,7 @@ class ToolPromptGenerator:
         answer_shape: str = "",
         tool_contract: str = "",
         rules_already_stated: bool = False,
+        answer_style: str = "",
     ) -> str:
         """
         Generate a complete ReAct prompt with enhanced tool descriptions.
@@ -208,6 +209,13 @@ class ToolPromptGenerator:
                 are not paid for twice on every request. Default ``False``
                 states everything, which is what a caller's own system prompt
                 gets.
+            answer_style: The one sentence the framework states about the form
+                of the answer — see :mod:`effgen.prompts.answer_style`. It is
+                placed last, after everything else, because it is the only
+                framework text that belongs after the caller's own task. This
+                format parses an answer off a ``Final Answer:`` label, so the
+                line carries that label with it rather than displacing the
+                restatement it replaces. Empty leaves the prompt unchanged.
 
         Returns:
             Complete formatted ReAct prompt string.
@@ -232,27 +240,36 @@ class ToolPromptGenerator:
             restate_capability=not rules_already_stated,
         )
 
+        # The ReAct formats parse an answer off the "Final Answer:" label, so
+        # whichever of these three lines is last has to carry the label --
+        # otherwise a model that follows it emits the value with no label, the
+        # turn reads as more reasoning, and the loop runs to its cap on a run
+        # that was already answered. Exactly one of them restates it, so the
+        # label is asked for once however many of the three are stated.
         if answer_shape:
-            # The ReAct formats parse an answer off the "Final Answer:" label,
-            # so a statement about what the answer *is* has to carry how it is
-            # marked -- otherwise a model that follows the shape emits the value
-            # with no label, the turn reads as more reasoning, and the loop runs
-            # to its cap on a run that was already answered. When a closing
-            # instruction follows, it restates the label itself.
             prompt = f"{prompt}\n\n{answer_shape}"
-            if not closing_instruction:
+            if not closing_instruction and not answer_style:
                 prompt = (
                     f"{prompt}\nGive it after a 'Final Answer:' label once you "
                     "have it."
                 )
 
         if closing_instruction:
-            # The ReAct formats parse an answer off the "Final Answer:" label, so
-            # restate the label alongside the instruction to keep that contract.
-            prompt = (
-                f"{prompt}\n\n{closing_instruction}\n"
+            prompt = f"{prompt}\n\n{closing_instruction}"
+            if not answer_style:
+                prompt = (
+                    f"{prompt}\nGive that answer now, after a 'Final Answer:' "
+                    "label."
+                )
+
+        if answer_style:
+            logger.info("[prompt] the answer style closes the request")
+            label = (
                 "Give that answer now, after a 'Final Answer:' label."
+                if closing_instruction
+                else "Give it after a 'Final Answer:' label once you have it."
             )
+            prompt = f"{prompt}\n\n{answer_style}\n{label}"
 
         return prompt
 
