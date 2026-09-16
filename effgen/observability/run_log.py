@@ -143,6 +143,7 @@ def record_run(
     llm_calls: int | None = None,
     tool_calls: int | None = None,
     cached_input_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
     model_wait_s: float | None = None,
     tool_wait_s: float | None = None,
     framework_s: float | None = None,
@@ -206,11 +207,13 @@ def record_run(
         session turn and on ``response.metadata["thread"]``.
     llm_calls, tool_calls:
         Model requests and tool executions the run made itself.
-    cached_input_tokens:
-        Prompt tokens the provider served from its cache.
+    cached_input_tokens, cache_write_tokens:
+        Prompt tokens the provider served from its cache, and prompt tokens it
+        wrote into one — a write is billed above the input rate, so a run that
+        only ever writes is spending more than one that never cached.
     model_wait_s, tool_wait_s, framework_s:
         Seconds the run spent inside model calls, inside tool executions, and
-        in effGen itself (see :mod:`effgen.core.ledger`). These six are stored
+        in effGen itself (see :mod:`effgen.core.ledger`). These seven are stored
         only when given, so a record written without them keeps its shape.
 
     Returns the record that was stored.
@@ -252,6 +255,7 @@ def record_run(
         ("llm_calls", llm_calls),
         ("tool_calls", tool_calls),
         ("cached_input_tokens", cached_input_tokens),
+        ("cache_write_tokens", cache_write_tokens),
         ("model_wait_s", model_wait_s),
         ("tool_wait_s", tool_wait_s),
         ("framework_s", framework_s),

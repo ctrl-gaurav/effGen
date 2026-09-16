@@ -36,6 +36,7 @@ from effgen.tools.base_tool import (
 PROMPT_TOKENS = 11
 COMPLETION_TOKENS = 5
 CACHED_TOKENS = 3
+CACHE_WRITE_TOKENS = 7
 ACTION = 'Thought: I will look it up.\nAction: echo\nAction Input: {"value": "x"}'
 
 
@@ -74,6 +75,7 @@ class _Model(BaseModel):
                 "completion_tokens": COMPLETION_TOKENS,
                 "total_tokens": PROMPT_TOKENS + COMPLETION_TOKENS,
                 "cached_input_tokens": CACHED_TOKENS,
+                "cache_write_tokens": CACHE_WRITE_TOKENS,
             },
         )
 
@@ -467,6 +469,7 @@ def test_the_run_store_record_carries_calls_and_the_time_split():
 
     assert record["llm_calls"] == 2 and record["tool_calls"] == 1
     assert record["cached_input_tokens"] == 2 * CACHED_TOKENS
+    assert record["cache_write_tokens"] == 2 * CACHE_WRITE_TOKENS
     for key in ("model_wait_s", "tool_wait_s", "framework_s"):
         assert isinstance(record[key], float)
     run_log.clear()
@@ -490,6 +493,9 @@ def test_prometheus_observes_each_model_call_and_the_run_framework_time():
     assert metrics.tokens_total.get(
         labels={"provider": provider, "model": "ledger-model", "kind": "cached"}
     ) == 2 * CACHED_TOKENS
+    assert metrics.tokens_total.get(
+        labels={"provider": provider, "model": "ledger-model", "kind": "cache_write"}
+    ) == 2 * CACHE_WRITE_TOKENS
     metrics.reset_all()
 
 
@@ -525,3 +531,68 @@ def test_the_ledger_adds_one_metadata_key_and_changes_no_other(monkeypatch):
         assert with_ledger.metadata[key] == without.metadata[key], key
     assert with_ledger.tokens_used == without.tokens_used
     assert without.ledger is None
+
+
+# ------------------------------------------------------------------ what a cache cost and saved
+
+
+def test_the_ledger_counts_what_the_cache_served_and_what_it_cost_to_fill():
+    """Both halves, per call and per step, and once across a run's children.
+
+    A run that only ever writes a cache is spending more than one that never
+    cached at all, and nothing shows that unless the writes are counted apart
+    from the reads.
+    """
+    ledger = _agent(tools=True).run("echo x").ledger
+
+    assert ledger.cached_input_tokens == 2 * CACHED_TOKENS
+    assert ledger.cache_write_tokens == 2 * CACHE_WRITE_TOKENS
+    assert [c.cache_write_tokens for c in ledger.calls if c.kind == "model"] == (
+        [CACHE_WRITE_TOKENS] * 2
+    )
+    assert sum(step.cache_write_tokens for step in ledger.steps) == 2 * CACHE_WRITE_TOKENS
+    assert ledger.own()["cache_write_tokens"] == 2 * CACHE_WRITE_TOKENS
+    assert ledger.total()["cache_write_tokens"] == 2 * CACHE_WRITE_TOKENS
+
+
+def test_a_cache_write_survives_the_document_round_trip():
+    from effgen.core.ledger import RunLedger
+
+    response = _agent(tools=True).run("echo x")
+    document = response.metadata["ledger"]
+    assert document["cache_write_tokens"] == 2 * CACHE_WRITE_TOKENS
+    assert RunLedger.from_dict(document).cache_write_tokens == 2 * CACHE_WRITE_TOKENS
+    assert RunLedger.from_dict(document).to_dict() == document
+
+
+def test_the_run_card_names_what_the_cache_served():
+    from effgen.cli.commands.run import run_document
+    from effgen.ui.report_html_run import _run_body
+
+    response = _agent(tools=True).run("echo x")
+    _, _, body = _run_body(run_document(response))
+    assert "Cached prompt tokens" in body
+    assert f"{2 * CACHE_WRITE_TOKENS} written" in body
+
+
+def test_a_provider_that_reports_no_cache_gets_no_card_and_no_counters():
+    """Zero is not reported as a hit rate of zero; nothing is claimed at all."""
+    from effgen.cli.commands.run import run_document
+    from effgen.ui.report_html_run import _run_body
+
+    class _Quiet(_Model):
+        def generate(self, prompt: Any, config: Any = None, **kwargs: Any):
+            result = super().generate(prompt, config, **kwargs)
+            result.metadata.pop("cached_input_tokens", None)
+            result.metadata.pop("cache_write_tokens", None)
+            return result
+
+    agent = Agent(AgentConfig(
+        name="quiet", model=_Quiet(), tools=[], max_iterations=3,
+        raise_on_error=False, enable_memory=False,
+    ))
+    response = agent.run("say hello")
+    assert response.ledger.cached_input_tokens == 0
+    assert response.ledger.cache_write_tokens == 0
+    _, _, body = _run_body(run_document(response))
+    assert "Cached prompt tokens" not in body

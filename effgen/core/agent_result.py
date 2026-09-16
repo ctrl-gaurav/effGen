@@ -127,6 +127,7 @@ class AgentResultMixin:
                     "llm_calls": ledger.llm_calls,
                     "tool_calls": ledger.tool_calls,
                     "cached_input_tokens": ledger.cached_input_tokens,
+                    "cache_write_tokens": ledger.cache_write_tokens,
                     "model_wait_s": round(ledger.model_wait_s, 6),
                     "tool_wait_s": round(ledger.tool_wait_s, 6),
                     "framework_s": round(ledger.framework_s, 6),

@@ -129,6 +129,9 @@ class ModelAttrs:
     #: Number of cached input tokens read from the provider's cache (int)
     CACHED_TOKENS: str = "effgen.model.cached_tokens"
 
+    #: Number of prompt tokens written into the provider's cache (int)
+    CACHE_WRITE_TOKENS: str = "effgen.model.cache_write_tokens"
+
     #: Number of prompt / input tokens (int)
     INPUT_TOKENS: str = "effgen.model.input_tokens"
 

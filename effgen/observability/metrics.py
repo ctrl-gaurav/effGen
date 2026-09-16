@@ -475,6 +475,7 @@ def record_tokens(
     input_tokens: int = 0,
     output_tokens: int = 0,
     cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> None:
     """
     Record token consumption for one model call.
@@ -485,6 +486,9 @@ def record_tokens(
         input_tokens: Prompt tokens sent.
         output_tokens: Completion tokens received.
         cached_tokens: Prompt tokens that were cache hits.
+        cache_write_tokens: Prompt tokens written into the provider's cache,
+            which is billed above the input rate — counted apart from a hit so
+            a run that only ever writes is visible as one.
     """
     base = {"provider": provider, "model": model}
     if input_tokens:
@@ -493,6 +497,8 @@ def record_tokens(
         tokens_total.inc(output_tokens, labels={**base, "kind": "output"})
     if cached_tokens:
         tokens_total.inc(cached_tokens, labels={**base, "kind": "cached"})
+    if cache_write_tokens:
+        tokens_total.inc(cache_write_tokens, labels={**base, "kind": "cache_write"})
 
 
 def record_http_request(

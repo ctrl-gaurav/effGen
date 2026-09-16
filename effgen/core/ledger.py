@@ -48,6 +48,7 @@ _ADDITIVE = (
     "prompt_tokens",
     "completion_tokens",
     "cached_input_tokens",
+    "cache_write_tokens",
     "total_tokens",
     "unpriced_calls",
     "estimated_calls",
@@ -89,6 +90,9 @@ class CallRecord:
             reported none.
         completion_tokens: Completion tokens the backend reported.
         cached_input_tokens: Prompt tokens the provider served from its cache.
+        cache_write_tokens: Prompt tokens the provider wrote into its cache,
+            on a provider that reports writes and bills them above the input
+            rate; ``None`` when the provider reports none.
         cost_usd: What the call cost; ``None`` when unpriced or unknown.
         estimated: The token counts were estimated locally, not reported.
         stream: The call was a stream.
@@ -102,6 +106,7 @@ class CallRecord:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cached_input_tokens: int | None = None
+    cache_write_tokens: int | None = None
     cost_usd: float | None = None
     estimated: bool = False
     stream: bool = False
@@ -121,6 +126,7 @@ class CallRecord:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cached_input_tokens": self.cached_input_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
             "cost_usd": self.cost_usd,
             "estimated": self.estimated,
             "stream": self.stream,
@@ -139,6 +145,7 @@ class CallRecord:
             prompt_tokens=_int_or_none(data.get("prompt_tokens")),
             completion_tokens=_int_or_none(data.get("completion_tokens")),
             cached_input_tokens=_int_or_none(data.get("cached_input_tokens")),
+            cache_write_tokens=_int_or_none(data.get("cache_write_tokens")),
             cost_usd=data.get("cost_usd"),
             estimated=bool(data.get("estimated")),
             stream=bool(data.get("stream")),
@@ -167,6 +174,7 @@ class StepLedger:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """The step as plain data."""
@@ -183,6 +191,7 @@ class StepLedger:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cached_input_tokens": self.cached_input_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
         }
 
     @classmethod
@@ -208,6 +217,9 @@ class RunLedger:
         prompt_tokens: Prompt tokens reported by the backend, summed.
         completion_tokens: Completion tokens reported by the backend, summed.
         cached_input_tokens: Prompt tokens served from a provider cache.
+        cache_write_tokens: Prompt tokens written into a provider cache, which
+            the providers that report them bill above the input rate. A run
+            that only ever writes is spending more than one that never cached.
         cost_usd: Cost of the priced calls; ``None`` when no call was priced.
         unpriced_calls: Calls whose model has no published price.
         estimated_calls: Calls whose token counts were estimated locally.
@@ -237,6 +249,7 @@ class RunLedger:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
     cost_usd: float | None = None
     unpriced_calls: int = 0
     estimated_calls: int = 0
@@ -267,6 +280,7 @@ class RunLedger:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cached_input_tokens": self.cached_input_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
             "total_tokens": self.total_tokens,
             "cost_usd": self.cost_usd,
             "unpriced_calls": self.unpriced_calls,
@@ -523,6 +537,9 @@ class _Recorder:
                 if record.cached_input_tokens:
                     ledger.cached_input_tokens += record.cached_input_tokens
                     step.cached_input_tokens += record.cached_input_tokens
+                if record.cache_write_tokens:
+                    ledger.cache_write_tokens += record.cache_write_tokens
+                    step.cache_write_tokens += record.cache_write_tokens
                 if record.estimated:
                     ledger.estimated_calls += 1
                 if record.cost_usd is not None:
@@ -609,6 +626,7 @@ class _Recorder:
                     ledger.prompt_tokens += record.prompt_tokens or 0
                     ledger.completion_tokens += record.completion_tokens or 0
                 ledger.cached_input_tokens += record.cached_input_tokens or 0
+                ledger.cache_write_tokens += record.cache_write_tokens or 0
                 ledger.estimated_calls += 1 if record.estimated else 0
                 if record.cost_usd is not None:
                     cost += float(record.cost_usd)
@@ -669,6 +687,9 @@ def _apply_usage(record: CallRecord, meta: dict[str, Any]) -> None:
     cached = _int_or_none(meta.get("cached_input_tokens"))
     if cached is not None:
         record.cached_input_tokens = cached
+    written = _int_or_none(meta.get("cache_write_tokens"))
+    if written is not None:
+        record.cache_write_tokens = written
     if "cost_usd" in meta:
         record.priced_key = True
         cost = meta.get("cost_usd")

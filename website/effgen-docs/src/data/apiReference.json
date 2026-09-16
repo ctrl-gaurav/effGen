@@ -1,5 +1,5 @@
 {
- "derived_at": "2026-09-15",
+ "derived_at": "2026-09-16",
  "version": "1.1.0",
  "public_names": 251,
  "kind_counts": {
@@ -1880,6 +1880,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Anthropic caches what the request marks, and reports both halves.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "reset_usage_stats",
      "kind": "method",
      "signature": "() -> None",
@@ -2146,6 +2154,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "What this provider's prompt cache needs, or `None` for no cache.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "reset_cost",
      "kind": "method",
      "signature": "() -> None",
@@ -2182,6 +2198,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Whether this adapter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether a turn can offer tools and still forbid a call.",
      "is_async": false,
      "inherited_from": null
     },
@@ -2815,6 +2839,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Cerebras matches the rendered prefix itself and reports what it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "rate_limit_status",
      "kind": "method",
      "signature": "() -> dict",
@@ -2851,6 +2883,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice=\"none\"` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -3844,7 +3884,7 @@
     {
      "name": "record",
      "kind": "method",
-     "signature": "(provider: str, model: str, prompt_tokens: int = 0, completion_tokens: int = 0, *, input_tokens: int | None = None, output_tokens: int | None = None, cost_usd: float | None = None) -> float | None",
+     "signature": "(provider: str, model: str, prompt_tokens: int = 0, completion_tokens: int = 0, *, input_tokens: int | None = None, output_tokens: int | None = None, cost_usd: float | None = None, cached_tokens: int = 0, cache_write_tokens: int = 0) -> float | None",
      "summary": "Record a completed API call and return the USD cost.",
      "is_async": false,
      "inherited_from": null
@@ -4637,6 +4677,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Fireworks caches every prompt prefix by default and reports the hit.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "rate_limit_status",
      "kind": "method",
      "signature": "() -> dict[str, Any]",
@@ -4689,6 +4737,14 @@
      "kind": "property",
      "signature": "",
      "summary": "True if this model supports streaming responses.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice=\"none\"` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5130,6 +5186,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Gemini caches implicitly and says how much of the prompt it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "reset_usage_stats",
      "kind": "method",
      "signature": "() -> None",
@@ -5530,6 +5594,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Groq matches the rendered prefix itself and reports what it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "rate_limit_status",
      "kind": "method",
      "signature": "() -> dict[str, Any]",
@@ -5582,6 +5654,14 @@
      "kind": "property",
      "signature": "",
      "summary": "True if this model supports streaming responses.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "False: forbidding a call here can cost the whole completion.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5966,6 +6046,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "The router's endpoints cache what they cache, and report it here.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "supports_forced_tool_call",
      "kind": "method",
      "signature": "() -> bool",
@@ -5986,6 +6074,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True: HF Inference chat endpoints stream.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice=\"none\"` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -8070,7 +8166,7 @@
      "default": "None",
      "required": false,
      "keyword_only": false,
-     "description": "Why the framework answered in its own words rather than a tool's \u2014 `\"loop_detected\"` and `\"already_computed\"` for a call the run stopped making, `\"unknown_tool\"` for a tool the agent does not hold. `None` when the reply is a tool's own result, including a repeat answered from the record."
+     "description": "Why the framework answered in its own words rather than a tool's \u2014 `\"loop_detected\"` and `\"already_computed\"` for a call the run stopped making, `\"unknown_tool\"` for a tool the agent does not hold, `\"call_forbidden\"` for a call made on a turn that offered the tool definitions and forbade a call, which some providers do not enforce. `None` when the reply is a tool's own result, including a repeat answered from the record."
     },
     {
      "name": "compacted",
@@ -8336,6 +8432,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "OpenAI matches the rendered prefix itself and reports what it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "reset_usage_stats",
      "kind": "method",
      "signature": "() -> None",
@@ -8372,6 +8476,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "True: this converter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice=\"none\"` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },
@@ -10328,7 +10440,7 @@
    "module": "effgen.core.ledger",
    "area": "orchestration",
    "summary": "What one run spent, and where its time went.",
-   "signature": "(kind: str = 'run', name: str = '', llm_calls: int = 0, tool_calls: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, cached_input_tokens: int = 0, cost_usd: float | None = None, unpriced_calls: int = 0, estimated_calls: int = 0, unreported_calls: int = 0, iterations: int = 0, wall_s: float = 0.0, model_wait_s: float = 0.0, tool_wait_s: float = 0.0, caller_wait_s: float = 0.0, child_wait_s: float = 0.0, framework_s: float = 0.0, process_peak_rss_mb: float | None = None, steps: list[StepLedger] = <factory>, calls: list[CallRecord] = <factory>, children: list[RunLedger] = <factory>, resumed_from: dict[str, Any] | None = None) -> None",
+   "signature": "(kind: str = 'run', name: str = '', llm_calls: int = 0, tool_calls: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, cached_input_tokens: int = 0, cache_write_tokens: int = 0, cost_usd: float | None = None, unpriced_calls: int = 0, estimated_calls: int = 0, unreported_calls: int = 0, iterations: int = 0, wall_s: float = 0.0, model_wait_s: float = 0.0, tool_wait_s: float = 0.0, caller_wait_s: float = 0.0, child_wait_s: float = 0.0, framework_s: float = 0.0, process_peak_rss_mb: float | None = None, steps: list[StepLedger] = <factory>, calls: list[CallRecord] = <factory>, children: list[RunLedger] = <factory>, resumed_from: dict[str, Any] | None = None) -> None",
    "params": [
     {
      "name": "kind",
@@ -10385,6 +10497,14 @@
      "required": false,
      "keyword_only": false,
      "description": "Prompt tokens served from a provider cache."
+    },
+    {
+     "name": "cache_write_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Prompt tokens written into a provider cache, which the providers that report them bill above the input rate. A run that only ever writes is spending more than one that never cached."
     },
     {
      "name": "cost_usd",
@@ -13454,6 +13574,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_cache_policy",
+     "kind": "method",
+     "signature": "() -> PromptCachePolicy | None",
+     "summary": "Together caches the longest matching prefix on the models that have it.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "rate_limit_status",
      "kind": "method",
      "signature": "() -> dict[str, Any]",
@@ -13506,6 +13634,14 @@
      "kind": "property",
      "signature": "",
      "summary": "True if this model supports streaming responses.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_suppressed_tool_call",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True when tools are offered: `tool_choice=\"none\"` is honoured here.",
      "is_async": false,
      "inherited_from": null
     },

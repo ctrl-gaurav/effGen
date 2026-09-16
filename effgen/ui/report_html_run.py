@@ -169,6 +169,19 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
             "Framework time", _secs(framework_s, 3),
             f"model {_secs(model_wait_s, 3)} · tools {_secs(tool_wait_s, 3)}",
         ))
+    # What the provider served from its own cache, and what it charged to fill
+    # it. Shown only when a provider reported one of them, so a run against a
+    # provider with no cache carries no card claiming a zero hit rate.
+    cached_tokens = ledger.get("cached_input_tokens", data.get("cached_input_tokens"))
+    cache_written = ledger.get("cache_write_tokens", data.get("cache_write_tokens"))
+    if cached_tokens or cache_written:
+        share = ""
+        if cached_tokens and prompt_tokens:
+            share = f"{cached_tokens / prompt_tokens * 100:.0f}% of the prompt"
+        if cache_written:
+            written = f"{_int(cache_written)} written"
+            share = f"{share} · {written}" if share else written
+        spend_cards.append(("Cached prompt tokens", _int(cached_tokens or 0), share))
     parts.append(_cards([
         ("Duration", _secs(duration, 2), f"{_int(data.get('iterations'))} iterations"
          if data.get("iterations") is not None else ""),
