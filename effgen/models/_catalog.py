@@ -77,6 +77,15 @@ class ModelRecord:
     max_output: int = 0
     price_in_per_1m: float | None = None
     price_out_per_1m: float | None = None
+    #: What a prompt token served from the provider's cache costs, when the
+    #: provider publishes a separate rate for one. ``None`` means no rate is
+    #: published, and a cached token is then billed at the ordinary input rate
+    #: rather than at an assumed discount.
+    price_cached_in_per_1m: float | None = None
+    #: What a prompt token written into the provider's cache costs, on a
+    #: provider that bills a write above the input rate. ``None`` where the
+    #: provider does not bill writes separately.
+    price_cache_write_in_per_1m: float | None = None
     supports_tools: bool = False
     supports_vision: bool = False
     supports_audio: bool = False
@@ -249,6 +258,12 @@ def normalize_record(
 
     price_in = _as_price(_first(raw, "input_price_per_1m", "pricing_per_1m_input"))
     price_out = _as_price(_first(raw, "output_price_per_1m", "pricing_per_1m_output"))
+    price_cached_in = _as_price(
+        _first(raw, "cached_input_price_per_1m", "pricing_per_1m_cached_input")
+    )
+    price_cache_write = _as_price(
+        _first(raw, "cache_write_price_per_1m", "pricing_per_1m_cache_write")
+    )
     price_note = ""
 
     # Anthropic keeps pricing in a side table rather than the model dict.
@@ -258,6 +273,23 @@ def normalize_record(
 
             pin, pout = get_cost_per_million(model_id)
             price_in, price_out = float(pin), float(pout)
+        except Exception:  # pragma: no cover - defensive only
+            pass
+
+    # Anthropic publishes its cache rates as multiples of the input rate rather
+    # than as their own price list, so they are derived from the rate above
+    # rather than carried per model.
+    if provider == "anthropic" and price_in is not None:
+        try:
+            from effgen.models.anthropic_models import (
+                CACHE_READ_PRICE_MULTIPLIER,
+                CACHE_WRITE_PRICE_MULTIPLIER,
+            )
+
+            if price_cached_in is None:
+                price_cached_in = float(price_in) * CACHE_READ_PRICE_MULTIPLIER
+            if price_cache_write is None:
+                price_cache_write = float(price_in) * CACHE_WRITE_PRICE_MULTIPLIER
         except Exception:  # pragma: no cover - defensive only
             pass
 
@@ -297,6 +329,8 @@ def normalize_record(
         max_output=_as_int(raw.get("max_output")) or 0,
         price_in_per_1m=price_in,
         price_out_per_1m=price_out,
+        price_cached_in_per_1m=price_cached_in,
+        price_cache_write_in_per_1m=price_cache_write,
         supports_tools=bool(raw.get("supports_native_tools", False)),
         supports_vision=supports_vision,
         supports_audio=bool(raw.get("supports_audio", False)),

@@ -214,19 +214,23 @@ def test_the_bundled_snapshots_are_byte_identical():
     each confirmed absent from a live GET /v1beta/models. groq.json was re-cut on
     2026-09-08, dropping two ids Groq had retired (llama-3.1-8b-instant,
     llama-3.3-70b-versatile — both answer 404 model_not_found live) and adding
-    qwen/qwen3.8-27b, which the live GET /openai/v1/models now lists.
+    qwen/qwen3.8-27b, which the live GET /openai/v1/models now lists. Every
+    snapshot was rewritten on 2026-09-15 to carry the two cache-price fields a
+    record now has (``price_cached_in_per_1m``,
+    ``price_cache_write_in_per_1m``): no id, price, capability or date moved,
+    only the two keys were inserted after ``price_out_per_1m``.
     """
     expected = {
-        "anthropic.json": "2716848fc0c9a650ac8643326a4c0a34f1476ec0ea7690ff7a67a134b6e6e4ab",
-        "cerebras.json": "d45eca795d28d6e6c8c0e188cb9ae3784b7ee49545d0aafdbe1378009923d381",
-        "fireworks.json": "a625220d24b0c5644c5c2de009fb2d54f03d15db1903496342e78ee6c97bd235",
-        "gemini.json": "2c19277fc5335481251cc5ad8c5badb1d34a97051f58d9e01cf254d872e407a5",
-        "groq.json": "8c4e2f4aab160c2a933adfa8528a0db2eb56271f9c59bbec118ecdce96c302e9",
-        "hf.json": "1f44e05801fe4ce203ecae0e46805197ebb70a925fa613bd4dc1e00e32a92093",
+        "anthropic.json": "c5bdd2ca9f00fdb645dc37d602666badbb731e18707f3ffb986cb8c8b18e23b0",
+        "cerebras.json": "6305702115f9d2ea22b45545a92ac1caa8a7d89eb2515eb168606d3537fd688f",
+        "fireworks.json": "15f5a2b44b351a66f8a963cd2fd203a219fee12926e3d47a308b12782abd9476",
+        "gemini.json": "2d3e864dbb65f3c02dc8d4c091364d0211152405e2538984d75b8f3e4cd82716",
+        "groq.json": "7d9d93be586afbecc2153ed00440ab63da39a5399c7ca214d941c0934161e0f0",
+        "hf.json": "0024e3525da40f7978037aebc66905c6c83b887a08f5b0d54d1929e9dbd3ce76",
         "hf_inference_catalog.json": "dc47c4080832e649ce1d37aeb77e17f651e20d298f86e55ba37c84355d3c3a1e",
-        "openai.json": "1977347b9a77ebad774e59468fd9c346b48f249f7e9f522c80c05f146a607af0",
-        "replicate.json": "4bad0886ef460385ee33a68079dc21044de62d2432e135823a3a39264a947d26",
-        "together.json": "91682d878ce9ffbda1322247bbcd4488e13978bd12f09969834aaf5dfcc23d71",
+        "openai.json": "1bbd3b24c1586373a3e1ec4463bc4c10f8fbeb523c3d2fdd19c806e3f04e181a",
+        "replicate.json": "745b4d0f3e795ed2e6181a72c437f213f88076d11925d7cfb70326e3319e66a2",
+        "together.json": "afea97b589a6de3e2b7adc3077324f8bef4c2debeb454cf482fd49b87eaf7515",
     }
     actual = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()

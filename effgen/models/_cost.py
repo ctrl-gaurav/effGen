@@ -350,8 +350,40 @@ def pricing_status(provider: str, model: str) -> str:
     return "unpriced"
 
 
+def cache_rates(provider: str, model: str) -> tuple[float | None, float | None]:
+    """The cache read and write rates for *provider*/*model*, per 1M tokens.
+
+    ``None`` in either slot means the provider publishes no separate rate for
+    that half, in which case those tokens are billed at the ordinary input rate:
+    a discount is reported only where a provider states one, never assumed.
+
+    Args:
+        provider: The provider that served the call.
+        model: The model id the call used.
+
+    Returns:
+        ``(cached_read_per_1m, cache_write_per_1m)``.
+    """
+    try:
+        from effgen.models import _catalog as _cat
+
+        rec = _cat.lookup(model, provider.lower())
+    except Exception:  # pragma: no cover - catalog lookup is best-effort
+        logger.debug("Cache-rate lookup failed for %s/%s", provider, model, exc_info=True)
+        return (None, None)
+    if rec is None:
+        return (None, None)
+    return (rec.price_cached_in_per_1m, rec.price_cache_write_in_per_1m)
+
+
 def call_cost(
-    provider: str, model: str, prompt_tokens: int, completion_tokens: int
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    *,
+    cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> float | None:
     """Price one call, or return ``None`` when *model* has no published rate.
 
@@ -366,13 +398,24 @@ def call_cost(
     Args:
         provider: The provider that served the call.
         model: The model id the call used.
-        prompt_tokens: Input tokens the provider reported.
+        prompt_tokens: Input tokens the provider reported, cache reads and
+            writes included — they are prompt tokens, priced differently.
         completion_tokens: Output tokens the provider reported.
+        cached_tokens: How many of *prompt_tokens* came from the cache.
+        cache_write_tokens: How many of *prompt_tokens* were written to it.
     """
     if pricing_status(provider, model) == "unpriced":
         return None
     input_rate, output_rate = _rate(provider, model)
-    return (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
+    cost = completion_tokens * output_rate
+    cached_rate, write_rate = cache_rates(provider, model)
+    read = max(0, min(int(cached_tokens or 0), prompt_tokens))
+    written = max(0, min(int(cache_write_tokens or 0), prompt_tokens - read))
+    plain = prompt_tokens - read - written
+    cost += plain * input_rate
+    cost += read * (input_rate if cached_rate is None else cached_rate)
+    cost += written * (input_rate if write_rate is None else write_rate)
+    return cost / 1_000_000
 
 
 # Guard so the "no published price, so this spend is not counted" heads-up
@@ -539,6 +582,8 @@ class CostTracker:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cost_usd: float | None = None,
+        cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> float | None:
         """Record a completed API call and return the USD cost.
 
@@ -551,6 +596,12 @@ class CostTracker:
             output_tokens: Alias for ``completion_tokens`` used by some adapters.
             cost_usd: Optional precomputed USD cost override for providers that
                 do not bill by prompt/completion token price.
+            cached_tokens: How many of ``prompt_tokens`` the provider served
+                from its cache. Priced at the published cached rate where there
+                is one, and at the input rate where there is not.
+            cache_write_tokens: How many of ``prompt_tokens`` were written into
+                the cache, which the providers that report writes bill above
+                the input rate.
 
         Returns:
             USD cost for this call — ``0.0`` when the call really was free (a
@@ -572,7 +623,14 @@ class CostTracker:
         if cost_usd is not None:
             cost = float(cost_usd)
         else:
-            cost = call_cost(provider, model, prompt_tokens, completion_tokens)
+            cost = call_cost(
+                provider,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
+            )
 
         key = (provider.lower(), model)
         with self._lock:
