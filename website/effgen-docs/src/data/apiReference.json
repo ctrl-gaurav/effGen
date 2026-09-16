@@ -1888,6 +1888,14 @@
      "inherited_from": null
     },
     {
+     "name": "prompt_detail",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "`\"compact\"`: a model from this vendor reads a tool schema natively.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "reset_usage_stats",
      "kind": "method",
      "signature": "() -> None",
@@ -2158,6 +2166,14 @@
      "kind": "method",
      "signature": "() -> PromptCachePolicy | None",
      "summary": "What this provider's prompt cache needs, or `None` for no cache.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "prompt_detail",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "How much detail this model needs about a tool it is handed in prose.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5190,6 +5206,14 @@
      "kind": "method",
      "signature": "() -> PromptCachePolicy | None",
      "summary": "Gemini caches implicitly and says how much of the prompt it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "prompt_detail",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "`\"compact\"`: a model from this vendor reads a tool schema natively.",
      "is_async": false,
      "inherited_from": null
     },
@@ -8436,6 +8460,14 @@
      "kind": "method",
      "signature": "() -> PromptCachePolicy | None",
      "summary": "OpenAI matches the rendered prefix itself and reports what it reused.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "prompt_detail",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "`\"compact\"` for this vendor's own catalog, `None` for anything else.",
      "is_async": false,
      "inherited_from": null
     },
@@ -14220,7 +14252,7 @@
     {
      "name": "generate_react_prompt",
      "kind": "method",
-     "signature": "(task: str, scratchpad: str = '', conversation_history: str = '', system_prompt: str = 'You are a helpful AI assistant.', verbose: bool = True, closing_instruction: str = '', answer_shape: str = '', tool_contract: str = '') -> str",
+     "signature": "(task: str, scratchpad: str = '', conversation_history: str = '', system_prompt: str = 'You are a helpful AI assistant.', verbose: bool = True, closing_instruction: str = '', answer_shape: str = '', tool_contract: str = '', rules_already_stated: bool = False) -> str",
      "summary": "Generate a complete ReAct prompt with enhanced tool descriptions.",
      "is_async": false,
      "inherited_from": null
@@ -14228,7 +14260,7 @@
     {
      "name": "generate_tools_section",
      "kind": "method",
-     "signature": "(verbose: bool = True) -> str",
+     "signature": "(verbose: bool = True, rules: bool = True) -> str",
      "summary": "Generate the complete tools description section for the prompt.",
      "is_async": false,
      "inherited_from": null

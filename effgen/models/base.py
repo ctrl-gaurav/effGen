@@ -964,6 +964,35 @@ class BaseModel(ABC):
         """
         return None
 
+    def prompt_detail(self) -> str | None:
+        """How much detail this model needs about a tool it is handed in prose.
+
+        A tool described in a prompt can be stated two ways: in full — every
+        parameter with its type, whether it is required, its default and its
+        options, plus a worked call — or compactly, as the name, the sentence
+        the tool describes itself with, and one example. The full form is what a
+        model that has never been trained to read a tool schema needs in order
+        to get the arguments right; on a model that reads a schema natively it
+        is tokens spent on every request of every run to say something the model
+        already knows.
+
+        Which of the two a model wants is a fact about the model, so the adapter
+        that serves it is what answers. The default is ``None`` — "this adapter
+        has not said" — and a run that is told nothing states the tools in full,
+        which is the safe direction: a prompt that over-explains costs tokens,
+        while one that under-explains costs a malformed call and the turn that
+        repairs it. ``AgentConfig.verbose_tools`` overrides both.
+
+        Nothing here matches a model id against a list of names. An adapter that
+        serves one vendor's own catalog can answer for that catalog; one that
+        serves whatever endpoint the caller configured answers ``None`` and lets
+        the caller say.
+
+        Returns:
+            ``"compact"``, ``"full"``, or ``None`` when the adapter has not said.
+        """
+        return None
+
     def supports_suppressed_tool_call(self) -> bool:
         """Whether a turn can offer tools and still forbid a call.
 

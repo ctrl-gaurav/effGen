@@ -1574,6 +1574,20 @@ class OpenAIAdapter(FunctionCallingModel):
             reports_cached_tokens=True,
         )
 
+    def prompt_detail(self) -> str | None:
+        """``"compact"`` for this vendor's own catalog, ``None`` for anything else.
+
+        A model from the catalog this adapter ships reads a tool schema
+        natively, so the prose restatement of every parameter and a worked call
+        buy it nothing and cost tokens on every request. A custom ``base_url``
+        is some other server — a local engine, a gateway, another vendor's
+        OpenAI-compatible endpoint — and this adapter knows nothing about what
+        it serves, so it says nothing and the caller decides.
+        """
+        if self._catalog_backed and not self.base_url:
+            return "compact"
+        return None
+
     def supports_suppressed_tool_call(self) -> bool:
         """True when tools are offered: ``tool_choice="none"`` is honoured here.
 

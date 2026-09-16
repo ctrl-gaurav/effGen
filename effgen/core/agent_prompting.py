@@ -1,7 +1,7 @@
 """Prompt and context assembly for :class:`effgen.core.agent.Agent`.
 
 Builds the pieces of text a request is assembled from: the system prompt, the
-tool descriptions whose verbosity follows the model's size, the recent
+tool descriptions stated at the width the model declares it needs, the recent
 conversation history, and the Anthropic prompt-caching wrappers for the system
 prompt and the tool specs. Mixed into :class:`Agent`; this module imports
 nothing from ``agent.py``.
@@ -9,12 +9,15 @@ nothing from ``agent.py``.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 from ..memory.short_term import MessageRole
 
 if TYPE_CHECKING:
     from .thread import TurnStep
+
+logger = logging.getLogger(__name__)
 
 
 class AgentPromptingMixin:
@@ -105,23 +108,38 @@ Question: {task}
         )
 
     def _auto_detect_verbose(self) -> bool:
-        """Auto-detect whether to use verbose tool descriptions based on model size."""
-        name = (self.model_name or "").lower()
-        # Check for known small models (< 3B) -> full verbose with examples
-        # Check for medium models (3B-7B) -> verbose without examples
-        # Check for large models (> 7B) or API models -> compact
-        for indicator in ["0.5b", "1b", "1.5b", "2b"]:
-            if indicator in name:
-                return True
-        for indicator in ["3b", "4b", "5b", "7b"]:
-            if indicator in name:
-                return True
-        # API models
-        for indicator in ["gpt", "claude", "gemini"]:
-            if indicator in name:
-                return False
-        # Default: verbose (safe for SLMs)
-        return True
+        """How fully this agent states a tool in prose, when nobody has said.
+
+        Read from the model's own declaration
+        (:meth:`~effgen.models.base.BaseModel.prompt_detail`), never from the
+        model's name. An adapter that serves one vendor's catalog can say that
+        its models read a tool schema natively and need no prose restatement of
+        it; an adapter pointed at whatever endpoint the caller configured says
+        nothing, and a model that says nothing is stated in full — the safe
+        direction, because a prompt that over-explains costs tokens while one
+        that under-explains costs a malformed call and the turn that repairs it.
+
+        Returns:
+            bool: True to state every parameter and a worked call.
+        """
+        detail = None
+        # Read through ``getattr`` the way the runtime mixin reads every other
+        # capability: this class is mixed into the agent and does not own the
+        # attribute, and a model that predates the declaration has no such
+        # method at all.
+        probe = getattr(getattr(self, "model", None), "prompt_detail", None)
+        if callable(probe):
+            try:
+                detail = probe()
+            except Exception:  # noqa: BLE001 - a capability probe never breaks a run
+                logger.debug("prompt_detail probe failed", exc_info=True)
+                detail = None
+        verbose = detail != "compact"
+        logger.info(
+            "[prompt] tool descriptions stated %s (model declared %s)",
+            "in full" if verbose else "compactly", detail or "nothing",
+        )
+        return verbose
 
     def _get_tools_description(self, verbose: bool | None = None) -> str:
         """

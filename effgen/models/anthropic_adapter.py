@@ -1429,6 +1429,15 @@ class AnthropicAdapter(FunctionCallingModel):
 
     # ── Context / usage ───────────────────────────────────────────────────
 
+    def prompt_detail(self) -> str | None:
+        """``"compact"``: a model from this vendor reads a tool schema natively.
+
+        Restating every parameter in prose, with a worked call, is what a model
+        that has not been trained on tool schemas needs; here it is tokens spent
+        on every request of every run. ``AgentConfig.verbose_tools`` still wins.
+        """
+        return "compact"
+
     def prompt_cache_policy(self) -> PromptCachePolicy | None:
         """Anthropic caches what the request marks, and reports both halves.
 

@@ -162,6 +162,10 @@ class LazyModel(BaseModel):
         """Delegate to the wrapped model."""
         return self._inner.prompt_cache_policy()
 
+    def prompt_detail(self) -> str | None:
+        """Delegate to the wrapped model."""
+        return self._inner.prompt_detail()
+
     def get_metadata(self) -> dict[str, Any]:
         """Delegate to the wrapped model."""
         return self._inner.get_metadata()

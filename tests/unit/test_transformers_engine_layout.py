@@ -155,6 +155,12 @@ STATIC_METHODS = ("_free_vram_gb", "_is_cuda_device_side_assert")
 #: 2026-09-15, also on ``BaseModel``, so a run can ask an adapter what its
 #: provider's prompt cache needs instead of deciding from a provider name. This
 #: engine inherits both and declines both.
+#:
+#: ``prompt_detail`` was added on 2026-09-16, also on ``BaseModel``, so how
+#: fully a tool is described in a prompt comes from what the adapter serving
+#: the model declares rather than from substrings of the model's name. This
+#: engine inherits it and declares nothing, so a local model is described in
+#: full exactly as it was.
 ENGINE_MEMBERS = (
     "_HF_GEN_PARAMS",
     "_abc_impl",
@@ -192,6 +198,7 @@ ENGINE_MEMBERS = (
     "is_loaded",
     "load",
     "prompt_cache_policy",
+    "prompt_detail",
     "reset_cost",
     "streams_tool_calls",
     # Inherited from BaseModel, which answers False: the local engine has no
