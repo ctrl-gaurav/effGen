@@ -65,6 +65,16 @@ _RAW_INPUT_KEY = "__raw_input__"
 #: Observation length kept by ``to_messages(summary=True)``.
 _SUMMARY_OBSERVATION_CHARS = 200
 
+#: What a tool result the request already carries once is rendered as the
+#: second and every later time it appears. A run that calls the same tool with
+#: the same arguments gets the same bytes back, and every turn after that pays
+#: for a copy of them the model has already read.
+_REPEATED_OBSERVATION_NOTE = "(the same result as the identical call above)"
+
+#: A result shorter than the sentence that would replace it is left alone —
+#: collapsing it would make the request longer, not shorter.
+_REPEAT_COLLAPSE_CHARS = len(_REPEATED_OBSERVATION_NOTE) + 40
+
 #: A thought shorter than this is bookkeeping, not an answer worth returning.
 _SUBSTANTIVE_THOUGHT_CHARS = 20
 
@@ -735,6 +745,13 @@ class AgentThread:
     steps: list[Step] = field(default_factory=list)
     version: int = THREAD_SCHEMA_VERSION
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Whether this thread has already reported collapsing a repeated result.
+    #: A turn's request is rebuilt several times — once per round of
+    #: compaction — so the line is written once per thread, not once per
+    #: rendering. Not part of the thread's state and never serialised.
+    _repeat_reported: bool = field(
+        default=False, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self._settle_call_ids(0)
@@ -769,14 +786,102 @@ class AgentThread:
     # Rendering
     # ------------------------------------------------------------------
 
+    def _call_signatures(self) -> dict[str, str]:
+        """What each call id asked for, keyed by that id.
+
+        A result is only "the same result as the identical call above" when the
+        call really was identical, so the tool and its arguments are what a
+        repeat is recognised by — not the answer alone. Two different questions
+        that happen to come back with the same sentence are two answers, and
+        both are sent.
+
+        Returns:
+            The tool and arguments of each call, by the id results answer it
+            under.
+        """
+        signatures: dict[str, str] = {}
+        for step in self.steps:
+            if isinstance(step, ActionStep) and step.call_id:
+                signatures[step.call_id] = json.dumps(
+                    [step.tool, step.arguments], sort_keys=True, default=str
+                )
+        return signatures
+
+    def _observation_renderings(self) -> dict[int, str]:
+        """What each observation renders as, by its position in the thread.
+
+        A result the thread already carries, from a call with the same tool and
+        the same arguments, renders as a line saying so. Nothing is lost: the
+        bytes are still in the request, above, under the call that first
+        produced them — so the model reads the result once instead of once per
+        repeat, and a run that calls the same tool with the same arguments four
+        times stops paying for four copies of the answer on every turn after
+        the first.
+
+        Only a result long enough to be worth replacing is collapsed, and only
+        from its second appearance on, and only where the call that produced it
+        is known and identical. The step itself is untouched: what is stored,
+        checkpointed and read back is always the whole reply.
+
+        Returns:
+            The text to render, keyed by the step's index.
+        """
+        signatures = self._call_signatures()
+        seen: set[tuple[str, str]] = set()
+        renderings: dict[int, str] = {}
+        collapsed = 0
+        saved = 0
+        for index, step in enumerate(self.steps):
+            if not isinstance(step, ObservationStep):
+                continue
+            text = step.text
+            signature = signatures.get(step.call_id or "")
+            key = (signature or "", text.strip())
+            if (
+                signature
+                and key[1]
+                and key in seen
+                and len(text) > _REPEAT_COLLAPSE_CHARS
+            ):
+                renderings[index] = _REPEATED_OBSERVATION_NOTE
+                collapsed += 1
+                saved += len(text) - len(_REPEATED_OBSERVATION_NOTE)
+                continue
+            if signature and key[1]:
+                seen.add(key)
+            renderings[index] = text
+        if collapsed and not self._repeat_reported:
+            self._repeat_reported = True
+            logger.info(
+                "[prompt] a repeated tool result is sent once: %d repeat(s), "
+                "%d characters not sent again",
+                collapsed, saved,
+            )
+        return renderings
+
     def to_text(self) -> str:
         """The flat transcript: every step's text, concatenated and nothing else.
+
+        A tool result the transcript already carries, byte for byte, is written
+        as a line saying so rather than a second full copy
+        (:meth:`_observation_renderings`).
 
         Returns:
             The transcript string, which a prompt template receives as its
             ``{scratchpad}`` field.
         """
-        return "".join(step.to_text() for step in self.steps)
+        renderings = self._observation_renderings()
+        return "".join(
+            ObservationStep(
+                text=renderings[index],
+                call_id=step.call_id,
+                is_error=step.is_error,
+            ).to_text()
+            if isinstance(step, ObservationStep)
+            and renderings.get(index) != step.text
+            else step.to_text()
+            for index, step in enumerate(self.steps)
+        )
 
     def to_messages(self, *, summary: bool = False) -> list[Message]:
         """The conversation as provider messages.
@@ -798,6 +903,7 @@ class AgentThread:
             The messages, in order, with the system message first.
         """
         call_ids = self._call_ids()
+        renderings = self._observation_renderings()
         system_text = self.system_text()
         messages: list[Message] = []
         if system_text:
@@ -830,7 +936,7 @@ class AgentThread:
                 messages.append(Message(role=Role.ASSISTANT, content=content))
                 continue
             if isinstance(step, ObservationStep):
-                text = step.text
+                text = renderings.get(index, step.text)
                 if summary and len(text) > _SUMMARY_OBSERVATION_CHARS:
                     text = text[:_SUMMARY_OBSERVATION_CHARS] + "…"
                 messages.append(
