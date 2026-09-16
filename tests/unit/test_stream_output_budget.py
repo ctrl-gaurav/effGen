@@ -20,6 +20,35 @@ class _Model:
     """A model with no opinion, so the fallback is the module default."""
 
 
+class _StubAgent:
+    """The least an agent has to declare for its turn to be resolved."""
+
+    model = _Model()
+
+    class _Strategy:
+        name = "react"
+
+    _tool_calling_strategy = _Strategy()
+
+    class config:
+        temperature = 0.2
+        max_tokens = 333
+        top_p = 0.31
+        top_k = 17
+        seed = 4242
+        presence_penalty = 0.5
+        frequency_penalty = 0.25
+        repetition_penalty = 1.15
+        system_prompt_template = None
+        answer_style = None
+
+    def _interleaves_reasoning(self, model):
+        return False
+
+    def _effective_output_schema(self):
+        return None
+
+
 class TestPrecedence:
     def test_a_per_call_value_wins(self):
         assert resolve_output_budget(333, 777, _Model()) == 333
@@ -36,6 +65,38 @@ class TestPrecedence:
     def test_a_configured_zero_is_honoured_not_treated_as_unset(self):
         """`0` is a value; only `None` means "not set"."""
         assert resolve_output_budget(None, 0, _Model()) == 0
+
+    def test_a_declared_schema_bounds_the_budget_below_the_constant(self):
+        """A run that asked for one integer stops asking for a report."""
+        one_integer = {"type": "object", "properties": {"n": {"type": "integer"}}}
+        assert resolve_output_budget(None, None, _Model(),
+                                     output_schema=one_integer) == 256
+
+    def test_a_bigger_declared_schema_asks_for_more(self):
+        wide = {"type": "object", "properties": {
+            "summary": {"type": "string"},
+            "items": {"type": "array", "items": {"type": "string"}},
+        }}
+        assert resolve_output_budget(None, None, _Model(), output_schema=wide) > 1024
+
+    def test_a_pinned_value_still_wins_over_a_declared_schema(self):
+        one_integer = {"type": "object", "properties": {"n": {"type": "integer"}}}
+        assert resolve_output_budget(9, None, _Model(),
+                                     output_schema=one_integer) == 9
+        assert resolve_output_budget(None, 9, _Model(),
+                                     output_schema=one_integer) == 9
+
+    def test_a_reasoning_model_is_never_budgeted_below_its_floor(self):
+        """The schema bound may not starve a model that reasons before it answers."""
+        from effgen.models._adapter_utils import REASONING_OUTPUT_FLOOR
+
+        class _Reasons(_Model):
+            _is_reasoning_model = True
+
+        one_integer = {"type": "object", "properties": {"n": {"type": "integer"}}}
+        assert resolve_output_budget(
+            None, None, _Reasons(), output_schema=one_integer
+        ) == REASONING_OUTPUT_FLOOR
 
 
 class TestEveryPathUsesIt:
@@ -70,22 +131,6 @@ class TestEveryPathUsesIt:
         """The same agent, both entry points, one number."""
         from effgen.core.agent_loop import resolve_turn_config
 
-        class _Agent:
-            model = _Model()
-
-            class config:
-                temperature = 0.2
-                max_tokens = 333
-                top_p = 0.31
-                top_k = 17
-                seed = 4242
-                presence_penalty = 0.5
-                frequency_penalty = 0.25
-                repetition_penalty = 1.15
-
-            def _interleaves_reasoning(self, model):
-                return False
-
-        cfg, _ = resolve_turn_config(_Agent(), {})
+        cfg, _ = resolve_turn_config(_StubAgent(), {})
         assert cfg.max_tokens == 333
         assert cfg.top_p == 0.31 and cfg.seed == 4242 and cfg.top_k == 17

@@ -191,13 +191,23 @@ class TestAStreamStatesTheDeclaredShapeToo:
         assert SCHEMA_MARK in model.prompts[0]
         assert model.prompts[0].rstrip().endswith("Answer:")
 
-    def test_a_stream_without_a_schema_is_unchanged(self):
+    def test_a_stream_without_a_schema_states_no_shape(self):
+        """No schema, so nothing about the answer's *shape* is stated.
+
+        The framework does state one sentence about the answer's *length* — the
+        run's answer style — and switching it off gives back the prompt this
+        path sent before there was one.
+        """
         model = _Scripted(["A"])
-        "".join(_agent(model, []).stream("What powers food webs?"))
+        "".join(_agent(model, [], answer_style="").stream("What powers food webs?"))
         assert model.prompts[0] == (
             "Answer this question directly and concisely:\n\n"
             "What powers food webs?\n\nAnswer:"
         )
+        styled = _Scripted(["A"])
+        "".join(_agent(styled, []).stream("What powers food webs?"))
+        assert SCHEMA_MARK not in styled.prompts[0]
+        assert styled.prompts[0].rstrip().endswith("Answer:")
 
 
 class TestBlockingAndNativeStreamAgree:
@@ -219,7 +229,11 @@ class TestBlockingAndNativeStreamAgree:
             TASK, "Previous steps: ...", "", actions,
         )
         assert blocking
-        assert streamed.endswith(blocking)
+        # The close is the last thing the framework says about the tools; only
+        # the run's answer style follows it, and nothing else may.
+        assert blocking in streamed
+        after = streamed[streamed.index(blocking) + len(blocking):].strip()
+        assert after == agent._answer_style_line()
 
     def test_a_schema_reaches_the_streamed_close_too(self):
         tools = [_retrieval_tool()]
@@ -229,7 +243,9 @@ class TestBlockingAndNativeStreamAgree:
             TASK, "Previous steps: ...", "", [("knowledge_search", "{}")],
         )
         assert SCHEMA_MARK in streamed
-        assert streamed.index(SCHEMA_MARK) < streamed.index("source material")
+        # "The passages above" is the close; the contract that leads the prompt
+        # says "source material" too, so the close is found by its own opening.
+        assert streamed.index(SCHEMA_MARK) < streamed.index("The passages above")
 
 
 class TestBlockingAndTextStreamAgree:
@@ -293,8 +309,13 @@ class TestTheChangeReachesNoOtherShape:
          "Thought: done.\nFinal Answer: 42"],
     ])
     def test_a_calculator_run_says_nothing_about_form(self, turns):
+        """The retrieval close reaches no run that did not retrieve anything.
+
+        The run's answer style is switched off here so what is left is only
+        what the *tools* caused the framework to say.
+        """
         model = _Scripted(turns)
-        _agent(model, [Calculator()]).run("What is 6*7?")
+        _agent(model, [Calculator()], answer_style="").run("What is 6*7?")
         joined = "\n".join(model.prompts)
         assert "source material" not in joined
         assert "matching this schema" not in joined

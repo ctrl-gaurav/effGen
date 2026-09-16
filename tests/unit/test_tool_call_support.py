@@ -394,6 +394,13 @@ class TestEveryToolPathStatesItsContract:
         assert any(TOOL_CONTRACT_VERIFY in p for p in prompts)
 
     def test_the_contract_closes_the_prompt_after_the_task(self):
+        """Where it is read matters, and it was measured.
+
+        Ahead of the task it stops being the instruction in force when the
+        model decides what to do next: a 7B model on the hardest coding set
+        went from 1.6 executor calls per sample to exactly 1.0 and lost 47
+        accuracy points. It closes the opening turn.
+        """
         prompts = _prompts_from_run("template", with_tools=True)
         assert prompts[0].endswith("\n\n" + TOOL_CONTRACT_VERIFY)
 

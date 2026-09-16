@@ -142,11 +142,13 @@ def test_the_thread_renders_the_transcript_the_prompt_carried():
 
     assert transcript.startswith("\nThought: compute it.")
     assert "\nObservation: 36" in transcript
-    # The frame is unchanged: the prompt still ends with the transcript as it
+    # The frame is unchanged: the prompt still carries the transcript as it
     # stood when that turn was assembled, and the transcript is exactly what the
-    # steps render.
+    # steps render. Only the run's answer style is read after it.
     assembled = "".join(step.to_text() for step in thread.steps[:-2])
-    assert second_prompt.endswith(assembled)
+    assert assembled in second_prompt
+    after = second_prompt[second_prompt.index(assembled) + len(assembled):]
+    assert agent._answer_style_line() in after
 
 
 def test_a_stopped_run_carries_its_thread_and_why_it_stopped():

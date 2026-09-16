@@ -237,7 +237,14 @@ class TestTheContractReachesEveryPath:
         )
 
     def test_the_native_path_states_it_on_the_opening_turn_only(self):
-        """Later turns close with an instruction of their own to follow."""
+        """Later turns close with an instruction of their own to follow.
+
+        Repeating it every turn, ahead of the task, was tried and measured: it
+        puts "finish by stating the final answer" at the top of a request whose
+        point is to keep going, and a 7B model on the hardest coding set then
+        ran its executor once, took the first result and answered — 47 accuracy
+        points worse.
+        """
         model = _NativeApi([CALL_TURN, ANSWER])
         agent = Agent(config=AgentConfig(
             name="contract", model=model, tools=[CALC()],
@@ -247,6 +254,7 @@ class TestTheContractReachesEveryPath:
         continued = agent._native_tool_prompt(
             "6*7", "Observation: 42", "", [("calculator", "{}")])
         assert TOOL_CONTRACT_VERIFY in blocking
+        assert blocking.index("6*7") < blocking.index(TOOL_CONTRACT_VERIFY)
         assert TOOL_CONTRACT_VERIFY not in continued
 
     def test_the_react_path_states_it_on_every_turn(self):
@@ -284,6 +292,15 @@ class TestTheCallerWins:
 
     def test_an_empty_contract_states_nothing(self):
         prompts = _prompts([CALC()], tool_contract="")
+        assert not any(
+            text in prompts[0]
+            for text in (TOOL_CONTRACT_VERIFY, TOOL_CONTRACT_GENERAL,
+                         TOOL_CONTRACT_EXECUTE, TOOL_CONTRACT_LOOKUP)
+        )
+
+    def test_silencing_both_framework_lines_leaves_the_task_alone(self):
+        """Every sentence the framework adds is one a caller can switch off."""
+        prompts = _prompts([CALC()], tool_contract="", answer_style="")
         assert prompts[0] == "What is 6*7?"
 
     def test_a_caller_owned_template_gets_no_contract(self):

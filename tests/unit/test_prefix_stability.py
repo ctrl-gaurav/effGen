@@ -219,6 +219,11 @@ def test_the_withdrawal_turn_keeps_the_tools_and_the_shape():
 
     kept_share = _withdrawal_pair_prefix(kept)
     rebuilt_share = _withdrawal_pair_prefix(rebuilt)
+    # A share of the request, so it moves when the request's own length moves:
+    # the framework's standing prose is shorter than it was, which makes the
+    # same stable opening a smaller fraction of a smaller prompt. It is still
+    # comfortably above the floor — 0.7479 before that prose was shortened and
+    # 0.7266 after — so the floor stays where it was set.
     assert kept_share >= 0.70, kept_share
     assert kept_share > rebuilt_share * 5, (kept_share, rebuilt_share)
 
