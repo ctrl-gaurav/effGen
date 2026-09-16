@@ -727,6 +727,12 @@ class SubAgentManager:
             context_budget=getattr(parent_cfg, "context_budget", "auto"),
             compaction=getattr(parent_cfg, "compaction", None),
             max_context_length=getattr(parent_cfg, "max_context_length", None),
+            # And the form the parent asked its answers to take. A caller who
+            # asked for the answer and nothing else asked it of the run, not of
+            # the one agent object they happened to hold: a child that states
+            # nothing answers at a different length from its parent for no
+            # reason the caller can see.
+            answer_style=getattr(parent_cfg, "answer_style", None),
         )
         child = Agent(child_cfg)
         parent_name = str(getattr(parent, "name", "") or "") or None
