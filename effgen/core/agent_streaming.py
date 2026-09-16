@@ -131,7 +131,9 @@ class AgentStreamingMixin:
         # Otherwise a custom persona (e.g. an `effgen chat --persona` tutor) is
         # silently ignored on the tool-free streaming path that chat uses.
         conversation_history = self._format_conversation_history()
-        prompt = self._direct_prompt(task, conversation_history)
+        prompt = self._direct_prompt(
+            task, conversation_history, answer_style=kwargs.get("answer_style"),
+        )
 
         # The same nine settings ``run()`` resolves, from the same place: a
         # value pinned on the call, then one configured on the agent, then the

@@ -607,13 +607,16 @@ def _native_json_call(
     validated JSON; otherwise it is ``None`` and ``raw_text``/``error`` carry the
     last model text and the reason, so the caller can fall back.
     """
-    from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig
+    from .agent_runtime import resolve_output_budget
 
     name = type(model).__name__
     config = GenerationConfig(
         temperature=gen_kwargs.get("temperature", 0.2),
-        max_tokens=gen_kwargs.get("max_tokens", default_max_output_tokens(model, base=2048)),
+        max_tokens=resolve_output_budget(
+            gen_kwargs.get("max_tokens"), None, model,
+            output_schema=schema, default_base=2048,
+        ),
     )
     enhanced = _schema_prompt(prompt, schema)
     text: str | None = None
@@ -681,8 +684,8 @@ def _reprompt_once(
     Returns ``(json_str, parsed, raw_text, error)`` — ``json_str`` is non-None only
     when the produced JSON validates against *schema*.
     """
-    from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig
+    from .agent_runtime import resolve_output_budget
 
     if attempt == 0:
         enhanced_prompt = (
@@ -703,7 +706,10 @@ def _reprompt_once(
 
     config = GenerationConfig(
         temperature=max(0.1, gen_kwargs.get("temperature", 0.3) - (attempt * 0.1)),
-        max_tokens=gen_kwargs.get("max_tokens", default_max_output_tokens(model, base=2048)),
+        max_tokens=resolve_output_budget(
+            gen_kwargs.get("max_tokens"), None, model,
+            output_schema=schema, default_base=2048,
+        ),
     )
 
     try:

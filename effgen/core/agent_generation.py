@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..errors import quote_for_message
@@ -138,7 +139,10 @@ _obs_log = _get_obs_logger(__name__)
 
 from .agent import AgentMode, AgentResponse  # noqa: E402
 from .agent_runtime import (  # noqa: E402
+    RESOLVED_CONFIG_KWARG,
+    RESOLVED_STOPS_KWARG,
     _infer_provider_from_model,
+    declared_output_schema,
     resolve_output_budget,
     sanitize_final_answer,
 )
@@ -345,9 +349,18 @@ class AgentGenerationMixin:
         Every retry and every failover hop is one call as far as the hooks are
         concerned, because each is a separate request to a provider.
         """
+        # The loop's already-resolved settings are the framework's own
+        # bookkeeping, not generation options a hook should be handed: they are
+        # taken out here so ``ctx.kwargs`` is the caller's arguments and nothing
+        # else, exactly as it was before the loop passed anything down.
+        resolved = {
+            name: kwargs.pop(name)
+            for name in (RESOLVED_CONFIG_KWARG, RESOLVED_STOPS_KWARG)
+            if name in kwargs
+        }
         chain = self._middleware_chain()
         if not chain:
-            return self._generate_instrumented(prompt, **kwargs)
+            return self._generate_instrumented(prompt, **resolved, **kwargs)
 
         from .middleware import ModelCallContext
 
@@ -361,11 +374,18 @@ class AgentGenerationMixin:
         if short_circuit is not None:
             answered: dict[str, Any] = chain.after_model_call(ctx, short_circuit)
             return answered
-        result = self._generate_instrumented(ctx.prompt, **ctx.kwargs)
+        result = self._generate_instrumented(ctx.prompt, **resolved, **ctx.kwargs)
         final: dict[str, Any] = chain.after_model_call(ctx, result)
         return final
 
-    def _generate_instrumented(self, prompt: Any, **kwargs) -> dict[str, Any]:
+    def _generate_instrumented(
+        self,
+        prompt: Any,
+        *,
+        _resolved_config: GenerationConfig | None = None,
+        _resolved_stop_sequences: tuple[str, ...] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Generate response from model with retry logic for empty responses.
 
@@ -382,6 +402,19 @@ class AgentGenerationMixin:
         Args:
             prompt: Input prompt. May be a plain string or a structured
                 multimodal Message/list of Messages accepted by API adapters.
+            _resolved_config: The settings the reasoning loop already resolved
+                for this turn. The first attempt starts from them rather than
+                rebuilding a second configuration out of keyword arguments, so
+                every field the caller pinned — ``reasoning_effort`` among them,
+                which keyword arguments never carried here — reaches ``run()``
+                and ``run_async()`` exactly as it reaches ``stream()``. The
+                retry's temperature escalation, the truncation escalation and
+                the per-model budget still apply on top of it. ``None`` on a
+                direct call that never went through the loop, which resolves
+                everything here as it always did.
+            _resolved_stop_sequences: The stop sequences the loop resolved for
+                this turn, before the decision about whether they are sent or
+                applied locally — that decision is made per failover model here.
             **kwargs: Generation parameters (temperature, max_tokens, etc.)
 
         Returns:
@@ -390,6 +423,8 @@ class AgentGenerationMixin:
         Raises:
             RuntimeError: If no model is loaded
         """
+        resolved_config = _resolved_config
+        resolved_stops = _resolved_stop_sequences
         if self.model is None and not self._all_models:
             raise RuntimeError(
                 f"Agent '{self.name}' has no model loaded. "
@@ -426,12 +461,29 @@ class AgentGenerationMixin:
         backoff_delays = [0.5, 1.0, 2.0]
         base_temperature = kwargs.get('temperature', self.config.temperature)
 
-        default_stop_sequences = [
-            "\nObservation:",
-            "\nQuestion:",
-            "\nHuman:",
-            "\nUser:",
-        ]
+        # What the framework asks for when the caller asked for nothing. The
+        # loop resolves it from the frame this turn is written in and hands it
+        # over; a direct call that never went through the loop resolves the same
+        # thing from this agent's own frame. Either way the four ReAct labels go
+        # out with the prompts that write them and with nothing else -- sending
+        # them to a model that was never shown the scaffold cuts any answer
+        # containing a line that begins "Question:".
+        from .agent_loop import frame_for, framework_stop_sequences
+
+        if resolved_stops is not None:
+            default_stop_sequences = list(resolved_stops)
+        else:
+            # A direct call the loop never resolved. It says which frame chose
+            # its stop sequences for the same reason the loop does: a request
+            # that carries the labels and a request that does not are two
+            # different requests, and which one went out is not otherwise
+            # readable from a log.
+            own_frame = frame_for(self)
+            default_stop_sequences = list(framework_stop_sequences(own_frame))
+            logger.info(
+                "[stop] stop sequences for frame=%s: the framework sends %d",
+                own_frame, len(default_stop_sequences),
+            )
 
         last_error = None
         deterministic_detail: dict[str, Any] | None = None
@@ -455,12 +507,16 @@ class AgentGenerationMixin:
             if current_model is None:
                 continue
 
-            # Model-aware default budget: reasoning families (gpt-5*, o-series)
-            # burn output budget on hidden reasoning, so 1024 can leave zero
-            # visible tokens. Give them room unless the caller pinned a value.
-            current_max_tokens = (
-                kwargs["max_tokens"] if user_pinned_max_tokens
-                else default_max_output_tokens(current_model)
+            # The budget for this model, through the one resolver every path
+            # uses: a value the caller pinned, then the shape the run declared,
+            # then the model's own default — and never below the reasoning floor
+            # for a model that declares it reasons, which is what stops a budget
+            # chosen from a declared shape returning an empty, billed answer.
+            current_max_tokens = resolve_output_budget(
+                kwargs.get("max_tokens"),
+                self.config.max_tokens,
+                current_model,
+                output_schema=declared_output_schema(self),
             )
 
             # A bare string is the shape the OpenAI API accepts, so a caller
@@ -468,9 +524,13 @@ class AgentGenerationMixin:
             # well as in GenerationConfig, because the local-trim list below is
             # built from this value directly and ``list("END")`` is three
             # single-character sequences.
+            # ``or None`` matters: a frame that writes no labels resolves to an
+            # empty list, and an empty list and ``None`` are two different
+            # requests on the wire. The streamed turn already sends ``None``, so
+            # the blocking turn sends it too and the two are identical.
             requested_stop_sequences = normalize_stop_sequences(
                 kwargs.get('stop_sequences', default_stop_sequences)
-            )
+            ) or None
             # A model that streams its reasoning chain and its answer through one
             # token stream matches stop sequences against the chain as well, so
             # sending them can end generation before the first visible token.
@@ -485,19 +545,33 @@ class AgentGenerationMixin:
                     # Slightly increase temperature on retries to get different output
                     retry_temperature = min(base_temperature + (attempt * 0.1), 1.0)
 
-                    gen_config = GenerationConfig(
-                        temperature=retry_temperature,
-                        max_tokens=current_max_tokens,
-                        top_p=kwargs.get('top_p', self.config.top_p),
-                        top_k=kwargs.get('top_k', self.config.top_k),
-                        seed=kwargs.get('seed', self.config.seed),
-                        presence_penalty=kwargs.get('presence_penalty', self.config.presence_penalty),
-                        frequency_penalty=kwargs.get('frequency_penalty', self.config.frequency_penalty),
-                        repetition_penalty=kwargs.get('repetition_penalty', self.config.repetition_penalty),
-                        stop_sequences=(
-                            None if local_stop_sequences else requested_stop_sequences
-                        ),
+                    attempt_stops = (
+                        None if local_stop_sequences else requested_stop_sequences
                     )
+                    if resolved_config is not None:
+                        # One contract for the turn: start from what the run
+                        # resolved and change only what this attempt and this
+                        # model decide — the escalating temperature, this
+                        # model's budget, and where its stop sequences go.
+                        gen_config = replace(
+                            resolved_config,
+                            temperature=retry_temperature,
+                            max_tokens=current_max_tokens,
+                            stop_sequences=attempt_stops,
+                        )
+                    else:
+                        gen_config = GenerationConfig(
+                            temperature=retry_temperature,
+                            max_tokens=current_max_tokens,
+                            top_p=kwargs.get('top_p', self.config.top_p),
+                            top_k=kwargs.get('top_k', self.config.top_k),
+                            seed=kwargs.get('seed', self.config.seed),
+                            presence_penalty=kwargs.get('presence_penalty', self.config.presence_penalty),
+                            frequency_penalty=kwargs.get('frequency_penalty', self.config.frequency_penalty),
+                            repetition_penalty=kwargs.get('repetition_penalty', self.config.repetition_penalty),
+                            reasoning_effort=kwargs.get('reasoning_effort'),
+                            stop_sequences=attempt_stops,
+                        )
 
                     # Generation parameters that travel beside GenerationConfig
                     # (the tool definitions, and whether a call is required).
@@ -1158,13 +1232,16 @@ class AgentGenerationMixin:
         models_to_run = self._all_models[:2]
         base_temperature = kwargs.get('temperature', self.config.temperature)
 
-        default_stop_sequences = [
-            "\nObservation:", "\nQuestion:", "\nHuman:", "\nUser:",
-        ]
+        from .agent_loop import frame_for, framework_stop_sequences
+
+        default_stop_sequences = list(framework_stop_sequences(frame_for(self)))
 
         gen_config = GenerationConfig(
             temperature=base_temperature,
-            max_tokens=kwargs.get('max_tokens', default_max_output_tokens(self.model)),
+            max_tokens=resolve_output_budget(
+                kwargs.get('max_tokens'), self.config.max_tokens, self.model,
+                output_schema=declared_output_schema(self),
+            ),
             top_p=kwargs.get('top_p', self.config.top_p),
             top_k=kwargs.get('top_k', self.config.top_k),
             seed=kwargs.get('seed', self.config.seed),
@@ -1259,7 +1336,10 @@ class AgentGenerationMixin:
             conversation_history = (
                 AgentThread(steps=list(earlier)).history_text() if earlier else ""
             )
-            prompt = self._direct_prompt(task, conversation_history)
+            prompt = self._direct_prompt(
+                task, conversation_history,
+                answer_style=kwargs.get("answer_style"),
+            )
 
         # The run's conversation, so a tool-free run answers the same questions
         # a looping one does: what it was framed by, what it was asked, and what

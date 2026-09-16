@@ -40,7 +40,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..models._adapter_utils import apply_stop_sequences, normalize_stop_sequences
@@ -77,8 +77,11 @@ from .agent_runtime import (
     NUDGE_SEARCH_AGAIN,
     PROTOCOL_REFUSED,
     PROTOCOL_SPLIT,
+    RESOLVED_CONFIG_KWARG,
+    RESOLVED_STOPS_KWARG,
     _count_tool_parts,
     _infer_provider_from_model,
+    declared_output_schema,
     find_written_tool_call,
     model_can_forbid_tool_call,
     model_can_require_tool_call,
@@ -134,6 +137,29 @@ DEFAULT_STOP_SEQUENCES = (
     "\nUser:",
 )
 
+#: The frames whose prompts actually write the four labels above. Only a turn
+#: written in one of them is sent them: they exist to stop a model carrying on
+#: past its own answer and writing the next step of a scaffold it was shown, and
+#: a turn that was never shown that scaffold has nothing for them to match. On
+#: every other turn they are a live hazard rather than a no-op — ``"\nQuestion:"``
+#: cuts any answer with a line beginning "Question:", which is how a long-form
+#: answer that quotes the question it was asked came back truncated.
+FRAMES_THAT_WRITE_REACT_LABELS = ("react_text", "custom_template")
+
+def framework_stop_sequences(frame: str) -> tuple[str, ...]:
+    """The stop sequences the framework sends for a turn written in *frame*.
+
+    Read from the frame in use and from nothing else — never from a model id,
+    never from the task. A caller's own ``stop_sequences`` is separate and is
+    always sent; this is only what the framework asks for when the caller asked
+    for nothing.
+    """
+    return (
+        DEFAULT_STOP_SEQUENCES
+        if frame in FRAMES_THAT_WRITE_REACT_LABELS
+        else ()
+    )
+
 
 @dataclass(frozen=True)
 class _LoopPolicy:
@@ -150,9 +176,10 @@ class _LoopPolicy:
     #: ``supports_tool_calling()`` and whether the caller supplied a template.
     frame: str
     max_iterations: int
-    #: The sampling settings for one turn, resolved once. The blocking emitter
-    #: does not read it — ``_generate`` rebuilds the identical configuration for
-    #: its first attempt, which is what keeps ``run()`` byte-for-byte unchanged.
+    #: The sampling settings for one turn, resolved once. Both emitters send
+    #: it: the blocking turn hands it to the generation layer, which starts its
+    #: first attempt from it and escalates from there, so a setting the caller
+    #: pinned reaches ``run()`` exactly as it reaches ``stream()``.
     gen_config: GenerationConfig
     #: Applied to the returned text instead of being sent, for a model that
     #: matches stop sequences against its own reasoning chain.
@@ -182,6 +209,9 @@ class _LoopPolicy:
     #: the background its parent gave it rather than with that background pasted
     #: into the question itself.
     prior_steps: tuple[Any, ...] = ()
+    #: The answer style this run states, resolved once from the call, the
+    #: agent's configuration and the shipped default. ``None`` states nothing.
+    answer_style: str | None = None
 
     @property
     def tools_travel_as_parameter(self) -> bool:
@@ -223,9 +253,18 @@ class _LoopPolicy:
         max_iterations = (
             agent.config.max_iterations if requested is None else int(requested)
         )
-        gen_config, local_stops = resolve_turn_config(agent, kwargs)
+        from ..prompts.answer_style import resolve_answer_style
+
+        run_frame = frame_for(agent)
+        answer_style = resolve_answer_style(
+            kwargs.get("answer_style"),
+            getattr(agent.config, "answer_style", None),
+        )
+        gen_config, local_stops = resolve_turn_config(
+            agent, kwargs, frame=run_frame, answer_style=answer_style,
+        )
         policy = cls(
-            frame=frame_for(agent),
+            frame=run_frame,
             max_iterations=max_iterations,
             gen_config=gen_config,
             local_stop_sequences=local_stops,
@@ -241,6 +280,7 @@ class _LoopPolicy:
             raise_on_error=bool(agent.config.raise_on_error),
             task_parts=task_parts,
             prior_steps=prior_steps,
+            answer_style=answer_style,
         )
         logger.info(
             "[loop] frame=%s tools_as_parameter=%s streamed=%s max_iterations=%d",
@@ -280,8 +320,9 @@ def frame_for(
     Returns:
         str: ``"native"``, ``"custom_template"`` or ``"react_text"``.
     """
+    strategy = getattr(agent, "_tool_calling_strategy", None)
     native = (
-        agent._tool_calling_strategy.name in ("native", "hybrid")
+        getattr(strategy, "name", "") in ("native", "hybrid")
         and agent.model is not None
         and hasattr(agent.model, "supports_tool_calling")
         and agent.model.supports_tool_calling()
@@ -296,23 +337,59 @@ def frame_for(
 
 
 def resolve_turn_config(
-    agent: Any, kwargs: dict[str, Any]
+    agent: Any,
+    kwargs: dict[str, Any],
+    *,
+    frame: str | None = None,
+    answer_style: str | None = None,
 ) -> tuple[GenerationConfig, tuple[str, ...] | None]:
     """The sampling settings one turn goes out with, and any local trimming.
 
     The same resolution the blocking generation path applies to its first
     attempt: a value pinned on the call, then one configured on the agent, then
-    the model's own default. Returned as a configuration rather than applied, so
-    a streamed turn and a blocking turn of the same run are provably identical.
+    a budget chosen from what the run declared. Returned as a configuration
+    rather than applied, so a streamed turn and a blocking turn of the same run
+    are provably identical.
+
+    Two things are read from the run rather than assumed. The output budget
+    follows the run's declared answer — an output schema, an answer style — and
+    only falls back to the model's default when it declared neither
+    (:func:`~effgen.core.agent_runtime.resolve_output_budget`). And the
+    framework's own stop sequences follow the frame the turn is written in
+    (:func:`framework_stop_sequences`), so the four ReAct labels go out with the
+    prompts that write them and with nothing else.
 
     A model that matches stop sequences against its own reasoning chain is sent
     none and has them applied to the text it returns; those are the second
     element of the pair.
+
+    Args:
+        agent: The agent whose turn this is.
+        kwargs: The caller's keyword arguments for this run.
+        frame: The frame this turn is written in. ``None`` reads the run's own.
+        answer_style: The run's resolved answer style, if it has been resolved
+            already. ``None`` resolves it here.
+
+    Returns:
+        The turn's configuration, and the stop sequences to trim locally.
     """
+    from ..prompts.answer_style import resolve_answer_style
+
     config = agent.config
-    requested_stops = normalize_stop_sequences(
-        kwargs.get("stop_sequences", list(DEFAULT_STOP_SEQUENCES))
+    if frame is None:
+        frame = frame_for(agent)
+    if answer_style is None:
+        answer_style = resolve_answer_style(
+            kwargs.get("answer_style"), getattr(config, "answer_style", None)
+        )
+    framework_stops = framework_stop_sequences(frame)
+    logger.info(
+        "[stop] stop sequences for frame=%s: the framework sends %d",
+        frame, len(framework_stops),
     )
+    requested_stops = normalize_stop_sequences(
+        kwargs.get("stop_sequences", list(framework_stops))
+    ) or None
     local_stops: tuple[str, ...] | None = None
     try:
         interleaves = agent._interleaves_reasoning(agent.model)
@@ -324,7 +401,8 @@ def resolve_turn_config(
     gen_config = GenerationConfig(
         temperature=kwargs.get("temperature", config.temperature),
         max_tokens=resolve_output_budget(
-            kwargs.get("max_tokens"), config.max_tokens, agent.model
+            kwargs.get("max_tokens"), config.max_tokens, agent.model,
+            output_schema=declared_output_schema(agent),
         ),
         top_p=kwargs.get("top_p", config.top_p),
         top_k=kwargs.get("top_k", config.top_k),
@@ -597,7 +675,9 @@ class _Deltas:
             # the loop with no record and no fallback.
             stream_iter = clock.open(
                 model.generate_stream,
-                prompt, config=policy.gen_config, **model_call_kwargs(gen_kwargs)
+                prompt,
+                config=gen_kwargs.get(RESOLVED_CONFIG_KWARG) or policy.gen_config,
+                **model_call_kwargs(gen_kwargs)
             )
             for token in clock.pieces(stream_iter):
                 if not token:
@@ -1140,6 +1220,26 @@ def step(
     _cite_sources, _numbered_passages = agent._citation_prompt_state()
     _answer_shape = agent._answer_shape_instruction()
     gen_kwargs = dict(kwargs)
+    # The settings this turn goes out with, resolved once and sent on both
+    # paths. A turn the guards moved onto the text scaffold is written in a
+    # different frame from the run's, and the framework's stop sequences follow
+    # the frame that writes the labels they match — so that one turn resolves
+    # its own, and every other turn sends the run's configuration unchanged.
+    turn_stops = tuple(
+        normalize_stop_sequences(
+            kwargs.get("stop_sequences", list(framework_stop_sequences(turn_frame)))
+        ) or ()
+    )
+    turn_config = policy.gen_config
+    if turn_frame != policy.frame and "stop_sequences" not in kwargs:
+        turn_config = replace(
+            policy.gen_config,
+            stop_sequences=(
+                None if policy.local_stop_sequences else list(turn_stops) or None
+            ),
+        )
+    gen_kwargs[RESOLVED_CONFIG_KWARG] = turn_config
+    gen_kwargs[RESOLVED_STOPS_KWARG] = turn_stops
     turn_protocol = "flat"
     flat_prompt = ""
     prompt: Any = ""
@@ -1184,6 +1284,7 @@ def step(
                 "" if frame_roles else conversation_history,
                 guards.previous_actions,
                 frame_owns_roles=frame_roles,
+                answer_style=policy.answer_style,
             )
             tool_defs = agent._tool_calling_strategy.format_tools_for_prompt(
                 list(agent.tools.values())
@@ -1235,6 +1336,7 @@ def step(
                     logger.info("[protocol] the run sends the conversation as messages")
                 prompt = agent._native_tool_messages(
                     thread, guards.previous_actions,
+                    answer_style=policy.answer_style,
                     split_reasoning=(
                         agent._message_protocol_probe() == PROTOCOL_SPLIT
                     ),
@@ -1270,6 +1372,7 @@ def step(
                 ),
                 "answer_shape": _answer_shape,
                 "tool_contract": agent._tool_contract(),
+                "answer_style": agent._answer_style_line(policy.answer_style),
                 "rules_already_stated": bool(
                     getattr(agent, "_framework_system_prompt", False)
                 ),

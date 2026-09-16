@@ -285,6 +285,16 @@ class AgentConfig:
     # A ``ToolUsePolicy`` member or its name; independent of ``tool_contract``,
     # which chooses the words rather than the policy.
     tool_use: ToolUsePolicy | str | None = None
+    # What the framework tells the model about the *form* of the answer, stated
+    # once as the last line of the request. ``"brief"`` asks for the answer the
+    # question asked for and nothing besides it; ``"full"`` asks for the
+    # reasoning to be part of the answer; any other string is stated verbatim in
+    # the same position; ``""`` states nothing at all. ``None`` takes
+    # ``effgen.prompts.answer_style.DEFAULT_ANSWER_STYLE``. It names no form of
+    # its own — not a letter, not a number, not a sentence — so a question that
+    # asks for one keeps it, and a caller who pinned ``max_tokens`` keeps that
+    # too. A child run inherits it with the rest of the configuration.
+    answer_style: str | None = None
     # How the run's conversation reaches the model: "flat" (one string, the
     # transcript inside it), "messages" (a system turn, the task, the model's
     # reasoning beside its tool call, each result answering a call id), or
@@ -340,7 +350,7 @@ _RUN_KWARGS = frozenset({
     "presence_penalty", "frequency_penalty", "repetition_penalty",
     "stop_sequences", "reasoning_effort", "tools", "tool_choice",
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
-    "middleware", "session", "cite_sources",
+    "middleware", "session", "cite_sources", "answer_style",
     "context_budget", "compaction", "max_context_length",
 })
 

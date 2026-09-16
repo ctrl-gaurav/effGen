@@ -209,33 +209,146 @@ def model_prompt_cache_policy(model: Any) -> Any:
         return None
 
 
+#: Keyword under which the loop hands one turn's already-resolved generation
+#: settings to the generation layer. It is the loop's own bookkeeping — it is
+#: not in ``MODEL_CALL_KWARGS``, so it never reaches an adapter — and it exists
+#: so the blocking turn starts from the configuration the run resolved instead
+#: of rebuilding a second one from keyword arguments that cannot carry every
+#: field. ``reasoning_effort`` was the field that fell through the gap: the
+#: streamed turn sent it and ``run()`` did not.
+RESOLVED_CONFIG_KWARG = "_resolved_config"
+
+#: Keyword under which the loop hands over the stop sequences it resolved for
+#: this turn, before the decision about whether they are sent to the provider or
+#: applied to the returned text. The generation layer makes that decision per
+#: failover model, so it needs the list rather than the outcome.
+RESOLVED_STOPS_KWARG = "_resolved_stop_sequences"
+
+
 def resolve_output_budget(
-    per_call: int | None, configured: int | None, model: Any
+    per_call: int | None,
+    configured: int | None,
+    model: Any,
+    *,
+    output_schema: Any = None,
+    default_base: int | None = None,
 ) -> int:
     """Return the output-token budget a generation should use.
 
     One order, used by every path that generates: an explicit per-call value,
-    then the agent's configured default, then the model's own default. The
-    streaming paths used to skip the middle step, so an agent built with
-    ``AgentConfig(max_tokens=333)`` got 333 tokens through ``run()`` and the
-    model default through ``stream()`` — the same agent answering at two
-    different lengths depending on which method was called.
+    then the agent's configured default, then a budget the framework chooses
+    from what the run *declared*. The streaming paths used to skip the middle
+    step, so an agent built with ``AgentConfig(max_tokens=333)`` got 333 tokens
+    through ``run()`` and the model default through ``stream()`` — the same
+    agent answering at two different lengths depending on which method was
+    called.
+
+    A caller's own value wins outright and is sent exactly as given: it is
+    neither raised to the reasoning floor nor capped, because a budget someone
+    pinned is a decision the framework does not have better information than.
+
+    When nobody pinned one, the budget follows the shape the run *declared*
+    rather than one constant: a declared output schema bounds it
+    (:func:`~effgen.models._adapter_utils.budget_for_output_schema`), and a run
+    that declared no shape keeps the model's own default, which is what every
+    run got before. A run asking for one integer no longer asks for the budget
+    of a run asking for a report.
+
+    Then a model that declares it reasons is raised to
+    :data:`~effgen.models._adapter_utils.REASONING_OUTPUT_FLOOR` — never
+    lowered below it, because a budget chosen from a declared shape that leaves
+    a reasoning model no room past its hidden chain returns an empty, billed
+    answer. Finally the result is capped at whatever maximum output the adapter
+    publishes.
+
+    The answer's *style* deliberately does not shorten the budget. Asking for
+    the answer and nothing else shortens what a model writes; it does not bound
+    what a model needs to write it, and a run measured under that instruction
+    still averaged 358 output tokens on arithmetic. A budget is a guard rail
+    against an unbounded answer, not a way to make an answer shorter, and a
+    guard rail set below what the task needs truncates a real answer rather
+    than returning a short one.
+
+    Nothing read here is the task text, a model id, a dataset or a prompt
+    fingerprint: only the caller's own settings, their declared schema and the
+    adapter's own declarations.
+
+    Logs ``[budget] output budget <n> from <source> (reasoning floor …)`` on
+    every resolution, so a run's log says which of the four sources chose the
+    number it was billed against.
 
     Args:
         per_call: ``max_tokens`` passed to this call, if any.
         configured: ``AgentConfig.max_tokens``, if set.
-        model: The model, asked for its default as a last resort.
+        model: The model, asked for its declarations as a last resort.
+        output_schema: The schema the run declared for its answer, if any.
+        default_base: The budget for a run that declared no shape, for a path
+            that reaches the model once with no loop watching for a truncated
+            result and so cannot escalate. ``None`` keeps the ordinary default.
 
     Returns:
         The budget to send.
     """
-    from ..models._adapter_utils import default_max_output_tokens
+    from ..models._adapter_utils import (
+        REASONING_OUTPUT_FLOOR,
+        budget_for_output_schema,
+        declared_max_output_tokens,
+        default_max_output_tokens,
+        needs_reasoning_headroom,
+    )
 
     if per_call is not None:
-        return per_call
+        _log_output_budget(int(per_call), "call", floored=False)
+        return int(per_call)
     if configured is not None:
-        return configured
-    return default_max_output_tokens(model)
+        _log_output_budget(int(configured), "config", floored=False)
+        return int(configured)
+
+    if output_schema:
+        budget = budget_for_output_schema(output_schema)
+        source = "schema"
+    elif default_base is not None:
+        budget = default_max_output_tokens(model, base=default_base)
+        source = "default"
+    else:
+        budget = default_max_output_tokens(model)
+        source = "default"
+
+    floored = False
+    if needs_reasoning_headroom(model) and budget < REASONING_OUTPUT_FLOOR:
+        budget = REASONING_OUTPUT_FLOOR
+        floored = True
+    published = declared_max_output_tokens(model)
+    if published is not None and budget > published:
+        budget = published
+    _log_output_budget(budget, source, floored=floored)
+    return budget
+
+
+def declared_output_schema(agent: Any) -> Any:
+    """The schema *agent*'s current run declared for its answer, or ``None``.
+
+    A probe, not a contract: an agent that cannot answer — an older object, a
+    duck-typed stand-in, a mixin reached before its run state exists — has
+    declared nothing, and its budget falls through to the model's default
+    exactly as it did before any of this existed.
+    """
+    resolve = getattr(agent, "_effective_output_schema", None)
+    if not callable(resolve):
+        return None
+    try:
+        return resolve()
+    except Exception:  # noqa: BLE001 - a probe never breaks a run
+        logger.debug("declared output-schema probe failed", exc_info=True)
+        return None
+
+
+def _log_output_budget(budget: int, source: str, *, floored: bool) -> None:
+    """Say which of the five sources chose this request's output budget."""
+    logger.info(
+        "[budget] output budget %d from %s (reasoning floor %s)",
+        budget, source, "applied" if floored else "not applied",
+    )
 
 
 def _safe_int_or_none(value: Any) -> int | None:
@@ -396,11 +509,26 @@ _ANSWER_LABEL_RE = re.compile(
     r"(?:final[ \t]*answer|answer)[ \t]*[:\-][ \t]*(?:\1)?[ \t]*",
     re.IGNORECASE,
 )
-# Trailing ReAct bleed: an Observation/Thought/Question/Action section the model
-# appended after its real answer.
+# Trailing ReAct bleed: an Observation/Thought/Action section the model appended
+# after its real answer.
 _TRAILING_BLEED_RE = re.compile(
-    r"\n[ \t>*\-]*(?:observation|thought|question|action(?:[ \t]+input)?)[ \t]*:.*\Z",
+    r"\n[ \t>*\-]*(?:observation|thought|action(?:[ \t]+input)?)[ \t]*:.*\Z",
     re.IGNORECASE | re.DOTALL,
+)
+# "Question:" is the one scaffold label that is also ordinary prose: an answer
+# that quotes the question it was asked, or a summary that lists the questions a
+# document raises, opens a line with it. Cutting there unconditionally silently
+# truncated real answers -- and it was invisible for as long as the four labels
+# were also sent as stop sequences, because generation had already ended at the
+# same place. So the label is treated as bleed only when the scaffold carries on
+# past it: another step of the format after it is what makes it a step rather
+# than a sentence.
+_TRAILING_QUESTION_RE = re.compile(
+    r"\n[ \t>*\-]*question[ \t]*:", re.IGNORECASE,
+)
+_SCAFFOLD_STEP_AFTER_RE = re.compile(
+    r"\n[ \t>*\-]*(?:observation|thought|action(?:[ \t]+input)?)[ \t]*:",
+    re.IGNORECASE,
 )
 # Tool-echo fragment like "[calculator({'expression': '15*15'})] → 225". The
 # scaffolding always emits the Unicode arrow (see the f-strings in the ReAct/
@@ -782,9 +910,13 @@ def sanitize_final_answer(text: str | None) -> str | None:
         s = _GEMMA_STRAY_TOKEN_RE.sub("", s)
     # 3. Drop trailing Observation/Thought/Question/Action bleed.
     if "\n" in s and ":" in s and _may_contain(
-        s, ("observation", "thought", "question", "action"),
+        s, ("observation", "thought", "action"),
     ):
         s = _TRAILING_BLEED_RE.sub("", s)
+    if "\n" in s and ":" in s and _may_contain(s, ("question",)):
+        opened = _TRAILING_QUESTION_RE.search(s)
+        if opened and _SCAFFOLD_STEP_AFTER_RE.search(s, opened.end()):
+            s = s[:opened.start()]
     # 4. If a line-anchored answer label is present, the real answer is what
     #    follows the LAST such label (when that tail is non-empty). A dangling
     #    label with nothing after it (e.g. native web-search replies sometimes
@@ -1321,6 +1453,35 @@ class AgentRuntimeMixin:
             return f"{contract} {TOOL_USE_SPARING_NOTE}"
         return contract
 
+    def _answer_style_line(self, per_call: Any = None) -> str:
+        """The one sentence this run states about the answer's form, or ``""``.
+
+        Resolved in the same order as every generation setting — the value
+        pinned on this call, then ``AgentConfig.answer_style``, then
+        :data:`~effgen.prompts.answer_style.DEFAULT_ANSWER_STYLE` — and turned
+        into the sentence that style states. ``""`` anywhere in that order means
+        the caller asked for silence and is answered with silence.
+
+        The sentence names no form of its own, so it cannot overrule a question
+        that asked for a letter, a caller's system prompt that asked for a
+        report, or a declared output schema. It only says not to add to
+        whichever of those the run already has.
+
+        Args:
+            per_call: ``answer_style`` passed to this call, if any.
+
+        Returns:
+            The sentence to state, or ``""``.
+        """
+        from ..prompts.answer_style import answer_style_text, resolve_answer_style
+
+        return answer_style_text(
+            resolve_answer_style(
+                per_call,
+                getattr(getattr(self, "config", None), "answer_style", None),
+            )
+        )
+
     def _declared_tool_use(self) -> ToolUsePolicy | None:
         """The policy ``AgentConfig.tool_use`` states, or ``None`` for none.
 
@@ -1355,6 +1516,7 @@ class AgentRuntimeMixin:
     def _native_tool_prompt(
         self, task: str, scratchpad: str, conversation_history: str,
         previous_actions: list[tuple[str, str]], *, frame_owns_roles: bool = False,
+        answer_style: Any = None,
     ) -> str:
         """Build one turn's prompt for the native/hybrid tool path.
 
@@ -1364,10 +1526,25 @@ class AgentRuntimeMixin:
 
         The tool definitions travel outside this string — through the provider's
         tool-calling API or the chat template — so the prompt itself is the only
-        place the tools can be described. The contract goes on the opening turn,
-        where the model first sees them; later turns close with a continuation
-        or retrieval instruction of their own, which a second statement would
-        compete with.
+        place the tools can be described. The contract closes the opening turn,
+        where the model first sees the tools; later turns close with a
+        continuation or retrieval instruction of their own, which a second
+        statement would compete with.
+
+        Moving it ahead of the task was tried and measured, and it is the one
+        thing here that must not change. A contract read before the question
+        stops being the instruction in force when the model decides what to do
+        next, and on every turn after the first it adds "finish by stating the
+        final answer" to the top of a request whose point is to keep going. On
+        the hardest coding set a 7B model went from 3.4 model calls and 1.6
+        executor calls per sample to 2.2 and exactly 1.0 — it ran the executor
+        once, took the first result, and answered — and accuracy fell 47 points.
+        Where the framework's own sentence belongs is last, where a caller who
+        wants that place can take it with ``answer_style``.
+
+        The answer style, when the run states one, is the last line of all: it
+        is the only framework sentence that goes after the contract, because it
+        is the one the caller asked for.
 
         Args:
             task: The question this run is answering.
@@ -1417,6 +1594,9 @@ class AgentRuntimeMixin:
             contract = self._tool_contract()
             if contract:
                 prompt = f"{prompt}\n\n{contract}"
+        style = self._answer_style_line(answer_style)
+        if style:
+            prompt = f"{prompt}\n\n{style}"
         return prompt
 
     # ------------------------------------------------------------------
@@ -1581,7 +1761,7 @@ class AgentRuntimeMixin:
 
     def _native_tool_messages(
         self, thread: Any, previous_actions: list[tuple[str, str]],
-        *, split_reasoning: bool = False,
+        *, split_reasoning: bool = False, answer_style: Any = None,
     ) -> list[Message]:
         """One turn's conversation for the native tool path, as messages.
 
@@ -1593,12 +1773,11 @@ class AgentRuntimeMixin:
         that lives on the thread, so this renders it and adds only what belongs
         to *this* turn.
 
-        Two differences from the flat rendering are deliberate. The tool
-        contract is stated every turn rather than only on the first, which is
-        what makes the system turn identical turn to turn and therefore a
-        prefix a provider can cache. And a call the run never answered is given
-        a tool message saying so, because a conversation holding a call with no
-        result is rejected by the request schema.
+        One difference from the flat rendering is deliberate: a call the run
+        never answered is given a tool message saying so, because a
+        conversation holding a call with no result is rejected by the request
+        schema. The answer style closes the last user turn here as it closes
+        the string there, so both renderings end on the same sentence.
 
         Args:
             thread: The run's :class:`~effgen.core.thread.AgentThread`, which
@@ -1608,6 +1787,7 @@ class AgentRuntimeMixin:
             split_reasoning: Send the model's reasoning as its own assistant
                 turn ahead of the turn carrying the call, for a template that
                 refuses to take both on one message.
+            answer_style: ``answer_style`` passed to this call, if any.
 
         Returns:
             The messages, in order.
@@ -1650,8 +1830,10 @@ class AgentRuntimeMixin:
                 ).to_messages()
             )
 
-        if closing:
-            messages.append(_user(closing))
+        style = self._answer_style_line(answer_style)
+        last = "\n\n".join(part for part in (closing, style) if part)
+        if last:
+            messages.append(_user(last))
         return messages
 
     def _model_carries_a_conversation(self) -> bool:
@@ -1733,7 +1915,9 @@ class AgentRuntimeMixin:
         messages.append(Message(role=Role.USER, content=content))
         return messages
 
-    def _direct_prompt(self, task: str, conversation_history: str = "") -> str:
+    def _direct_prompt(
+        self, task: str, conversation_history: str = "", answer_style: Any = None,
+    ) -> str:
         """Build the user prompt for the no-tool direct/streaming paths.
 
         Default agents keep the familiar ``"Answer this question directly and
@@ -1756,18 +1940,31 @@ class AgentRuntimeMixin:
         shape = _shape() if callable(_shape) else ""
         block = f"\n\n{shape}" if shape else ""
 
+        # The answer style is the last thing the model reads here too, so a
+        # tool-free run answers in the form its caller asked for rather than
+        # only a run that happened to attach a tool. On the two framings that
+        # end with the "Answer:" cue it goes in front of that cue, which is the
+        # label the answer is read off; nothing else follows it.
+        style = self._answer_style_line(answer_style)
+        styled = f"\n\n{style}" if style else ""
+
         persona = getattr(self, "_custom_persona", None)
         if persona:
             if conversation_history:
-                return f"{persona}\n\n{conversation_history}\n\n{task}{block}"
-            return f"{persona}\n\n{task}{block}"
+                return (
+                    f"{persona}\n\n{conversation_history}\n\n{task}{block}{styled}"
+                )
+            return f"{persona}\n\n{task}{block}{styled}"
         if conversation_history:
             return (
                 f"{conversation_history}\n\n"
                 f"Based on the conversation above, answer this question directly "
-                f"and concisely:\n\n{task}{block}\n\nAnswer:"
+                f"and concisely:\n\n{task}{block}{styled}\n\nAnswer:"
             )
-        return f"Answer this question directly and concisely:\n\n{task}{block}\n\nAnswer:"
+        return (
+            f"Answer this question directly and concisely:\n\n"
+            f"{task}{block}{styled}\n\nAnswer:"
+        )
 
     @staticmethod
     def _prompt_to_task_hint(prompt: Any) -> str:

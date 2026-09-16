@@ -14,14 +14,15 @@ import logging
 import time
 from typing import Any
 
-from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
 from ..models.errors import generation_failure_text
 from . import ledger as _ledger
 from .agent_config import AgentMode
 from .agent_response import AgentResponse
 from .agent_runtime import (
+    declared_output_schema,
     find_written_tool_call,
+    resolve_output_budget,
     sanitize_final_answer,
     written_call_only,
 )
@@ -82,9 +83,10 @@ class AgentNativeToolsMixin:
         # caller asked for, or it can spend the default on reasoning alone.
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get(
-                "max_tokens",
-                self.config.max_tokens or default_max_output_tokens(self.model, base=2048),
+            max_tokens=resolve_output_budget(
+                kwargs.get("max_tokens"), self.config.max_tokens, self.model,
+                output_schema=declared_output_schema(self),
+                default_base=2048,
             ),
             top_p=kwargs.get("top_p", self.config.top_p),
             seed=kwargs.get("seed", self.config.seed),
@@ -280,9 +282,10 @@ class AgentNativeToolsMixin:
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get(
-                "max_tokens",
-                self.config.max_tokens or default_max_output_tokens(self.model, base=2048),
+            max_tokens=resolve_output_budget(
+                kwargs.get("max_tokens"), self.config.max_tokens, self.model,
+                output_schema=declared_output_schema(self),
+                default_base=2048,
             ),
             top_p=kwargs.get("top_p", self.config.top_p),
             seed=kwargs.get("seed", self.config.seed),
