@@ -27,9 +27,19 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._ledger_hook import provider_request
 from effgen.models._multimodal import require_audio_support, require_vision_support
-from effgen.models._usage import tool_call_entry
-from effgen.models.anthropic_cache import validate_breakpoint_count
+from effgen.models._usage import log_cache_hit, tool_call_entry
+from effgen.models.anthropic_cache import (
+    MAX_CACHE_BREAKPOINTS,
+    apply_cache_to_last_tool,
+    apply_cache_to_system,
+    count_cache_breakpoints,
+    get_min_cache_tokens,
+    mark_cached,
+    validate_breakpoint_count,
+)
 from effgen.models.anthropic_models import (
+    CACHE_READ_PRICE_MULTIPLIER,
+    CACHE_WRITE_PRICE_MULTIPLIER,
     get_context_length,
     get_cost_per_million,
     get_model_info,
@@ -40,6 +50,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     ModelType,
+    PromptCachePolicy,
     TokenCount,
     fold_call_totals,
 )
@@ -394,6 +405,112 @@ class AnthropicAdapter(FunctionCallingModel):
         # turn instead, which is what it did before this array existed.
         return turns or None
 
+    def _mark_message_block(self, messages: list, index: int) -> bool:
+        """Put a cache breakpoint on the last content block of one message.
+
+        The message is replaced with a copy, so a caller's own conversation is
+        never mutated by being sent. A string body becomes a single text block,
+        which the Messages API accepts in place of the string. Returns False
+        when there is nothing to mark, or when the block already carries a
+        marker the caller placed.
+        """
+        message = messages[index]
+        if not isinstance(message, dict):
+            return False
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            blocks: list = [mark_cached({"type": "text", "text": content})]
+        elif isinstance(content, list) and content and isinstance(content[-1], dict):
+            if "cache_control" in content[-1]:
+                return False
+            blocks = list(content)
+            blocks[-1] = mark_cached(blocks[-1])
+        else:
+            return False
+        marked = dict(message)
+        marked["content"] = blocks
+        messages[index] = marked
+        return True
+
+    def _apply_prompt_cache(self, request: dict[str, Any], ask: Any) -> int:
+        """Place the breakpoints a run asked for on an assembled request.
+
+        The order is the order the provider evaluates the request in, which is
+        also the order the parts change in: the tool definitions, then the
+        instructions, then the task, then the last completed turn. Anything
+        beyond the policy's breakpoint budget is dropped from the bottom, so the
+        parts that change least keep their marker.
+
+        The moving breakpoint sits on the **last completed** turn, never on the
+        turn being written: a marker on a block that changes writes a cache
+        entry nobody ever reads, which costs more than not caching at all.
+
+        Args:
+            request: The assembled request, marked in place.
+            ask: What the run asked for — ``system``, ``tools`` and
+                ``conversation`` flags — or anything else, which asks nothing.
+
+        Returns:
+            How many breakpoints this call added.
+        """
+        policy = self.prompt_cache_policy()
+        if not isinstance(ask, dict) or policy is None or policy.style != "explicit":
+            return 0
+        budget = min(policy.max_breakpoints, MAX_CACHE_BREAKPOINTS) - (
+            count_cache_breakpoints(
+                request.get("system"), request.get("messages"), request.get("tools")
+            )
+        )
+        if budget <= 0:
+            return 0
+
+        # A part the caller already marked is left alone: re-marking it would
+        # move nothing and would spend one of the four breakpoints doing it.
+        plan: list[tuple[str, int]] = []
+        tools = request.get("tools")
+        if (
+            ask.get("tools")
+            and isinstance(tools, list)
+            and tools
+            and not (isinstance(tools[-1], dict) and "cache_control" in tools[-1])
+        ):
+            plan.append(("tools", 0))
+        system = request.get("system")
+        if ask.get("system") and system and not (
+            isinstance(system, list)
+            and isinstance(system[-1], dict)
+            and "cache_control" in system[-1]
+        ):
+            plan.append(("system", 0))
+        messages = request.get("messages")
+        if ask.get("conversation") and isinstance(messages, list):
+            if messages:
+                plan.append(("message", 0))
+            if len(messages) >= 3:
+                plan.append(("message", len(messages) - 2))
+        if not plan:
+            return 0
+
+        placed = 0
+        for kind, index in plan[:budget]:
+            if kind == "tools":
+                request["tools"] = apply_cache_to_last_tool(list(tools or []))
+                placed += 1
+            elif kind == "system":
+                request["system"] = apply_cache_to_system(request["system"])
+                placed += 1
+            else:
+                messages = list(request["messages"])
+                if self._mark_message_block(messages, index):
+                    request["messages"] = messages
+                    placed += 1
+        if placed:
+            logger.info(
+                "[cache] request carries %d cache breakpoints (%s)",
+                placed, ", ".join(kind for kind, _ in plan[:budget]),
+            )
+        return placed
+
     def _build_request(
         self,
         prompt: str | list,
@@ -455,6 +572,18 @@ class AnthropicAdapter(FunctionCallingModel):
 
         if tools:
             request["tools"] = tools
+        elif isinstance(extra_kwargs.get("tools"), list) and extra_kwargs["tools"]:
+            # A run hands the definitions over as a keyword argument rather than
+            # in the positional slot, so they are taken out of it here: the
+            # breakpoint that belongs on the tool list has to be placed on the
+            # list that is actually sent, and the count validated below has to
+            # include it.
+            request["tools"] = extra_kwargs.pop("tools")
+
+        # The run says which parts of its prompt are stable; the shape those
+        # markers take is this adapter's business, and the ask never reaches
+        # the wire.
+        self._apply_prompt_cache(request, extra_kwargs.pop("prompt_cache", None))
 
         # Validate cache_control breakpoint count before sending.
         # Raises ValueError if > MAX_CACHE_BREAKPOINTS (4).
@@ -505,17 +634,25 @@ class AnthropicAdapter(FunctionCallingModel):
         Parse token counts from a response.
 
         Returns:
-            (input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens)
+            (prompt_tokens, output_tokens, cached_input_tokens, cache_creation_tokens)
 
         ``cached_input_tokens`` — tokens served from cache (cache hit).
         ``cache_creation_tokens`` — tokens written into a new cache entry (cache miss that
-        populates the cache; billed at 1.25× normal write cost).
+        populates the cache; billed above the ordinary input rate).
         Both fields are 0 when prompt caching was not used.
+
+        The Messages API reports ``input_tokens`` with the cached and written
+        tokens taken *out* of it, so the raw field is not the size of the prompt
+        that was sent. ``prompt_tokens`` here is the whole input — read, written
+        and fresh — which is what every other adapter reports and what the rest
+        of effGen prices and counts. The two cache figures are the split inside
+        it, never an addition to it.
         """
         usage = response.usage
         cached_input = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        return usage.input_tokens, usage.output_tokens, cached_input, cache_creation
+        prompt_tokens = (usage.input_tokens or 0) + cached_input + cache_creation
+        return prompt_tokens, usage.output_tokens, cached_input, cache_creation
 
     def _annotate_thinking_only(
         self,
@@ -551,18 +688,39 @@ class AnthropicAdapter(FunctionCallingModel):
     # ── Cost ──────────────────────────────────────────────────────────────
 
     def _calculate_cost(
-        self, prompt_tokens: int, completion_tokens: int
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> float | None:
-        """Price this call, or return ``None`` when the model publishes no rate."""
+        """Price this call, or return ``None`` when the model publishes no rate.
+
+        A prompt token served from the cache is billed at a tenth of the input
+        rate and one written into it above the input rate, so a call that caches
+        is not priced as though every token were fresh.
+        """
         from effgen.models._cost import pricing_status
 
         if pricing_status("anthropic", self.model_name) == "unpriced":
             return None
         input_cost_pm, output_cost_pm = get_cost_per_million(self.model_name)
-        return (prompt_tokens / 1_000_000) * input_cost_pm + (completion_tokens / 1_000_000) * output_cost_pm
+        read = max(0, min(cached_tokens, prompt_tokens))
+        written = max(0, min(cache_write_tokens, prompt_tokens - read))
+        fresh = prompt_tokens - read - written
+        input_cost = (
+            fresh * input_cost_pm
+            + read * input_cost_pm * CACHE_READ_PRICE_MULTIPLIER
+            + written * input_cost_pm * CACHE_WRITE_PRICE_MULTIPLIER
+        ) / 1_000_000
+        return input_cost + (completion_tokens / 1_000_000) * output_cost_pm
 
     def _record_usage(
-        self, prompt_tokens: int, completion_tokens: int
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> float | None:
         """Price this call and fold it into the adapter's running session total.
 
@@ -573,8 +731,14 @@ class AnthropicAdapter(FunctionCallingModel):
         different number: the cumulative cost across every call made on this
         adapter instance so far, not an alias.
         """
-        cost = self._calculate_cost(prompt_tokens, completion_tokens)
+        cost = self._calculate_cost(
+            prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens
+        )
         fold_call_totals(self, cost, prompt_tokens + completion_tokens)
+        log_cache_hit(
+            logger, "anthropic", self.model_name, cached_tokens, prompt_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
         # Persist to the process-global tracker so `effgen cost` includes
         # Anthropic spend (the dashboard previously never saw it).
         try:
@@ -586,6 +750,8 @@ class AnthropicAdapter(FunctionCallingModel):
                 model=self.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+                cache_write_tokens=cache_write_tokens,
             )
         except BudgetExceededError:
             raise
@@ -652,7 +818,9 @@ class AnthropicAdapter(FunctionCallingModel):
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
-            cost = self._record_usage(prompt_tokens, completion_tokens)
+            cost = self._record_usage(
+                prompt_tokens, completion_tokens, cached_input, cache_creation
+            )
 
             logger.info(
                 f"Generated {completion_tokens} tokens. "
@@ -669,6 +837,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 # Prompt caching usage (0 when not used).
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
+                "cache_write_tokens": cache_creation,
                 "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 # Preserve ALL content blocks for multi-turn re-submission.
                 # Include this list verbatim as the assistant message content
@@ -1009,7 +1178,9 @@ class AnthropicAdapter(FunctionCallingModel):
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
-            cost = self._record_usage(prompt_tokens, completion_tokens)
+            cost = self._record_usage(
+                prompt_tokens, completion_tokens, cached_input, cache_creation
+            )
 
             tool_uses = [
                 {"id": b["id"], "name": b["name"], "input": b["input"]}
@@ -1026,6 +1197,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
+                "cache_write_tokens": cache_creation,
                 "tool_uses": tool_uses,
                 "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 "raw_content_blocks": raw_blocks,
@@ -1158,6 +1330,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 tools=request.get("tools"),
             )
 
+            kwargs.pop("prompt_cache", None)
             request.update(kwargs)
             _translate_tool_choice(request)
             with provider_request():
@@ -1165,7 +1338,9 @@ class AnthropicAdapter(FunctionCallingModel):
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
-            cost = self._record_usage(prompt_tokens, completion_tokens)
+            cost = self._record_usage(
+                prompt_tokens, completion_tokens, cached_input, cache_creation
+            )
 
             metadata: dict[str, Any] = {
                 "raw_finish_reason": response.stop_reason,
@@ -1176,6 +1351,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
+                "cache_write_tokens": cache_creation,
                 "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 "raw_content_blocks": raw_blocks,
             }
@@ -1252,6 +1428,28 @@ class AnthropicAdapter(FunctionCallingModel):
             return TokenCount(count=len(text) // 4, model_name=self.model_name)
 
     # ── Context / usage ───────────────────────────────────────────────────
+
+    def prompt_cache_policy(self) -> PromptCachePolicy | None:
+        """Anthropic caches what the request marks, and reports both halves.
+
+        Nothing is cached here unless the request says where the stable part
+        ends, so this is the explicit style: a run hands over which parts of its
+        prompt do not change and this adapter renders them as ``cache_control``
+        markers, at most four per request, evaluated tools then instructions
+        then conversation. The usage payload reports reads and writes
+        separately, which is what lets a run see that it is paying to write a
+        cache nobody reads.
+
+        The per-model minimum block size comes from this provider's own table.
+        """
+        return PromptCachePolicy(
+            style="explicit",
+            min_prefix_tokens=get_min_cache_tokens(self.model_name),
+            max_breakpoints=MAX_CACHE_BREAKPOINTS,
+            reports_cached_tokens=True,
+            reports_cache_writes=True,
+            ttl_options=("5m", "1h"),
+        )
 
     def get_context_length(self) -> int:
         """Return the model's context window size in tokens."""

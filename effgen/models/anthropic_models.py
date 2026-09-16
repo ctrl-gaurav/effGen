@@ -13,6 +13,16 @@ Notes:
 
 from __future__ import annotations
 
+#: What a prompt token served from the cache costs, as a multiple of the input
+#: rate. Anthropic publishes its cache pricing this way rather than as a second
+#: price list, so it is carried once instead of per model.
+CACHE_READ_PRICE_MULTIPLIER = 0.1
+
+#: What a prompt token written into the cache costs, as a multiple of the input
+#: rate, for the five-minute lifetime effGen's markers ask for. The one-hour
+#: lifetime is billed at 2x instead.
+CACHE_WRITE_PRICE_MULTIPLIER = 1.25
+
 # Cost per million tokens: (input_$/1M, output_$/1M)
 ANTHROPIC_MODEL_COSTS: dict[str, tuple[float, float]] = {
     # ── Current Claude 4.x ──────────────────────────────────────────────────
