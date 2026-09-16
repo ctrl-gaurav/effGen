@@ -265,6 +265,7 @@ _WARN_ONCE_RECORDS = (
 _LEARNED_ONCE_RECORDS = (
     ("effgen.core.agent_generation", "_reasoning_stream_models"),
     ("effgen.core.agent_runtime", "_MESSAGE_PROTOCOL_PROBE"),
+    ("effgen.core.agent_runtime", "_SUPPRESSED_TOOL_CALL_IGNORED"),
 )
 
 

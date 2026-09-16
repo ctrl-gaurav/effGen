@@ -57,6 +57,11 @@ from effgen.tools.base_tool import (
 SAMPLE_VALUES: dict[str, object] = {
     "tools": [{"type": "function", "function": {"name": "python_exec"}}],
     "tool_choice": "required",
+    # Which parts of the request do not change, for an adapter that places cache
+    # breakpoints itself. It is consumed by the adapter and never forwarded to
+    # the provider, but it has to reach the adapter at all, which is what the
+    # forwarding tests below check.
+    "prompt_cache": {"system": True, "tools": True, "conversation": True},
 }
 
 

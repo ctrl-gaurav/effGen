@@ -87,7 +87,9 @@ _reasoning_stream_models: set[str] = set()
 #: Both model-call paths build their adapter kwargs from this set through
 #: :func:`model_call_kwargs`, so a parameter added here reaches the provider on
 #: every path at once and none of them can drift.
-MODEL_CALL_KWARGS: frozenset[str] = frozenset({"tools", "tool_choice"})
+MODEL_CALL_KWARGS: frozenset[str] = frozenset(
+    {"tools", "tool_choice", "prompt_cache"}
+)
 
 
 def model_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +99,11 @@ def model_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     keyword arguments are its own bookkeeping — the iteration cap, the
     checkpoint knobs, the multimodal inputs — and a provider asked to accept one
     of those rejects the whole request.
+
+    ``prompt_cache`` is one of them: it says which parts of this request do not
+    change, and only an adapter that declares it places cache breakpoints is
+    ever handed one, so a provider that matches the prefix itself never sees the
+    key. It is consumed by the adapter and never reaches the wire.
 
     A ``tool_choice`` is dropped when no tool definitions travel with it.
     Requiring a call from a request that offers nothing to call is rejected by
@@ -731,6 +738,7 @@ class AgentGenerationMixin:
         provider = self._model_provider(self.model)
         model_name = getattr(self.model, "model_name", None) or self.model_name or "unknown"
         cached = 0
+        cache_written = 0
         if ledger is not None:
             for call in ledger.calls:
                 if call.kind == "model":
@@ -744,6 +752,7 @@ class AgentGenerationMixin:
                 agent=str(getattr(self, "name", "") or ""), seconds=ledger.framework_s,
             )
             cached = int(ledger.cached_input_tokens or 0)
+            cache_written = int(ledger.cache_write_tokens or 0)
         else:
             record_model_call(
                 provider=provider,
@@ -751,13 +760,14 @@ class AgentGenerationMixin:
                 outcome=outcome,
                 latency=max(0.0, execution_time or 0.0),
             )
-        if prompt_tokens or completion_tokens or cached:
+        if prompt_tokens or completion_tokens or cached or cache_written:
             record_tokens(
                 provider=provider,
                 model=model_name,
                 input_tokens=int(prompt_tokens or 0),
                 output_tokens=int(completion_tokens or 0),
                 cached_tokens=cached,
+                cache_write_tokens=cache_written,
             )
 
     def _warn_reasoning_budget(self, max_tokens: int | None, structured_output: bool) -> None:

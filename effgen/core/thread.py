@@ -369,8 +369,10 @@ class ObservationStep:
         declined: Why the framework answered in its own words rather than a
             tool's — ``"loop_detected"`` and ``"already_computed"`` for a call
             the run stopped making, ``"unknown_tool"`` for a tool the agent
-            does not hold. ``None`` when the reply is a tool's own result,
-            including a repeat answered from the record.
+            does not hold, ``"call_forbidden"`` for a call made on a turn that
+            offered the tool definitions and forbade a call, which some
+            providers do not enforce. ``None`` when the reply is a tool's own
+            result, including a repeat answered from the record.
         compacted: How ``text`` came to be shorter than what the tool returned
             — ``"elided"`` when its opening was kept, ``"summarized"`` when it
             was rewritten. ``None`` when the step holds the whole reply.

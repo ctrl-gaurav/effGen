@@ -225,7 +225,12 @@ def test_a_declined_call_says_it_was_declined(path: str) -> None:
     assert observations, "no tool ever replied"
     for observation in observations:
         assert observation.declined is None or observation.declined in {
-            "loop_detected", "already_computed", "unknown_tool",
+            # "call_forbidden" was added on 2026-09-15: a turn that keeps its
+            # tool definitions to keep the prompt prefix and forbids a call can
+            # still be answered with one, by a provider that does not enforce
+            # the constraint. The call is declined rather than run, so the reply
+            # is the framework's and says so.
+            "loop_detected", "already_computed", "unknown_tool", "call_forbidden",
         }
 
 

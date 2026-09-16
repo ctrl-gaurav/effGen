@@ -80,7 +80,9 @@ from .agent_runtime import (
     _count_tool_parts,
     _infer_provider_from_model,
     find_written_tool_call,
+    model_can_forbid_tool_call,
     model_can_require_tool_call,
+    model_prompt_cache_policy,
     resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
@@ -248,7 +250,12 @@ class _LoopPolicy:
         return policy
 
 
-def frame_for(agent: Any, *, tools_suppressed: bool = False) -> str:
+def frame_for(
+    agent: Any,
+    *,
+    tools_suppressed: bool = False,
+    suppressed_keeps_frame: bool = False,
+) -> str:
     """Which prompt frame this agent's turns are written in.
 
     Read from the declared tool-calling strategy, the model's own
@@ -259,7 +266,19 @@ def frame_for(agent: Any, *, tools_suppressed: bool = False) -> str:
 
     *tools_suppressed* is the guards' decision to stop offering tools for the
     rest of a run; the frame then falls back to the text scaffold, which is the
-    only frame that can ask for an answer without offering a call.
+    only frame that can ask for an answer without offering a call — unless
+    *suppressed_keeps_frame* says the provider will take a request that offers
+    the definitions and forbids the call, in which case the turn keeps the frame
+    it has been using and the run keeps the prefix with it.
+
+    Args:
+        agent: The agent whose turn this is.
+        tools_suppressed: Whether the guards have stopped offering tools.
+        suppressed_keeps_frame: Whether the provider takes a request that offers
+            tool definitions while forbidding a call.
+
+    Returns:
+        str: ``"native"``, ``"custom_template"`` or ``"react_text"``.
     """
     native = (
         agent._tool_calling_strategy.name in ("native", "hybrid")
@@ -267,7 +286,7 @@ def frame_for(agent: Any, *, tools_suppressed: bool = False) -> str:
         and hasattr(agent.model, "supports_tool_calling")
         and agent.model.supports_tool_calling()
     )
-    if tools_suppressed:
+    if tools_suppressed and not suppressed_keeps_frame:
         native = False
     if native and not agent.config.system_prompt_template:
         return "native"
@@ -354,6 +373,10 @@ class _RunState:
     #: earlier turns as their own messages. The turn that asks for the answer
     #: reads it, so a run keeps one request shape from its first turn to its last.
     frame_roles_on_messages: bool = False
+    #: Whether this run has already said that the turn asking for the answer
+    #: kept the prefix the provider's cache was matching. Said once per run, not
+    #: once per rebuild.
+    prefix_kept_on_withdrawal: bool = False
     debug_trace: Any = None
     checkpoints: Any = None
     iter_start: float = 0.0
@@ -1090,9 +1113,30 @@ def step(
 
     _write_periodic_checkpoint(agent, task, policy, state)
 
+    # What this run may ask of the provider's prompt cache. An adapter that
+    # declares no policy is sent exactly the request it was sent before any of
+    # this existed: nothing below changes a byte for it.
+    cache_policy = model_prompt_cache_policy(agent.model)
+    # The turn that asks for the answer can keep the run's shape only where the
+    # provider takes a request that offers tools and forbids a call. Everywhere
+    # else it falls back to the text scaffold, as it always did.
+    keeps_withdrawal_shape = (
+        cache_policy is not None
+        and model_can_forbid_tool_call(agent.model)
+        and not agent._suppressed_call_ignored()
+    )
+    # A session's runs go out in one shape when there is a cache to keep: the
+    # first run sends what the second will send, so the second extends its
+    # prefix instead of starting a new one.
+    session_keeps_shape = cache_policy is not None and agent._keeps_a_session()
+
     # The frame for this turn: the run's frame, unless the guards have stopped
     # offering tools, which no frame but the text scaffold can express.
-    turn_frame = frame_for(agent, tools_suppressed=guards.tools_suppressed())
+    turn_frame = frame_for(
+        agent,
+        tools_suppressed=guards.tools_suppressed(),
+        suppressed_keeps_frame=keeps_withdrawal_shape,
+    )
     _cite_sources, _numbered_passages = agent._citation_prompt_state()
     _answer_shape = agent._answer_shape_instruction()
     gen_kwargs = dict(kwargs)
@@ -1146,6 +1190,20 @@ def step(
             )
             if isinstance(tool_defs, list):
                 gen_kwargs["tools"] = tool_defs
+            if guards.tools_suppressed() and gen_kwargs.get("tools"):
+                # The same definitions, the same conversation, and no call
+                # permitted: the request grows by this turn's nudge instead of
+                # being rebuilt, so the prefix the provider has been matching
+                # survives the turn that asks for the answer.
+                gen_kwargs["tool_choice"] = "none"
+                if not state.prefix_kept_on_withdrawal:
+                    state.prefix_kept_on_withdrawal = True
+                    logger.info(
+                        "[cache] the turn that asks for the answer keeps the "
+                        "run's prefix: %d tool definitions travel with the "
+                        "call forbidden",
+                        len(gen_kwargs["tools"]),
+                    )
             if frame_roles or frame_parts:
                 if frame_roles:
                     state.frame_roles_on_messages = True
@@ -1169,6 +1227,7 @@ def step(
             turn_protocol = agent._resolve_prompt_protocol(
                 tools_travel_as_parameter="tools" in gen_kwargs,
                 conversation_carries_earlier_turns=bool(thread.prior_turns()),
+                session_carries_later_turns=session_keeps_shape,
             )
             if turn_protocol == "messages":
                 if not state.resolved_to_messages:
@@ -1318,6 +1377,16 @@ def step(
     #
     # The flag is spent whether or not it could be used, so a turn that could
     # not be constrained does not leak the constraint onto a later one.
+    # An adapter that places the breakpoints itself is told which parts of this
+    # request do not change; one that matches the prefix itself is told nothing,
+    # and its request goes out byte for byte as it did before.
+    if cache_policy is not None and cache_policy.style == "explicit":
+        gen_kwargs["prompt_cache"] = {
+            "system": bool(getattr(agent.config, "cache_system_prompt", False)),
+            "tools": bool(getattr(agent.config, "cache_tools", False)),
+            "conversation": True,
+        }
+
     if guards.take_forced_tool_call():
         if "tools" in gen_kwargs and model_can_require_tool_call(agent.model):
             gen_kwargs["tool_choice"] = "required"
@@ -1491,6 +1560,23 @@ def step(
     # (empty text + structured tool_calls in metadata), use it directly — no
     # text parsing needed.
     native_tool_calls = response.get("tool_calls") or []
+
+    # The guards have stopped this run calling tools, and a turn that kept the
+    # definitions on the request to keep its prefix has come back with a call
+    # anyway — the provider did not honour the constraint. The call still goes
+    # through the guards, because a repeat is a repeat however it arrived and
+    # the run's loop detection is what ends it; what it does not do is run.
+    # Only the first of a batch is carried, since none of them will be
+    # dispatched and the thread is owed one reply, not several.
+    call_forbidden = bool(native_tool_calls) and guards.tools_suppressed()
+    if call_forbidden:
+        logger.warning(
+            "[cache] the model called a tool on a turn that forbade one; the "
+            "call is not dispatched, and the turns after it drop the "
+            "definitions rather than keep the prefix"
+        )
+        agent._record_suppressed_call_ignored()
+        native_tool_calls = native_tool_calls[:1]
 
     # Whether this turn's own text was written before any observation this turn
     # produced. A batch of calls is dispatched after the model has finished
@@ -1842,6 +1928,18 @@ def step(
             return CONTINUE
 
         guards.record_action(check)
+
+        # Nothing is dispatched on a turn that forbade a call. The model is
+        # still owed a reply — a conversation carrying a call that nothing
+        # answered is rejected outright — so the call is declined and the run
+        # goes round once more, this time without the definitions.
+        if call_forbidden:
+            _decline_call(
+                thread, action, action_input,
+                call_id=call_id, reasoning=reasoning,
+                reason="call_forbidden", text=NUDGE_HAVE_RESULTS,
+            )
+            return CONTINUE
 
         # Check if tool is available (handle no-tool mode without raising)
         if not agent.tools or action not in agent.tools:
@@ -2389,12 +2487,12 @@ def _decline_call(
 ) -> None:
     """Record a call the loop chose not to dispatch, with the reply it got.
 
-    The loop declines a call for three reasons: it has the result already, the
-    same call keeps coming back, or the tool is not one this agent holds. In
-    each case the model asked for something and is owed an answer — and a
-    conversation carrying a call that nothing replies to is rejected outright
-    by a provider, so the reply is not optional once the run is held as
-    messages.
+    The loop declines a call for four reasons: it has the result already, the
+    same call keeps coming back, the tool is not one this agent holds, or the
+    turn forbade a call and the provider let one through anyway. In each case
+    the model asked for something and is owed an answer — and a conversation
+    carrying a call that nothing replies to is rejected outright by a provider,
+    so the reply is not optional once the run is held as messages.
 
     Args:
         thread: The run's conversation.

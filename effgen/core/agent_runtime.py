@@ -55,6 +55,13 @@ _message_protocol_unavailable_warned: set[str] = set()
 # request that failed, never from a probe billed on purpose.
 _MESSAGE_PROTOCOL_PROBE: dict[str, str] = {}
 
+# Models this process has watched call a tool on a turn that forbade one. The
+# request that keeps a run's prefix through the turn asking for the answer only
+# works where the provider honours the constraint; a model that ignored it once
+# is sent the shape effGen always sent instead, for the rest of the process.
+# Learned from a real turn, never from a probe billed on purpose.
+_SUPPRESSED_TOOL_CALL_IGNORED: set[str] = set()
+
 #: What the probe writes when the model would not take the shape at all.
 PROTOCOL_REFUSED = "refused"
 #: What the probe writes when the model takes the shape only with the
@@ -153,6 +160,53 @@ def model_can_require_tool_call(model: Any) -> bool:
     except Exception:
         logger.debug("supports_forced_tool_call probe failed", exc_info=True)
         return False
+
+
+def model_can_forbid_tool_call(model: Any) -> bool:
+    """Whether *model* accepts a turn that offers tools and forbids a call.
+
+    Asks the adapter, for the same reason :func:`model_can_require_tool_call`
+    does: only the adapter knows whether its provider honours the constraint or
+    rejects the turn over it. Anything that does not answer reads as "no", and
+    the run asks for its answer in words instead.
+
+    Args:
+        model: The loaded model, or ``None``.
+
+    Returns:
+        bool: True only when the adapter says a request may offer tools while
+        forbidding a call.
+    """
+    if model is None:
+        return False
+    try:
+        return bool(model.supports_suppressed_tool_call())
+    except Exception:
+        logger.debug("supports_suppressed_tool_call probe failed", exc_info=True)
+        return False
+
+
+def model_prompt_cache_policy(model: Any) -> Any:
+    """The prompt-cache policy *model* declares, or ``None``.
+
+    A model that does not answer — an older adapter, a duck-typed stand-in, a
+    probe that raises — declares nothing, and a run against it is shaped and
+    sent exactly as it was before any of this existed.
+
+    Args:
+        model: The loaded model, or ``None``.
+
+    Returns:
+        The adapter's :class:`~effgen.models.base.PromptCachePolicy`, or
+        ``None`` when this provider caches nothing.
+    """
+    if model is None:
+        return None
+    try:
+        return model.prompt_cache_policy()
+    except Exception:
+        logger.debug("prompt_cache_policy probe failed", exc_info=True)
+        return None
 
 
 def resolve_output_budget(
@@ -1389,6 +1443,19 @@ class AgentRuntimeMixin:
         """
         return _MESSAGE_PROTOCOL_PROBE.get(self._model_protocol_key())
 
+    def _suppressed_call_ignored(self) -> bool:
+        """Whether this model has already called a tool on a turn that forbade one.
+
+        Returns:
+            bool: True when the turn that asks for the answer must drop the tool
+            definitions rather than keep them with the call forbidden.
+        """
+        return self._model_protocol_key() in _SUPPRESSED_TOOL_CALL_IGNORED
+
+    def _record_suppressed_call_ignored(self) -> None:
+        """Remember that this model ignored a request that forbade a call."""
+        _SUPPRESSED_TOOL_CALL_IGNORED.add(self._model_protocol_key())
+
     def _record_message_protocol_probe(self, outcome: str) -> None:
         """Remember what this model did with the message protocol.
 
@@ -1403,6 +1470,7 @@ class AgentRuntimeMixin:
         tools_travel_as_parameter: bool,
         conversation_carries_earlier_turns: bool = False,
         conversation_already_on_messages: bool = False,
+        session_carries_later_turns: bool = False,
     ) -> str:
         """Whether this turn sends messages or the flat transcript.
 
@@ -1448,6 +1516,11 @@ class AgentRuntimeMixin:
                 turns.
             conversation_already_on_messages: Whether a request of this run has
                 already gone out as messages.
+            session_carries_later_turns: Whether this run belongs to a session
+                whose next run will carry this one's exchange, and the provider
+                has a prompt cache worth keeping one shape for. The first run
+                then sends what the second will send, so the second extends its
+                prefix instead of starting a new one.
 
         Returns:
             ``"flat"`` or ``"messages"``.
@@ -1459,11 +1532,18 @@ class AgentRuntimeMixin:
             return "flat"
         if declared == "auto":
             if not conversation_carries_earlier_turns:
-                return "flat"
-            logger.info(
-                "[protocol] the run continues a conversation, so its own steps "
-                "travel as turns rather than as text inside one"
-            )
+                if not session_carries_later_turns:
+                    return "flat"
+                logger.info(
+                    "[cache] the session keeps one request shape: this first "
+                    "run sends the conversation as messages, so the next "
+                    "question extends its prefix instead of restarting it"
+                )
+            else:
+                logger.info(
+                    "[protocol] the run continues a conversation, so its own "
+                    "steps travel as turns rather than as text inside one"
+                )
         # An explicit "messages" asked for something it may not get, so it is
         # told at WARNING; "auto" asked the framework to decide, so INFO.
         say = logger.warning if declared == "messages" else logger.info
@@ -1591,6 +1671,21 @@ class AgentRuntimeMixin:
         except Exception:  # noqa: BLE001 - a capability probe never breaks a run
             logger.debug("conversation-support probe failed", exc_info=True)
             return False
+
+    def _keeps_a_session(self) -> bool:
+        """Whether this agent remembers a run for the run after it.
+
+        The caller's own configuration, not a guess: an agent whose memory is
+        switched off answers each question on its own, and nothing about the
+        next one can be prepared for while this one is being sent.
+
+        Returns:
+            bool: True when a later run of this agent will carry this run's
+            exchange.
+        """
+        if not getattr(getattr(self, "config", None), "enable_memory", False):
+            return False
+        return getattr(self, "short_term_memory", None) is not None
 
     def _frame_as_messages(
         self, frame_text: str, thread: Any, *, carry_roles: bool,
