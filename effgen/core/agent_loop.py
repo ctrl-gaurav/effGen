@@ -1443,7 +1443,12 @@ def step(
     # turn is rebuilt, so what is measured is always the request itself.
     if state.budget is not None:
         rounds = 0
-        while state.budget.exceeded(prompt) and rounds < MAX_COMPACTION_ROUNDS:
+        # Each version of the prompt is measured against the budget once. The
+        # measurement counts every message the turn carries, so asking twice
+        # about a prompt that has not changed counted the whole conversation a
+        # second time on every model call.
+        over_budget = state.budget.exceeded(prompt)
+        while over_budget and rounds < MAX_COMPACTION_ROUNDS:
             if not _compact_once(agent, state, thread):
                 outcome = _cannot_fit(agent, policy, state, thread)
                 if outcome is not None:
@@ -1451,7 +1456,8 @@ def step(
                 break
             rounds += 1
             build_prompt()
-        if state.budget.exceeded(prompt):
+            over_budget = state.budget.exceeded(prompt)
+        if over_budget:
             outcome = _cannot_fit(agent, policy, state, thread)
             if outcome is not None:
                 return outcome
