@@ -44,6 +44,12 @@ DEFAULT_MAX_DAYS = 30
 _lock: threading.Lock = threading.Lock()
 _runs: deque[dict[str, Any]] = deque(maxlen=MAX_RUNS)
 _pruned = False
+#: Directories this process has already created for the history. Every run wrote
+#: one record and asked the file system to create the directory again first, so
+#: a process running many agents paid a syscall per run to be told what it knew.
+#: A directory removed under a running process is created again when the write
+#: finds it missing.
+_history_dirs_made: set[str] = set()
 
 
 # --------------------------------------------------------------------------
@@ -274,13 +280,26 @@ def _append_to_file(record: dict[str, Any]) -> None:
         return
     try:
         directory = history_dir()
-        directory.mkdir(parents=True, exist_ok=True)
+        if str(directory) not in _history_dirs_made:
+            directory.mkdir(parents=True, exist_ok=True)
+            _history_dirs_made.add(str(directory))
         _prune_once(directory)
         day = record["ts"][:10]
         line = json.dumps(record, default=str, ensure_ascii=False)
-        with open(directory / f"{day}.jsonl", "a", encoding="utf-8") as fh:
+        path = directory / f"{day}.jsonl"
+        try:
+            fh = open(path, "a", encoding="utf-8")
+        except FileNotFoundError:
+            # The directory went away after this process made it: make it
+            # again, so this record is written rather than lost.
+            directory.mkdir(parents=True, exist_ok=True)
+            fh = open(path, "a", encoding="utf-8")
+        with fh:
             fh.write(line + "\n")
     except Exception:  # noqa: BLE001 - history must never fail a user's run
+        # Whatever failed, the next run asks for the directory again rather
+        # than trusting what this process remembered about it.
+        _history_dirs_made.clear()
         logger.debug("Run history write failed", exc_info=True)
 
 
@@ -536,4 +555,5 @@ def clear() -> None:
     global _pruned
     with _lock:
         _runs.clear()
+    _history_dirs_made.clear()
     _pruned = False
