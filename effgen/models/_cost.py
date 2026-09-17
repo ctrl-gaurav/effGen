@@ -43,15 +43,87 @@ def _budget_config_path() -> Path:
     return Path(env_path) if env_path else _BUDGET_CONFIG_PATH
 
 
-def _load_budget() -> dict:
-    """Load budget config (returns empty dict if absent)."""
+#: The last budget file read, as ``(identity, read_at, config)``. Two budget
+#: checks run per model call — one before it and one after — so a run of any
+#: length read and parsed the same small file twice per call. The identity is
+#: what ``stat`` says about the file, so an edit to it is picked up on the next
+#: call and nothing is parsed twice.
+_budget_cache: tuple[tuple[str, int, int, int, int], float, dict] | None = None
+_budget_cache_lock = threading.Lock()
+#: How often the file was read, and how often a reading was reused.
+_budget_config_stats: dict[str, int] = {"read": 0, "reused": 0}
+#: A reading taken this soon after the file last changed is not trusted. A file
+#: system stamps times at a granularity of its own, so a second write of the same
+#: size inside that granularity leaves ``stat`` unchanged; a reading made that
+#: close to the write may be of the first version. Such a reading is taken again
+#: on the next call, until one is made after the window.
+_BUDGET_RACY_WINDOW_S = 2.0
+
+
+def _budget_file_identity(path: Path) -> tuple[str, int, int, int, int]:
+    """What ``stat`` says about *path*: a key that changes whenever the file does.
+
+    The change time is part of it because a write always moves it, while the
+    modification time can be set back to an earlier value by whatever wrote
+    the file (``cp -p``, ``touch -r``, an unpacked archive). An absent or
+    unreadable file has an identity of its own, so "there is no budget" is
+    remembered as cheaply as a budget is.
+    """
     try:
-        path = _budget_config_path()
-        if path.exists():
-            return json.loads(path.read_text())
-    except Exception:
-        logger.debug("Failed to load budget config; treating as empty", exc_info=True)
-    return {}
+        info = os.stat(path)
+    except OSError:
+        return (str(path), -1, -1, -1, -1)
+    return (str(path), info.st_mtime_ns, info.st_size, info.st_ino, info.st_ctime_ns)
+
+
+def reset_budget_config_cache() -> None:
+    """Forget the remembered budget file, so the next read goes to disk."""
+    global _budget_cache
+    with _budget_cache_lock:
+        _budget_cache = None
+        _budget_config_stats["read"] = 0
+        _budget_config_stats["reused"] = 0
+
+
+def _load_budget() -> dict:
+    """Load budget config (returns empty dict if absent).
+
+    The file is parsed again only when it may have changed, so a budget check
+    usually costs one ``stat`` rather than an open, a read and a parse. A
+    reading taken within :data:`_BUDGET_RACY_WINDOW_S` of the file's last
+    change is never reused, so a rewrite that leaves ``stat``
+    unchanged is still seen. A caller gets its own dictionary either way.
+    """
+    import time
+
+    global _budget_cache
+    path = _budget_config_path()
+    identity = _budget_file_identity(path)
+    with _budget_cache_lock:
+        cached = _budget_cache
+    changed_at = max(identity[1], identity[4]) / 1e9
+    if (cached is not None and cached[0] == identity
+            and (identity[1] == -1
+                 or cached[1] - changed_at >= _BUDGET_RACY_WINDOW_S)):
+        with _budget_cache_lock:
+            _budget_config_stats["reused"] += 1
+        logger.debug("budget config: reading reused (%s)", path)
+        return dict(cached[2])
+
+    read_at = time.time()
+    config: dict = {}
+    if identity[1] != -1:
+        try:
+            loaded = json.loads(path.read_text())
+            if isinstance(loaded, dict):
+                config = loaded
+        except Exception:
+            logger.debug("Failed to load budget config; treating as empty", exc_info=True)
+    with _budget_cache_lock:
+        _budget_cache = (identity, read_at, config)
+        _budget_config_stats["read"] += 1
+    logger.debug("budget config: read from disk (%s)", path)
+    return dict(config)
 
 
 def _configured_budgets(budget_cfg: dict) -> list[tuple[str, float]]:
@@ -526,6 +598,17 @@ class CostTracker:
     #: How long a period-spend reading stays usable, in seconds.
     _PERIOD_SPEND_TTL_S = 1.0
 
+    #: The oldest previous reading a caller may use while another caller is
+    #: making a new one. Past it the caller waits for the new reading, so spend
+    #: another process landed while this one was idle is never missed for longer
+    #: than this.
+    _PERIOD_SPEND_STALE_S = 2.0
+
+    #: How long a caller waits for another caller's reading before making its
+    #: own. A bound, not a timeout anyone should reach: it keeps a reader that
+    #: never returns from stopping every other agent in the process.
+    _PERIOD_SPEND_READ_WAIT_S = 10.0
+
     def __init__(
         self,
         storage: "SQLiteCostStore | None" = None,
@@ -537,6 +620,14 @@ class CostTracker:
         #: :meth:`_period_spend` for why a reading may be reused.
         self._period_spend_cache: dict[str, tuple[float, float]] = {}
         self._period_spend_lock = threading.Lock()
+        #: period -> the event a reading in flight sets when it has an answer.
+        #: One caller reads the ledger; the others wait here rather than on the
+        #: lock, which is what keeps the lock off the database call.
+        self._period_spend_reading: dict[str, threading.Event] = {}
+        #: period -> spend this process recorded while that period's reading
+        #: was in flight. The reading may have been taken before that spend
+        #: reached the ledger, so it is added to the reading when it lands.
+        self._period_spend_during_read: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -761,20 +852,71 @@ class CostTracker:
         second, which is the same window the preflight has anyway, and
         :meth:`_check_budget` still refuses the next call.
 
-        The ledger read runs under the lock, so a burst of callers arriving as
-        a reading expires pays for one read, not one each.
+        A burst of callers arriving as a reading expires still pays for one read
+        rather than one each: the first of them is elected to make it and the
+        rest wait for its answer. They wait on that answer and **not** on the
+        lock, because the lock is never held while the ledger is being read —
+        a lock held across a database call turns every agent in the process
+        into a queue behind whichever one is reading.
         """
         import time
 
-        with self._period_spend_lock:
-            cached = self._period_spend_cache.get(period)
-            if cached is not None and time.monotonic() - cached[0] < self._PERIOD_SPEND_TTL_S:
-                logger.debug("budget preflight: period spend served from cache (%s)",
+        while True:
+            with self._period_spend_lock:
+                cached = self._period_spend_cache.get(period)
+                if cached is not None and time.monotonic() - cached[0] < self._PERIOD_SPEND_TTL_S:
+                    logger.debug("budget preflight: period spend served from cache (%s)",
+                                 period)
+                    return cached[1]
+                reading = self._period_spend_reading.get(period)
+                elected = reading is None
+                if elected:
+                    reading = threading.Event()
+                    self._period_spend_reading[period] = reading
+
+            if elected:
+                assert reading is not None
+                try:
+                    spend = self._period_spend_uncached(period)
+                except BaseException:
+                    with self._period_spend_lock:
+                        self._period_spend_reading.pop(period, None)
+                        self._period_spend_during_read.pop(period, None)
+                    reading.set()
+                    raise
+                with self._period_spend_lock:
+                    # Spend recorded while the ledger was being read may be
+                    # missing from the reading; it is added here, in the same
+                    # step that publishes the reading, so no recorded call
+                    # falls between the two. A call the reading did include is
+                    # counted twice until the reading expires, which is the
+                    # safe direction for a cap.
+                    spend += self._period_spend_during_read.pop(period, 0.0)
+                    self._period_spend_reading.pop(period, None)
+                    self._period_spend_cache[period] = (time.monotonic(), spend)
+                reading.set()
+                return spend
+
+            assert reading is not None
+            if (cached is not None
+                    and time.monotonic() - cached[0] < self._PERIOD_SPEND_STALE_S):
+                # A reading is being made and there is a recent one: use it
+                # rather than stopping the run for a ledger read someone else is
+                # already paying for. The previous reading is exact for
+                # everything this process has spent — :meth:`record` folds each
+                # call into it — so what it can be behind on is another
+                # process's spend, for at most _PERIOD_SPEND_STALE_S.
+                logger.debug("budget preflight: reading in flight, using the last one (%s)",
                              period)
                 return cached[1]
-            spend = self._period_spend_uncached(period)
-            self._period_spend_cache[period] = (time.monotonic(), spend)
-            return spend
+            logger.debug("budget preflight: waiting for a reading of period spend (%s)",
+                         period)
+            reading.wait(timeout=self._PERIOD_SPEND_READ_WAIT_S)
+            with self._period_spend_lock:
+                cached = self._period_spend_cache.get(period)
+                if (cached is not None
+                        and time.monotonic() - cached[0] < self._PERIOD_SPEND_STALE_S):
+                    return cached[1]
 
     def _period_spend_uncached(self, period: str) -> float:
         """Read spend for *period* from storage, falling back to memory.
@@ -827,6 +969,9 @@ class CostTracker:
         with self._period_spend_lock:
             for period, (taken, spend) in self._period_spend_cache.items():
                 self._period_spend_cache[period] = (taken, spend + cost)
+            for period in self._period_spend_reading:
+                self._period_spend_during_read[period] = (
+                    self._period_spend_during_read.get(period, 0.0) + cost)
 
     def _invalidate_period_spend(self) -> None:
         """Drop every cached period reading, forcing the next one to the ledger."""
