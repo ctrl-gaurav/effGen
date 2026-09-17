@@ -430,3 +430,30 @@ class TestThinkingCanBeTurnedOff:
         engine.tokenizer = _Tokenizer()
         engine._apply_chat_template("hi")
         assert "enable_thinking" not in seen
+
+
+class TestARunOutOfBudgetIsNotAnUnexpectedError:
+    """A run that used its whole output budget is diagnosed, and says so.
+
+    The text a caller reads ended with "Unexpected provider error — check the
+    provider status" for a truncation effGen had itself identified, because the
+    guidance table had no entry for the categories those failures carry.
+    """
+
+    @pytest.mark.parametrize("category", ["truncation", "reasoning_only"])
+    def test_the_guidance_names_the_budget(self, category):
+        from effgen.models.errors import generation_failure_text
+
+        text = generation_failure_text({
+            "message": "Model 'm' hit the max_tokens limit (4096) and produced no output.",
+            "category": category,
+        })
+
+        assert "Unexpected provider error" not in text
+        assert "max_tokens" in text
+
+    @pytest.mark.parametrize("category", ["truncation", "reasoning_only"])
+    def test_it_is_not_retried_unchanged(self, category):
+        from effgen.models.errors import _RETRY_STATUS_BY_CATEGORY, RETRY_NON_RETRYABLE
+
+        assert _RETRY_STATUS_BY_CATEGORY[category] == RETRY_NON_RETRYABLE

@@ -42,6 +42,8 @@ _RETRY_STATUS_BY_CATEGORY: dict[str, str] = {
     "transient": RETRY_WILL_RETRY,
     "unreachable": RETRY_WILL_RETRY,
     "timeout": RETRY_WILL_RETRY,
+    "truncation": RETRY_NON_RETRYABLE,
+    "reasoning_only": RETRY_NON_RETRYABLE,
     "unknown": RETRY_WILL_RETRY,
 }
 
@@ -58,6 +60,10 @@ REMEDIATION_BY_CATEGORY: dict[str, str] = {
     "resource_exhausted": "The device ran out of memory — the same request will fail again until less is asked of it or more memory is free.",
     "refusal": "The model refused the request — rephrase or adjust the content.",
     "fatal": "Unrecoverable error — check configuration and provider status.",
+    # A run that ran out of output budget is diagnosed, not unexpected: the same
+    # request fails the same way until the budget or the request changes.
+    "truncation": "The model used its whole output budget before answering — raise max_tokens or ask for less; the same request stops at the same place.",
+    "reasoning_only": "The model answered only in internal reasoning — raise max_tokens or lower the reasoning effort; the same request ends the same way.",
     "unknown": "Unexpected provider error — check the provider status and effGen logs (set EFFGEN_LOG_LEVEL=DEBUG).",
 }
 
