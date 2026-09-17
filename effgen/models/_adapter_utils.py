@@ -91,12 +91,24 @@ _token_counts: OrderedDict[tuple[Any, str], int] = OrderedDict()
 _token_counts_lock = threading.Lock()
 _token_counts_chars = 0
 #: At most this many counts are kept, holding at most this many characters of
-#: text between them; the least recently used go first.
-_TOKEN_COUNTS_MAX_ENTRIES = 1024
+#: text between them; the least recently used go first. Every message of every
+#: conversation in flight is a separate text, short ones included, so the entry
+#: bound is set well above what many concurrent agents hold at once: at 1,024,
+#: thirty-two agents with ordinary histories evicted counts they were about to
+#: ask for again and re-encoded ten to twenty-six texts per model call. The
+#: character bound is what limits memory.
+_TOKEN_COUNTS_MAX_ENTRIES = 16_384
 _TOKEN_COUNTS_MAX_CHARS = 4_000_000
-#: A text shorter than this is encoded every time: remembering it costs about
-#: what encoding it does.
-_TOKEN_COUNTS_MIN_CHARS = 64
+#: A text shorter than this is encoded every time rather than remembered.
+#: Measured on this machine, remembering costs about 0.2 us and encoding a text
+#: of ten to twenty-five characters costs 1.9-4.5 us, so remembering is ten to
+#: twenty times cheaper even for the shortest text a prompt carries — and the
+#: encoding holds the interpreter while it runs, where the lookup barely does,
+#: which is what decides throughput when many agents count prompts at once. The
+#: short texts are also the repeated ones: a tool's name, a tool call's
+#: arguments, a one-line result. Nothing is remembered below zero characters, so
+#: every count is; raise this to put a floor back.
+_TOKEN_COUNTS_MIN_CHARS = 0
 #: How many texts were encoded, and how many counts were answered from memory.
 _token_count_stats: dict[str, int] = {"encoded": 0, "reused": 0}
 
@@ -154,8 +166,8 @@ def estimate_tokens(text: str, *, name: str = "cl100k_base", model: str | None =
 
     Falls back to a character-length estimate when it is not, so a caller always
     gets a number. Empty text is zero tokens; any non-empty text is at least one.
-    The count of a text of 64 characters or more is remembered, so counting the
-    same text again with the same encoding does not encode it again.
+    The count of a text is remembered, so counting the same text again with the
+    same encoding does not encode it again.
 
     Args:
         text: The text to count.
