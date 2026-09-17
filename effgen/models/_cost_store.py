@@ -179,6 +179,44 @@ DELETE FROM cost_events WHERE id NOT IN (
 RETENTION_WARN_ROWS = 250_000
 RETENTION_MAX_AGE_DAYS = 90.0
 
+#: SQLite page cache per connection, in KiB. A file-backed store opens one
+#: connection per thread that uses it, and SQLite's default gives each 2 MiB, so
+#: a process running 32 agents held up to 64 MiB of cache for a table whose
+#: budget query is answered from an index; measured here, resident memory rose
+#: with the ledger until every connection's cache was full. The operating
+#: system's own file cache still serves the pages; this bounds only what each
+#: connection keeps for itself.
+CONNECTION_CACHE_KIB = 256
+
+#: How long a caller whose event is being written by another caller's
+#: transaction waits before looking again. A bound on one wait, not a deadline:
+#: the caller keeps waiting until its event is written or dropped.
+PENDING_WAIT_S = 30.0
+
+
+class _PendingRows(threading.Condition):
+    """The rows recorded but not yet written, and the lock that guards them.
+
+    A condition rather than a lock because callers wait on it: a caller whose
+    event is being written by another caller's transaction waits here, not on
+    the database, and is woken when that transaction ends.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._rows: list[tuple[str, str, int, int, float, float]] = []
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def append_row(self, row: tuple[str, str, int, int, float, float]) -> None:
+        self._rows.append(row)
+
+    def take(self) -> list[tuple[str, str, int, int, float, float]]:
+        """Return everything waiting and leave the list empty."""
+        rows, self._rows = self._rows, []
+        return rows
+
 
 @dataclass
 class CostEvent:
@@ -222,6 +260,26 @@ class SQLiteCostStore:
         #: the write path to answer a question that only changes by one.
         self._rows: int | None = None
         self._warned_retention = False
+        #: Events recorded and not yet written. A model call records one and
+        #: returns once it is written; whichever caller finds the write token
+        #: free writes everything waiting in one transaction, and the others
+        #: wait for that transaction rather than each queueing inside SQLite for
+        #: a transaction of its own. SQLite allows one writer at a time.
+        self._pending = _PendingRows()
+        #: One writer inside SQLite at a time: the caller writing the current
+        #: batch. Nobody waits on it; a caller that finds it taken waits on
+        #: ``_pending`` for the batch in progress to end.
+        self._write_lock = threading.Lock()
+        #: Under ``_pending``: events recorded, events written or dropped, and
+        #: batches finished. An event is done once ``_settled`` reaches its
+        #: sequence number.
+        self._recorded = 0
+        self._settled = 0
+        self._batches_done = 0
+        #: Events written, transactions they were written in, and how often a
+        #: caller's event was written by another caller's transaction.
+        #: ``events / batches`` is how many calls one transaction covers.
+        self.write_stats: dict[str, int] = {"events": 0, "batches": 0, "waited_for_write": 0}
         self._init_schema()
 
     # ------------------------------------------------------------------
@@ -232,6 +290,7 @@ class SQLiteCostStore:
         conn = sqlite3.connect(self._path, check_same_thread=False, timeout=10.0)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute(f"PRAGMA cache_size=-{int(CONNECTION_CACHE_KIB)};")
         if self._path == ":memory:":
             # An in-memory database is created empty along with its connection,
             # so the schema belongs to opening one rather than to constructing
@@ -305,7 +364,15 @@ class SQLiteCostStore:
         cost_usd: float,
         timestamp: float | None = None,
     ) -> None:
-        """Insert one cost event atomically.
+        """Insert one cost event atomically, and return once it is written.
+
+        Calls recorded at the same time are written together: the caller that
+        finds no write in progress writes every event waiting, its own
+        included, in one transaction, and a caller that finds one in progress
+        waits for it to end rather than queueing inside SQLite for a
+        transaction of its own. An event is in the file when this returns, so
+        a process that ends at any moment afterwards — an exit, a signal, a
+        crash — has not lost it.
 
         Args:
             provider: The provider that served the call.
@@ -316,20 +383,114 @@ class SQLiteCostStore:
             timestamp: Unix time of the call, defaulting to now.
         """
         ts = timestamp if timestamp is not None else time.time()
-        with self._exclusive() as conn:
-            conn.execute("BEGIN IMMEDIATE;")
-            try:
-                conn.execute(
-                    _INSERT,
-                    (provider, model, prompt_tokens, completion_tokens, cost_usd, ts),
-                )
-                conn.execute("COMMIT;")
-            except Exception:
-                conn.execute("ROLLBACK;")
-                raise
-        self._note_insert()
+        with self._pending:
+            self._pending.append_row(
+                (provider, model, prompt_tokens, completion_tokens, cost_usd, ts)
+            )
+            self._recorded += 1
+            mine = self._recorded
+        self._write_through(mine)
 
-    def _note_insert(self) -> None:
+    # ------------------------------------------------------------------
+    # Writing
+    # ------------------------------------------------------------------
+
+    def _write_through(self, seq: int, timeout: float | None = None) -> bool:
+        """Return once every event up to *seq* is written (or dropped and said so).
+
+        The caller writes the batch itself when no write is in progress. When
+        one is, it waits for that batch to end and looks again: its event is
+        either in that batch or in the next one, which it or another waiting
+        caller writes. Returns ``False`` only when *timeout* ran out first.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        waited = False
+        while True:
+            with self._pending:
+                if self._settled >= seq:
+                    if waited:
+                        self.write_stats["waited_for_write"] += 1
+                    return True
+                batches_seen = self._batches_done
+            if self._write_lock.acquire(blocking=False):
+                try:
+                    self._drain()
+                finally:
+                    self._write_lock.release()
+                    with self._pending:
+                        self._batches_done += 1
+                        self._pending.notify_all()
+                continue
+            waited = True
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                return False
+            wait_s = PENDING_WAIT_S if remaining is None else min(PENDING_WAIT_S, remaining)
+            with self._pending:
+                # Woken when the batch in progress ends; checked under the same
+                # lock that batch reports under, so its end is never missed.
+                if self._settled < seq and self._batches_done == batches_seen:
+                    self._pending.wait(timeout=wait_s)
+
+    def flush(self, timeout: float | None = None) -> int:
+        """Write every recorded event that has not reached the file yet.
+
+        :meth:`insert` returns only once its event is written, so this finds
+        work only while other threads are inside :meth:`insert`.
+
+        Args:
+            timeout: How long to wait for a write in progress, in seconds.
+                ``None`` waits until it ends.
+
+        Returns:
+            How many events reached the file while it waited, or ``0`` when the
+            wait ran out.
+        """
+        with self._pending:
+            target = self._recorded
+            before = self._settled
+        if not self._write_through(target, timeout=timeout):
+            logger.debug("cost ledger: a write in progress did not end in %.1fs", timeout)
+            return 0
+        with self._pending:
+            return max(0, self._settled - before)
+
+    def _drain(self) -> int:
+        """Write every waiting event in one transaction. The caller holds the write lock.
+
+        A batch that cannot be written is dropped and the number of events in
+        it is logged: a recorded call is never the reason a run fails.
+        """
+        with self._pending:
+            batch = self._pending.take()
+        if not batch:
+            return 0
+        written = 0
+        try:
+            with self._exclusive() as conn:
+                conn.execute("BEGIN IMMEDIATE;")
+                try:
+                    conn.executemany(_INSERT, batch)
+                    conn.execute("COMMIT;")
+                except Exception:
+                    conn.execute("ROLLBACK;")
+                    raise
+            written = len(batch)
+        except Exception as exc:
+            logger.warning("Cost ledger write failed; %d event(s) not recorded: %s",
+                           len(batch), exc)
+        finally:
+            with self._pending:
+                self._settled += len(batch)
+                if written:
+                    self.write_stats["events"] += written
+                    self.write_stats["batches"] += 1
+        if written:
+            self._note_insert(written)
+            logger.debug("cost ledger: wrote %d event(s) in one transaction", written)
+        return written
+
+    def _note_insert(self, added: int = 1) -> None:
         """Track the row count and say once when the ledger crosses its ceiling.
 
         The count is read from the database once, on the first insert of this
@@ -342,8 +503,8 @@ class SQLiteCostStore:
         """
         try:
             if self._rows is None:
-                self._rows = self.count()
-            self._rows += 1
+                self._rows = self._count_rows()
+            self._rows += added
             if self._warned_retention or self._rows < RETENTION_WARN_ROWS:
                 return
             self._warned_retention = True
@@ -359,6 +520,7 @@ class SQLiteCostStore:
 
     def query_since(self, since: float) -> list[CostEvent]:
         """Return all events with timestamp >= *since*."""
+        self.flush()
         with self._exclusive() as conn:
             rows = conn.execute(_QUERY_SINCE, (since,)).fetchall()
         return [CostEvent(*row) for row in rows]
@@ -372,6 +534,7 @@ class SQLiteCostStore:
         of a check grew with the ledger rather than with the window. This runs
         the sum in the database against an index on ``timestamp``.
         """
+        self.flush()
         with self._exclusive() as conn:
             row = conn.execute(_SUM_SINCE, (since,)).fetchone()
         return float(row[0]) if row and row[0] is not None else 0.0
@@ -390,12 +553,23 @@ class SQLiteCostStore:
 
     def count(self) -> int:
         """Number of events currently stored."""
+        self.flush()
+        return self._count_rows()
+
+    def _count_rows(self) -> int:
+        """Rows in the table, without writing anything waiting first.
+
+        The write path itself counts through here: it already holds the write
+        token, so asking :meth:`count` — which flushes — would be asking for a
+        token it is holding.
+        """
         with self._exclusive() as conn:
             row = conn.execute(_COUNT_ALL).fetchone()
         return int(row[0]) if row else 0
 
     def count_since(self, since: float) -> int:
         """Number of events with ``timestamp >= since``, counted in SQLite."""
+        self.flush()
         with self._exclusive() as conn:
             row = conn.execute(_COUNT_SINCE, (since,)).fetchone()
         return int(row[0]) if row else 0
@@ -418,6 +592,7 @@ class SQLiteCostStore:
                 "prune() was given both max_age_days and keep_rows. "
                 "Pass one bound per call."
             )
+        self.flush()
         with self._exclusive() as conn:
             conn.execute("BEGIN IMMEDIATE;")
             try:
@@ -458,6 +633,7 @@ class SQLiteCostStore:
 
     def query_all(self) -> list[CostEvent]:
         """Return all stored events (lifetime)."""
+        self.flush()
         with self._exclusive() as conn:
             rows = conn.execute(_QUERY_ALL).fetchall()
         return [CostEvent(*row) for row in rows]
@@ -465,6 +641,7 @@ class SQLiteCostStore:
     def cleanup(self, max_age_seconds: float) -> int:
         """Delete events older than *max_age_seconds*.  Returns rows deleted."""
         cutoff = time.time() - max_age_seconds
+        self.flush()
         with self._exclusive() as conn:
             conn.execute("BEGIN IMMEDIATE;")
             try:
@@ -479,7 +656,12 @@ class SQLiteCostStore:
         return count
 
     def close(self) -> None:
-        """Close this thread's connection, or the shared in-memory one."""
+        """Close this thread's connection, or the shared in-memory one.
+
+        An event being recorded on another thread at the same moment is
+        written first, so closing a store never loses a call it accepted.
+        """
+        self.flush()
         if self._shared_lock is not None:
             with self._shared_lock:
                 if self._shared_conn is not None:
