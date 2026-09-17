@@ -1,5 +1,5 @@
 {
- "derived_at": "2026-09-16",
+ "derived_at": "2026-09-17",
  "version": "1.1.0",
  "public_names": 251,
  "kind_counts": {
@@ -10976,10 +10976,18 @@
      "inherited_from": null
     },
     {
+     "name": "flush",
+     "kind": "method",
+     "signature": "(timeout: float | None = None) -> int",
+     "summary": "Write every recorded event that has not reached the file yet.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "insert",
      "kind": "method",
      "signature": "(provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float, timestamp: float | None = None) -> None",
-     "summary": "Insert one cost event atomically.",
+     "summary": "Insert one cost event atomically, and return once it is written.",
      "is_async": false,
      "inherited_from": null
     },
