@@ -691,6 +691,10 @@ class SubAgentManager:
 
         # Local import avoids a circular import (agent.py imports this module).
         from .agent import Agent, AgentConfig
+        from .agent_config import (
+            DEFAULT_MAX_TURNS_WITHOUT_PROGRESS,
+            DEFAULT_RECOVER_LOST_TOOL_CALLS,
+        )
 
         base_prompt = config.system_prompt or "You are a helpful AI assistant."
 
@@ -733,6 +737,16 @@ class SubAgentManager:
             # nothing answers at a different length from its parent for no
             # reason the caller can see.
             answer_style=getattr(parent_cfg, "answer_style", None),
+            # And when to ask for the answer. A caller who turned that off, or
+            # allowed more turns without a new result, did so for the job.
+            max_turns_without_progress=getattr(
+                parent_cfg, "max_turns_without_progress",
+                DEFAULT_MAX_TURNS_WITHOUT_PROGRESS,
+            ),
+            recover_lost_tool_calls=getattr(
+                parent_cfg, "recover_lost_tool_calls",
+                DEFAULT_RECOVER_LOST_TOOL_CALLS,
+            ),
         )
         child = Agent(child_cfg)
         parent_name = str(getattr(parent, "name", "") or "") or None

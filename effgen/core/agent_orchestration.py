@@ -37,7 +37,11 @@ from ..utils.structured_logging import (
     get_structured_logger,
 )
 from . import ledger as _ledger
-from .agent_config import _RUN_KWARGS, AgentMode
+from .agent_config import (
+    _RUN_KWARGS,
+    AgentMode,
+    validate_max_turns_without_progress,
+)
 from .agent_response import AgentResponse
 from .agent_runtime import _strip_run_citation_markers, sanitize_final_answer
 from .execution_tracker import EventType, ExecutionEvent
@@ -153,6 +157,16 @@ class AgentOrchestrationMixin:
                 ``response.citations`` and ``response.sources`` are populated
                 either way.
 
+                ``recover_lost_tool_calls`` — whether this call reads a tool
+                call the runtime could not run and asks again for one it could
+                not read, overriding ``AgentConfig.recover_lost_tool_calls``.
+
+                ``max_turns_without_progress`` — how many turns in a row may
+                bring no new tool result before the run is asked for its
+                answer, overriding ``AgentConfig.max_turns_without_progress``
+                for this call. ``None`` never asks; a value below 1 raises
+                ``ValueError``.
+
         Returns:
             AgentResponse with results
         """
@@ -167,6 +181,10 @@ class AgentOrchestrationMixin:
                 f"run() got an unexpected keyword argument '{bad}'.{hint} "
                 f"Recognized run() kwargs: {sorted(_RUN_KWARGS)}."
             )
+        if "max_turns_without_progress" in kwargs:
+            # A value nobody can apply is the caller's mistake, raised here like
+            # an unknown keyword rather than reported as a failed run.
+            validate_max_turns_without_progress(kwargs["max_turns_without_progress"])
 
         start_time = time.time()
         # What this run spends, from here to the response it returns. A run

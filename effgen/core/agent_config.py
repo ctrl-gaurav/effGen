@@ -30,6 +30,41 @@ class AgentMode(Enum):
     AUTO = "auto"  # Automatically decide based on router
 
 
+#: How many turns in a row may bring no new result before a run is asked for its
+#: answer, when the caller says nothing: ``None``, never. See
+#: :attr:`AgentConfig.max_turns_without_progress`.
+DEFAULT_MAX_TURNS_WITHOUT_PROGRESS: int | None = None
+
+
+#: Whether a run reads a tool call its model wrote in a shape the strict reader
+#: refuses, and asks for a call again when one could not be read at all.
+#: See :attr:`AgentConfig.recover_lost_tool_calls`.
+DEFAULT_RECOVER_LOST_TOOL_CALLS = False
+
+
+def validate_max_turns_without_progress(value: Any) -> int | None:
+    """Check a ``max_turns_without_progress`` value and return it.
+
+    Args:
+        value: ``None``, or a whole number of turns of at least one.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        ValueError: When the value is anything else, naming what is accepted.
+    """
+    if value is None or (
+        isinstance(value, int) and not isinstance(value, bool) and value >= 1
+    ):
+        return value
+    raise ValueError(
+        f"{value!r} is not a valid max_turns_without_progress. Pass a whole "
+        f"number of turns of at least 1 to ask a run for its answer after that "
+        f"many turns in a row bring no new result, or None to never ask."
+    )
+
+
 #: The protocols :attr:`AgentConfig.prompt_protocol` accepts. ``"flat"`` is the
 #: string every release before this one sent; ``"messages"`` is the provider
 #: message list; ``"auto"`` sends the whole of one conversation in one protocol
@@ -165,6 +200,18 @@ class AgentConfig:
             falls back to the flat transcript and says so in the log. The
             protocol a run actually used comes back on
             ``response.metadata["prompt_protocol"]``.
+        recover_lost_tool_calls: Whether a tool call the model wrote in a
+            shape the runtime could not run is read anyway (raw line breaks or
+            Python-style quoting inside the arguments), and a call that could
+            not be read at all is asked for once more with a call required
+            where the provider enforces it. ``False`` by default.
+            ``run(recover_lost_tool_calls=...)`` sets it for one call.
+        max_turns_without_progress: How many turns in a row may bring no new
+            tool result before the run is asked for its answer. ``None`` (the
+            default) never asks; ``2`` is a reasonable setting. The count
+            starts after the run's first new result; the next turn offers no
+            tools and asks for the answer, and nothing ends the run early.
+            ``run(max_turns_without_progress=...)`` sets it for one call.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str
@@ -303,6 +350,27 @@ class AgentConfig:
     # otherwise). The default keeps a run that continues nothing on the string
     # it already sent.
     prompt_protocol: str = "auto"
+    # How many turns in a row may bring no new result before the run is asked
+    # for its answer. A turn brings a new result when a tool it called returned
+    # something the conversation does not already show in full; a turn that
+    # repeated a call, had one declined, or only reasoned after a turn that only
+    # reasoned did not. The count starts after the run's first new result, and
+    # the turn that follows it offers no tools and asks for the answer — the
+    # run is not ended. A turn that says it takes no action after a new result
+    # is asked for the answer at once. ``None``, the default, turns both off;
+    # the run is then bounded by ``max_iterations`` and the repeat guards alone.
+    max_turns_without_progress: int | None = DEFAULT_MAX_TURNS_WITHOUT_PROGRESS
+    # Whether the loop recovers a tool call the model wrote but the runtime
+    # could not run: a call whose arguments are JSON with raw line breaks or
+    # quoted the way Python quotes them is read and dispatched, and a call that
+    # could not be read at all is asked for once more, with a call required
+    # where the provider enforces that. Off by default: a model that writes
+    # such calls tends to write the same call again once it runs, which the
+    # repeat guards then answer from the record — measured as more repeat
+    # firings per run unless ``max_turns_without_progress`` is also set. With
+    # it off, such a turn is sent back once in words and reported the second
+    # time, as it was before.
+    recover_lost_tool_calls: bool = DEFAULT_RECOVER_LOST_TOOL_CALLS
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -326,6 +394,14 @@ class AgentConfig:
         from .thread_budget import validate_context_budget
 
         validate_context_budget(self.context_budget)
+        validate_max_turns_without_progress(self.max_turns_without_progress)
+        if not isinstance(self.recover_lost_tool_calls, bool):
+            raise ValueError(
+                f"{self.recover_lost_tool_calls!r} is not a valid "
+                f"recover_lost_tool_calls. Pass True to read and ask again for a "
+                f"tool call the runtime could not run, or False to leave such a "
+                f"turn to the written-call report."
+            )
         if self.compaction is not None:
             from .thread_compaction import resolve_policy
 
@@ -352,6 +428,7 @@ _RUN_KWARGS = frozenset({
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
     "middleware", "session", "cite_sources", "answer_style",
     "context_budget", "compaction", "max_context_length",
+    "max_turns_without_progress", "recover_lost_tool_calls",
 })
 
 
