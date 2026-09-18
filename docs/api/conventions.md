@@ -92,6 +92,17 @@ reasons that mean *stopped* are in `STOPPED_REASONS`:
 `max_iterations_partial`, `max_iterations_exhausted`, `loop_detected`,
 `repeated_tool_result`, `null_final_from_model`.
 
+A tool whose calls keep returning new results is bounded by `max_iterations`,
+not by how often it was called. A turn that writes a tool call out instead of
+making it is reported as `written_tool_call`; with
+`AgentConfig.recover_lost_tool_calls` set (off by default) such a call is read
+where it can be read, and asked for once more where it cannot. A caller can also ask the loop to request an
+answer early: with `AgentConfig.max_turns_without_progress` set (it is `None`
+by default), a run whose turns stop bringing new tool results for that many
+turns in a row gets one turn with its tools withdrawn that asks for the answer.
+That request adds no stop reason, and a run that still does not answer ends
+through the exits above.
+
 A **stopped** run has tool results and reasoning but no answer, so those never
 go where the answer goes. They travel in `result.partial`, a `PartialResult`:
 

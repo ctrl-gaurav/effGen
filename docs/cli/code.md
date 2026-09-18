@@ -359,7 +359,10 @@ Some small models answer with the tool call written out as text:
 Nothing is written and nothing runs, so that turn is reported as a failure
 (`"reason": "written_tool_call"`, exit code 1) naming the tool whose call was
 written out and what to do about it, rather than as an answer describing work
-that did not happen. The remedy depends on the path the run used: a model that
+that did not happen. With `recover_lost_tool_calls` set on the agent, such a
+call is read where its arguments only differ from strict JSON by raw line
+breaks or Python-style quoting, and where nothing can be read the turn is sent
+back once with a call required before the failure is reported. The remedy depends on the path the run used: a model that
 was sent the tool definitions natively and still answered in prose needs
 replacing with one that calls tools, while a run on the `react` text path can
 ask for the native path instead. Larger instruct models and the current cloud

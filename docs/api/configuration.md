@@ -8,7 +8,7 @@
 | `model` | `BaseModel \| str` | (required) | Model instance or ID |
 | `tools` | `List[BaseTool]` | `[]` | Tools available to the agent |
 | `system_prompt` | `str` | `"You are a helpful AI assistant."` | System prompt |
-| `max_iterations` | `int` | `10` | Max ReAct loop iterations |
+| `max_iterations` | `int` | `10` | The most model turns one run may take. `run(max_iterations=...)` sets it for one call, and every threshold the loop derives from it — when the answer reminder starts, how many repeated calls read as a loop — follows the value the run is using |
 | `temperature` | `float` | `0.7` | Generation temperature |
 | `enable_sub_agents` | `bool` | `True` | Allow task decomposition |
 | `enable_memory` | `bool` | `True` | Enable conversation memory |
@@ -24,6 +24,8 @@
 | `tool_contract` | `str \| None` | `None` | What the model is told about the attached tools. `None` selects it from the tools' declared categories; a string is stated verbatim; `""` states nothing |
 | `tool_use` | `ToolUsePolicy \| str \| None` | `None` | Whether a run holding these tools has to call one. `None` reads it from the tools' declared categories; `"required"` refuses an answer written with no call; `"auto"` leaves it to the model; `"sparing"` adds that a run which already has the answer should give it |
 | `prompt_protocol` | `str` | `"auto"` | How the run's conversation reaches the model. `"flat"` sends the run's own steps as one string carrying the transcript; `"messages"` sends a system turn, the task, the model's reasoning beside the tool call it made, and each result answering that call; `"auto"` sends the whole of one conversation in one protocol — a run that continues a session sends its own steps as the turns they were, a run that continues nothing keeps them in the flat string. On a model whose adapter takes a conversation, a caller's `system_prompt` and a session's earlier turns travel as their own messages whichever value is set. Falls back to `"flat"`, with a logged reason, on a model, a loop or a turn that cannot carry the shape. The protocol a run used comes back on `response.metadata["prompt_protocol"]` |
+| `recover_lost_tool_calls` | `bool` | `False` | Whether a tool call the model wrote but the runtime could not run is recovered: arguments that are JSON with raw line breaks, or quoted the way Python quotes them, are read and the call runs, and a call that could not be read at all is asked for once more with a call required where the provider enforces it. Off by default — a model that writes such calls often writes the same call again once it runs, which the repeat guards then answer from the record. `run(recover_lost_tool_calls=...)` sets it for one call |
+| `max_turns_without_progress` | `int \| None` | `None` | How many turns in a row may bring no new tool result before the run is asked for its answer; `None` never asks, and `2` is a reasonable setting. A turn brings a new result when a tool it called returned something the conversation does not already show in full. The count starts after the run's first new result; the next turn offers no tools and asks for the answer, and nothing ends the run early. A turn that says it takes no action (`Action: None`) after a new result is asked for the answer at once. `None` turns both off. `run(max_turns_without_progress=...)` sets it for one call; a value below 1 raises `ValueError` |
 
 ## Memory Config
 
