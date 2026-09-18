@@ -130,7 +130,7 @@ class _ScriptedModel(BaseModel):
         return self._native
 
 
-def _agent(responses, *, mode="react", native=False, max_iterations=3) -> Agent:
+def _agent(responses, *, mode="react", native=False, max_iterations=3, **extra) -> Agent:
     return Agent(config=AgentConfig(
         raise_on_error=False,  # these assert the failure response, not the raise
         name="written-call-test",
@@ -138,6 +138,7 @@ def _agent(responses, *, mode="react", native=False, max_iterations=3) -> Agent:
         tools=[Calculator()],
         max_iterations=max_iterations,
         tool_calling_mode=mode,
+        **extra,
     ))
 
 
@@ -159,6 +160,11 @@ def test_written_call_turn_fails_instead_of_answering():
     assert "instead of calling the tool" in resp.output
 
 
+TAGGED_CALL_BLOCK = (
+    '<calculator> {"operation": "calculate", "expression": "379*68"} </calculator>'
+)
+
+
 def test_tagged_call_block_fails_on_the_first_turn():
     """The shape a small model emits under native tool calling costs one call.
 
@@ -166,15 +172,27 @@ def test_tagged_call_block_fails_on_the_first_turn():
     the guard it is returned as a successful answer. It is deterministic for the
     model that produces it, so the turn is reported at once rather than retried.
     """
-    agent = _agent(
-        ['<calculator> {"operation": "calculate", "expression": "379*68"} </calculator>'],
-        mode="hybrid", native=True,
-    )
+    agent = _agent([TAGGED_CALL_BLOCK], mode="hybrid", native=True)
     resp = agent.run("What is 379 * 68?")
     assert resp.success is False
     assert resp.metadata["reason"] == "written_tool_call"
     assert resp.metadata["error"]["tool"] == "calculator"
     assert agent.model.calls == 1, "a deterministic outcome must not be re-billed"
+
+
+def test_a_run_that_recovers_lost_calls_asks_once_before_it_reports():
+    """With ``recover_lost_tool_calls`` on, the answer is sent back once first.
+
+    The turn is told the call was written out instead of made and the next turn
+    is asked for a call; a model that writes the same block again is reported,
+    so the run pays for one retry and not for the rest of its budget.
+    """
+    agent = _agent([TAGGED_CALL_BLOCK], mode="hybrid", native=True,
+                   recover_lost_tool_calls=True)
+    resp = agent.run("What is 379 * 68?")
+    assert resp.success is False
+    assert resp.metadata["reason"] == "written_tool_call"
+    assert agent.model.calls == 2, "one retry, then the outcome is reported"
 
 
 def test_message_names_a_model_that_calls_tools():

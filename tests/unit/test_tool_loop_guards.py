@@ -79,15 +79,28 @@ def test_a_call_the_agent_does_not_hold_is_never_a_loop():
     assert not loop.check_action("nosuchtool", "{}").is_loop
 
 
-def test_enough_differing_calls_to_one_tool_is_a_fuzzy_loop():
+def test_enough_differing_calls_that_bring_nothing_new_is_a_fuzzy_loop():
+    """Differing inputs whose results were already shown read as circling.
+
+    The calls differ, so the exact-pair check never fires; every one of them
+    returns the result the first one did, so none of them is work. Only those
+    calls are counted — a tool that keeps returning something new is not
+    circling however often it is called.
+    """
     loop = _loop()
+    first = loop.check_action("calculator", '{"expression": "0*1"}')
+    loop.record_action(first)
+    loop.observe_result("calculator", "0")
     for i in range(FUZZY_LOOP_THRESHOLD):
-        check = loop.check_action("calculator", f'{{"expression": "{i}+1"}}')
+        check = loop.check_action("calculator", f'{{"expression": "0*{i + 2}"}}')
         assert not check.is_fuzzy_loop
         loop.record_action(check)
-    check = loop.check_action("calculator", '{"expression": "99+1"}')
+        loop.observe_result("calculator", "0")
+    check = loop.check_action("calculator", '{"expression": "0*99"}')
     assert check.is_fuzzy_loop
-    assert check.loop_type == f"fuzzy ({FUZZY_LOOP_THRESHOLD + 1} calls)"
+    assert check.loop_type == (
+        f"fuzzy ({FUZZY_LOOP_THRESHOLD + 1} calls without a new result)"
+    )
 
 
 def test_a_data_processing_tool_gets_the_wider_threshold():
@@ -96,8 +109,9 @@ def test_a_data_processing_tool_gets_the_wider_threshold():
         nudge_cap=ROOMY_CAP,
     )
     assert loop.fuzzy_threshold("cruncher") == FUZZY_LOOP_THRESHOLD_DATA
-    for i in range(FUZZY_LOOP_THRESHOLD_DATA):
+    for i in range(FUZZY_LOOP_THRESHOLD_DATA + 1):
         loop.record_action(loop.check_action("cruncher", f'{{"n": {i}}}'))
+        loop.observe_result("cruncher", "done")
     assert loop.check_action("cruncher", '{"n": 99}').is_fuzzy_loop
 
 

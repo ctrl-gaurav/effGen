@@ -339,7 +339,7 @@ def test_injection_sites_use_the_shared_nudges():
     src = "\n".join(inspect.getsource(m) for m in (al, tl))
     for name in ("NUDGE_CONTINUE", "NUDGE_HAVE_ANSWER", "NUDGE_HAVE_RESULTS",
                  "NUDGE_ALREADY_COMPUTED", "NUDGE_NO_TOOLS", "NUDGE_NOT_USABLE",
-                 "NUDGE_SEARCH_AGAIN"):
+                 "NUDGE_SEARCH_AGAIN", "NUDGE_CALL_NOT_READ"):
         assert getattr(rt, name, None), f"missing nudge constant {name}"
         assert name in src, f"no tool-loop module references {name}"
 
