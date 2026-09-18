@@ -12,6 +12,16 @@ code rather than from two copies of it.
 The class is state plus predicates. It never calls a model, never dispatches a
 tool and never builds a prompt — the caller does all of that and tells the loop
 what happened. This module imports nothing from ``agent.py``.
+
+**Progress, not a count.** A turn made progress when a tool it called returned
+a result the conversation does not already show in full; a failed call counts
+the first time its error is seen. A turn stalled when every result it got was
+already there, when a call it made was answered from the record or declined, or
+when it only reasoned right after a turn that only reasoned. The drift
+threshold counts only calls that brought nothing new, so a run whose every call
+finds something new is not stopped by it, and
+:attr:`NativeToolLoop.max_turns_without_progress` stalled turns in a row ask the
+run for its answer.
 """
 
 from __future__ import annotations
@@ -37,16 +47,20 @@ logger = logging.getLogger(__name__)
 #: not evidence of a repeated result, so the result-based short circuit skips it.
 TOOL_ERROR_PREFIX = "Error executing tool"
 
-#: How many calls to one tool read as circling when the inputs keep changing.
-#: Small models re-format the same call rather than repeating it byte for byte,
-#: so the exact-pair check alone never fires for them.
+#: How many calls to one tool read as circling when the inputs keep changing
+#: and the results do not. Small models re-format the same call rather than
+#: repeating it byte for byte, so the exact-pair check alone never fires for
+#: them. Only calls whose result the conversation already showed are counted: a
+#: tool that keeps returning something new is doing work, however often it is
+#: called.
 #:
 #: This counts *drift*, not work. It was 5, which is below the length of an
 #: ordinary multi-step task: a word problem with four arithmetic steps and one
 #: check spends five calls doing exactly what it was asked to do, and the guard
 #: read that as a loop and ended the run holding an intermediate value. Twelve
-#: distinct calls to one tool is past the length of any chain of work a single
-#: tool is asked to carry, so only a model that really is circling reaches it.
+#: calls to one tool that each brought nothing new is past anything a model
+#: does while it is still working, so only a model that really is circling
+#: reaches it.
 FUZZY_LOOP_THRESHOLD = 12
 
 #: The same threshold for a tool whose job is to chew through data, where
@@ -85,8 +99,11 @@ class LoopCheck:
     action_call_count: int
     #: The same tool with the same input has already been dispatched.
     is_exact_loop: bool
-    #: The same tool has been called enough times to read as a loop.
+    #: The same tool has been called enough times, without a new result, to
+    #: read as a loop.
     is_fuzzy_loop: bool
+    #: How many of this tool's calls returned a result already shown.
+    stalled_call_count: int = 0
 
     @property
     def is_loop(self) -> bool:
@@ -99,8 +116,45 @@ class LoopCheck:
         if self.is_exact_loop:
             return "exact"
         if self.is_fuzzy_loop:
-            return f"fuzzy ({self.action_call_count + 1} calls)"
+            return f"fuzzy ({self.stalled_call_count + 1} calls without a new result)"
         return ""
+
+
+#: :meth:`NativeToolLoop.note_lost_call`: send the turn back and require a call.
+LOST_CALL_ASK = "ask"
+#: Send the turn back without requiring a call.
+LOST_CALL_WARN = "warn"
+#: Report the run as a call that was written out instead of made.
+LOST_CALL_REPORT = "report"
+#: Carry on as with any turn that did nothing.
+LOST_CALL_CONTINUE = "continue"
+
+
+@dataclass
+class _TurnMarks:
+    """What the turn in progress did, as the progress policy reads it."""
+
+    #: Calls whose result the conversation did not already show.
+    new: int = 0
+    #: Calls whose result it did.
+    seen: int = 0
+    #: Calls answered from the record or declined.
+    declined: int = 0
+    #: The turn is neither progress nor a stall: its answer was sent back by a
+    #: guard, or it opened a call that could not be run.
+    neutral: bool = False
+    #: The turn was required to call by a guard.
+    forced: bool = False
+    #: The turn produced neither an action nor an answer.
+    reasoned_only: bool = False
+    #: The turn said it takes no action and wrote nothing usable after it.
+    declared: bool = False
+
+
+#: :meth:`NativeToolLoop.end_turn` found a declared no-action after progress.
+ASK_AFTER_DECLARED = "declared"
+#: :meth:`NativeToolLoop.end_turn` found too many stalled turns in a row.
+ASK_AFTER_STALL = "stalled"
 
 
 @dataclass
@@ -110,18 +164,24 @@ class NativeToolLoop:
     Args:
         tools: The tools the agent holds, by name — the same mapping the loop
             dispatches against.
-        nudge_cap: The configured iteration cap, used to decide when a turn is
-            close enough to the limit to ask for an answer outright.
+        nudge_cap: The iteration cap the run is using — the call's own
+            ``max_iterations`` when it passed one — used to decide when a turn
+            is close enough to the limit to ask for an answer outright, and to
+            bound the drift threshold.
         tool_use: The policy this run is on, or ``None`` to read it from each
             tool's declared category — which is what an agent whose caller
             stated no policy does. It decides one thing here:
             :meth:`execution_tools`, and through it whether an answer written
             with no call is sent back.
+        max_turns_without_progress: How many stalled turns in a row, after the
+            run's first new result, ask the run for its answer; ``None`` never
+            asks. See :meth:`end_turn`.
     """
 
     tools: dict[str, Any]
     nudge_cap: int = 10
     tool_use: ToolUsePolicy | None = None
+    max_turns_without_progress: int | None = None
 
     #: ``(action, normalized_input)`` for every call dispatched so far.
     previous_actions: list[tuple[str, str]] = field(default_factory=list)
@@ -144,6 +204,9 @@ class NativeToolLoop:
     written_call: str | None = None
     #: How many turns did that.
     written_call_turns: int = 0
+    #: Turns that opened a call nothing could run — a tag with nothing after
+    #: it, arguments that did not read, or a call written out as text.
+    lost_calls: int = 0
     #: Tools this run actually dispatched.
     executed_tools: set[str] = field(default_factory=set)
     #: One record per dispatched call, in call order — what
@@ -160,6 +223,18 @@ class NativeToolLoop:
     #: at :data:`~effgen.core.retrieval_requery.MAX_RETRIEVAL_REQUERIES`; see
     #: :meth:`take_retrieval_requery`.
     retrieval_requeries: int = 0
+    #: The results the conversation still shows in full, keyed as
+    #: :meth:`_result_key` keys them, with how many observations carry each.
+    shown_results: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: Calls to each tool whose result was already shown — what the drift
+    #: threshold counts.
+    stalled_calls: dict[str, int] = field(default_factory=dict)
+    #: Whether any turn of this run has brought a new result.
+    progress_seen: bool = False
+    #: Stalled turns in a row since the last new result.
+    turns_without_progress: int = 0
+    _turn: _TurnMarks = field(default_factory=_TurnMarks, repr=False)
+    _previous_turn_only_reasoned: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         """Say once which policy this run is on, so a log can be counted."""
@@ -278,6 +353,7 @@ class NativeToolLoop:
         every turn and was reverted for exactly that.
         """
         forced, self.force_tool_call = self.force_tool_call, False
+        self._turn.forced = self._turn.forced or forced
         return forced
 
     # ------------------------------------------------------------------
@@ -298,7 +374,7 @@ class NativeToolLoop:
             return normalized
 
     def fuzzy_threshold(self, action: str) -> int:
-        """How many calls to *action* read as circling when the inputs differ.
+        """How many stalled calls to *action* read as circling.
 
         The count comes from the tool's declared category — a data-processing
         tool is expected to be called more often than one that answers a
@@ -329,11 +405,13 @@ class NativeToolLoop:
         known = action in self.tools
         action_call_count = sum(1 for a, _ in self.previous_actions if a == action)
         exact_count = sum(1 for seen in self.previous_actions if seen == pair)
+        stalled = self.stalled_calls.get(action, 0)
         return LoopCheck(
             pair=pair,
             action_call_count=action_call_count,
             is_exact_loop=exact_count >= 1 and known,
-            is_fuzzy_loop=action_call_count >= self.fuzzy_threshold(action) and known,
+            is_fuzzy_loop=stalled >= self.fuzzy_threshold(action) and known,
+            stalled_call_count=stalled,
         )
 
     def record_action(self, check: LoopCheck) -> None:
@@ -451,6 +529,137 @@ class NativeToolLoop:
         self.previous_results.append(self._result_key(action, tool_result))
 
     # ------------------------------------------------------------------
+    # Progress
+    # ------------------------------------------------------------------
+    def observe_result(self, action: str, tool_result: Any) -> bool:
+        """Judge one dispatched call's result and remember it.
+
+        A result is new when no observation the conversation still shows in
+        full carries the same text from the same tool. A failed dispatch is
+        judged the same way, so a new error is progress and the same error
+        again is not.
+
+        Args:
+            action: The tool that ran.
+            tool_result: What it returned.
+
+        Returns:
+            Whether the result was new.
+        """
+        key = self._result_key(action, str(tool_result))
+        new = key not in self.shown_results
+        self.shown_results[key] = self.shown_results.get(key, 0) + 1
+        if new:
+            self._turn.new += 1
+        else:
+            self._turn.seen += 1
+            self.stalled_calls[action] = self.stalled_calls.get(action, 0) + 1
+        return new
+
+    def refresh_shown_results(self, steps: Any) -> None:
+        """Re-read which results the conversation still shows in full.
+
+        Called after the conversation was shortened. A result whose observation
+        was cut or dropped is no longer in front of the model, so fetching it
+        again is new work rather than a repeat.
+
+        Args:
+            steps: The conversation's steps, in order.
+        """
+        shown: dict[tuple[str, str], int] = {}
+        by_call: dict[str, str] = {}
+        last_tool: str | None = None
+        for step in steps:
+            kind = getattr(step, "kind", "")
+            if kind == "action":
+                last_tool = step.tool
+                if step.call_id:
+                    by_call[step.call_id] = step.tool
+            elif kind == "observation":
+                tool = by_call.get(step.call_id or "") or last_tool
+                if (tool and step.compacted is None and step.declined is None):
+                    key = self._result_key(tool, str(step.text))
+                    shown[key] = shown.get(key, 0) + 1
+        self.shown_results = shown
+
+    def begin_turn(self) -> None:
+        """Start judging a new turn."""
+        self._turn = _TurnMarks()
+
+    def note_declined(self) -> None:
+        """A call this turn made was answered from the record or declined."""
+        self._turn.declined += 1
+
+    def note_neutral(self) -> None:
+        """This turn is neither progress nor a stall.
+
+        A turn whose answer a guard sent back, and a turn that opened a call
+        nothing could run, say nothing about whether the run is converging.
+        """
+        self._turn.neutral = True
+
+    def note_reasoning_only(self, *, declared: bool = False) -> None:
+        """This turn produced neither an action nor an answer.
+
+        Args:
+            declared: The turn said, in words, that it takes no action. That
+                is not a turn of planning: it counts as a stall at once.
+        """
+        if declared:
+            self._turn.declared = True
+        else:
+            self._turn.reasoned_only = True
+
+    def end_turn(self) -> str | None:
+        """Judge the turn that just ended, and say whether to ask for the answer.
+
+        Counted only after the run's first new result: before it, the refusal
+        guard owns a run that has not called what it must call, and taking its
+        tools away would undo it. One turn of reasoning before acting is
+        planning; two in a row is a stall. A turn a guard forced, a turn whose
+        answer a guard sent back and a turn that lost its call are neither.
+
+        When this returns a value, :attr:`force_text_answer` is already set:
+        the next turn offers no tools and asks for the answer.
+
+        Returns:
+            :data:`ASK_AFTER_DECLARED` when the turn declared no action after
+            the run made progress, :data:`ASK_AFTER_STALL` when
+            :attr:`max_turns_without_progress` stalled turns ran in a row, and
+            ``None`` otherwise — always ``None`` when the limit is ``None``.
+        """
+        turn = self._turn
+        only_reasoned_before = self._previous_turn_only_reasoned
+        self._previous_turn_only_reasoned = False
+        if turn.new:
+            self.progress_seen = True
+            self.turns_without_progress = 0
+            return None
+        if turn.neutral or turn.forced:
+            return None
+        if not self.progress_seen:
+            self._previous_turn_only_reasoned = turn.reasoned_only
+            return None
+        if turn.reasoned_only:
+            self._previous_turn_only_reasoned = True
+            if not only_reasoned_before:
+                return None
+        elif not (turn.seen or turn.declined or turn.declared):
+            return None
+        self.turns_without_progress += 1
+        limit = self.max_turns_without_progress
+        if limit is None or self.force_text_answer:
+            return None
+        if turn.declared:
+            decision = ASK_AFTER_DECLARED
+        elif self.turns_without_progress >= limit:
+            decision = ASK_AFTER_STALL
+        else:
+            return None
+        self.force_text_answer = True
+        return decision
+
+    # ------------------------------------------------------------------
     # Nudges
     # ------------------------------------------------------------------
     def post_tool_nudge(
@@ -504,9 +713,43 @@ class NativeToolLoop:
         make the call, so the caller reports the cause instead of billing the
         rest of the iteration budget for the same outcome.
         """
-        self.written_call = self.written_call or written
-        self.written_call_turns += 1
-        return self.written_call_turns > 1
+        return self.note_lost_call(written) == LOST_CALL_REPORT
+
+    def note_lost_call(self, tool: str | None, *, can_ask: bool = True) -> str:
+        """Record a turn that opened a call nothing could run; say what to do.
+
+        The first such turn of a run is sent back once, with a call required on
+        the next turn where the request can require one. After that, a turn
+        that writes out a call for a held tool is warned the first time it
+        happens and reported the second time — a model that writes the same
+        call out twice is not going to make it. A turn that names no tool — a
+        tag with nothing after it — cannot be reported as a call to anything,
+        so the run goes on.
+
+        Args:
+            tool: The held tool the turn named, or ``None`` when it named none.
+            can_ask: Whether the next turn may be asked for a call at all. A
+                run whose tools are withdrawn is asking for an answer, and is
+                never also asked for a call.
+
+        Returns:
+            :data:`LOST_CALL_ASK` (the forced flag is already set),
+            :data:`LOST_CALL_WARN`, :data:`LOST_CALL_REPORT` or
+            :data:`LOST_CALL_CONTINUE`.
+        """
+        self.lost_calls += 1
+        self._turn.neutral = True
+        if tool:
+            self.written_call = self.written_call or tool
+            self.written_call_turns += 1
+        if self.lost_calls == 1:
+            if can_ask:
+                self.force_tool_call = True
+                return LOST_CALL_ASK
+            return LOST_CALL_WARN
+        if not tool:
+            return LOST_CALL_CONTINUE
+        return LOST_CALL_REPORT if self.written_call_turns > 1 else LOST_CALL_WARN
 
     def tool_ran(self, name: str | None) -> bool:
         """True when *name* was dispatched at some point in this run."""

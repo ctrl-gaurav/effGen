@@ -375,6 +375,260 @@ def parse_call_syntax(raw: str) -> tuple[str, dict[str, Any], list[Any]] | None:
     return name, keywords, positional
 
 
+#: The openings a chat template writes in front of a tool call. They are a
+#: property of the template's call syntax, not of any one model: a turn whose
+#: text opens a call with one of them meant to make that call.
+CALL_OPENING_MARKERS: tuple[str, ...] = (
+    "<tool_call>", "<|python_tag|>", "<function=", "[TOOL_CALLS]", "<|tool_call>",
+)
+
+_CODE_SPAN_RE = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)|`[^`\n]*`", re.DOTALL)
+
+
+def opened_call(text: str | None) -> str | None:
+    """Whether *text* opens a tool call in a template's call syntax, and how.
+
+    Code spans are left out first, so an answer that shows a call inside a code
+    block is documentation rather than a call.
+
+    Args:
+        text: The text a turn produced.
+
+    Returns:
+        ``"empty"`` when nothing follows the last opening, ``"unread"`` when
+        something does, or ``None`` when the text opens no call.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    if not any(marker in text for marker in CALL_OPENING_MARKERS):
+        return None
+    scan = _CODE_SPAN_RE.sub(" ", text) if "`" in text or "~~~" in text else text
+    last = -1
+    marker_len = 0
+    for marker in CALL_OPENING_MARKERS:
+        at = scan.rfind(marker)
+        if at > last:
+            last, marker_len = at, len(marker)
+    if last < 0:
+        return None
+    body = scan[last + marker_len:]
+    body = re.sub(r"</?tool_call>|<tool_call\|>", " ", body)
+    return "unread" if body.strip() else "empty"
+
+
+#: JSON's three words, as a Python reader meets them.
+_JSON_WORDS: dict[str, Any] = {"true": True, "false": False, "null": None,
+                               "True": True, "False": False, "None": None}
+
+
+#: What :func:`_literal_value` returns for anything that is not a literal.
+_NOT_LITERAL = object()
+
+
+def _literal_value(node: ast.AST) -> Any:
+    """The value a literal expression spells, or :data:`_NOT_LITERAL`.
+
+    Only constants, the JSON words, containers of those and a signed number are
+    read; anything else — a name, a call, an operator — is refused, so nothing
+    in the text is ever run.
+    """
+    if isinstance(node, ast.Constant) and isinstance(
+        node.value, (str, int, float, bool, type(None))
+    ):
+        return node.value
+    if isinstance(node, ast.Name):
+        return _JSON_WORDS.get(node.id, _NOT_LITERAL)
+    if isinstance(node, ast.Dict):
+        mapping: dict[Any, Any] = {}
+        for key_node, value_node in zip(node.keys, node.values, strict=True):
+            if key_node is None:
+                return _NOT_LITERAL
+            key = _literal_value(key_node)
+            value = _literal_value(value_node)
+            if key is _NOT_LITERAL or value is _NOT_LITERAL:
+                return _NOT_LITERAL
+            try:
+                mapping[key] = value
+            except TypeError:
+                return _NOT_LITERAL
+        return mapping
+    if isinstance(node, (ast.List, ast.Tuple)):
+        items = [_literal_value(item) for item in node.elts]
+        return _NOT_LITERAL if any(i is _NOT_LITERAL for i in items) else items
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        number = node.operand.value if isinstance(node.operand, ast.Constant) else None
+        if isinstance(number, (int, float)) and not isinstance(number, bool):
+            return -number if isinstance(node.op, ast.USub) else number
+    return _NOT_LITERAL
+
+
+def _escape_line_breaks(body: str, quotes: str) -> str:
+    """Escape the raw line breaks that sit inside string literals of *body*."""
+    out: list[str] = []
+    closing = ""
+    escaped = False
+    for char in body:
+        if closing:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == closing:
+                closing = ""
+            elif char == "\n":
+                out.append("\\n")
+                continue
+            elif char == "\r":
+                out.append("\\r")
+                continue
+        elif char in quotes:
+            closing = char
+        out.append(char)
+    return "".join(out)
+
+
+def read_call_body(body: str) -> tuple[str, Any] | None:
+    """Read the body of a tagged call that is not strict JSON.
+
+    Two shapes are read, in order: JSON whose string values carry raw line
+    breaks — a program written out line by line — and a Python literal, where
+    the arguments are quoted the way Python quotes them. A body that is strict
+    JSON returns ``None``: the ordinary readers own it.
+
+    Args:
+        body: The text inside the call's tags.
+
+    Returns:
+        ``(how, value)`` where *how* names the shape that was read, or ``None``
+        when neither reads it.
+    """
+    body = body.strip()
+    if not body.startswith("{"):
+        return None
+    try:
+        json.loads(body)
+        return None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    try:
+        return "raw line breaks", json.loads(_escape_line_breaks(body, '"'))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    for candidate in (body, _escape_line_breaks(body, "\"'")):
+        try:
+            tree = ast.parse(candidate, mode="eval")
+            value = _literal_value(tree.body)
+        except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+            continue
+        if value is not _NOT_LITERAL:
+            return "python literal", value
+    return None
+
+
+def _read_tagged_call(
+    text: str, tools: dict[str, Any] | None
+) -> tuple[str, dict[str, Any], str] | None:
+    """A ``<tool_call>`` whose body only a lenient reader can read.
+
+    Accepted only when the body names a tool *tools* holds and carries its
+    arguments as a mapping; anything else is left for the caller to report as a
+    call that could not be read. The closing tag may be missing.
+
+    Returns:
+        ``(name, arguments, how)`` or ``None``.
+    """
+    if not tools or "<tool_call>" not in text:
+        return None
+    from .structured_output import _extract_balanced
+
+    for opening in re.finditer(r"<tool_call>", text):
+        rest = text[opening.end():]
+        closed = rest.find("</tool_call>")
+        body = rest[:closed] if closed >= 0 else rest
+        candidates = [body]
+        start = body.find("{")
+        if start >= 0:
+            blob = _extract_balanced(body[start:])
+            if blob and blob.strip() != body.strip():
+                candidates.append(blob)
+        for candidate in candidates:
+            read = read_call_body(candidate)
+            if read is None:
+                continue
+            how, data = read
+            if not isinstance(data, dict):
+                continue
+            inner = data.get("function")
+            call = inner if isinstance(inner, dict) else data
+            name = call.get("name")
+            args = call.get("arguments", call.get("parameters"))
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    args = None
+            if isinstance(name, str) and name in tools and isinstance(args, dict):
+                return name, args, how if closed >= 0 else f"{how}, no closing tag"
+    return None
+
+
+#: What an ``Action:`` value says when the turn takes no action: one of the
+#: single words on its own, or a phrase that may run on into a reason.
+_NO_ACTION_WORDS = (
+    r"\(?[ \t]*(?:"
+    r"(?:none|n/?a|null)(?:[ \t]+(?:needed|required|necessary))?[ \t]*\)?[ \t]*\.?"
+    r"|(?:no[ _-]?action|no further action|no tool(?:[ \t]+call)?"
+    r"|none[ \t]+(?:needed|required|necessary))\b[^\n]*"
+    r")"
+)
+#: An ``Action:`` value that says the turn takes no action.
+_NO_ACTION_VALUE_RE = re.compile(r"^" + _NO_ACTION_WORDS + r"$", re.IGNORECASE)
+#: A whole ``Action:`` line that says so.
+_NO_ACTION_LINE_RE = re.compile(
+    r"^[ \t]*Action:[ \t]*" + _NO_ACTION_WORDS + r"[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ACTION_INPUT_LINE_RE = re.compile(r"^[ \t]*Action Input:.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def declares_no_action(action: str, tools: dict[str, Any] | None = None) -> bool:
+    """Whether an ``Action:`` value says the turn takes no action.
+
+    ``None``, ``N/A``, ``null``, ``no action needed``, ``(no tool)`` and their
+    like are the words the scaffold's own format leads a model to write when it
+    has nothing to call; a phrase may run on into its reason ("No further action
+    needed as the answer is clear"). A tool the agent actually holds under such
+    a name is still a tool, and a call to it is still a call.
+
+    Args:
+        action: The value after ``Action:``, with its argument section removed.
+        tools: The agent's tools by name.
+
+    Returns:
+        True when the value declares that no action is taken.
+    """
+    value = (action or "").strip()
+    if not value or not _NO_ACTION_VALUE_RE.match(value):
+        return False
+    held = {str(name).lower() for name in (tools or {})}
+    return value.strip("().").strip().lower() not in held
+
+
+def text_after_declaration(text: str) -> str:
+    """What a turn wrote after its last whole ``Action: None`` line.
+
+    The ``Action Input:`` line that follows the declaration belongs to it and
+    is left out.
+    """
+    matches = list(_NO_ACTION_LINE_RE.finditer(text or ""))
+    if not matches:
+        return ""
+    last = matches[-1]
+    rest = text[last.end():]
+    rest = _ACTION_INPUT_LINE_RE.sub("", rest, count=1)
+    return rest.strip()
+
+
 def name_positional_arguments(
     tool_name: str, positional: list[Any], tools: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -427,6 +681,14 @@ class ToolCallResult:
             wrote as text for the framework to read back: this is text the
             model addressed to nobody but itself, and it belongs on the same
             turn as the call rather than on a turn of its own.
+        read_leniently: The call was read by a reader that accepts more than
+            strict JSON; ``read_how`` names the shape. The caller decides
+            whether to run such a call.
+        read_how: How a lenient read succeeded, for the caller's log.
+        declared_no_action: The turn wrote an ``Action:`` that says it takes
+            none (``Action: None``). No tool is named by it.
+        after_declaration: What the turn wrote after that declaration, for the
+            loop to read again; empty when nothing followed it.
     """
     tool_name: str | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -436,6 +698,10 @@ class ToolCallResult:
     is_tool_call: bool = False
     call_id: str | None = None
     reasoning: str = ""
+    read_leniently: bool = False
+    read_how: str = ""
+    declared_no_action: bool = False
+    after_declaration: str = ""
 
 
 @dataclass
@@ -501,12 +767,17 @@ class ToolCallingStrategy(ABC):
     """Abstract base class for tool calling strategies."""
 
     @abstractmethod
-    def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:
+    def parse_response(
+        self, text: str, tools: dict[str, Any] | None = None, *, lenient: bool = False,
+    ) -> ToolCallResult:
         """Parse a model response and extract tool call or final answer.
 
         Args:
             text: Raw model response text.
             tools: Dict mapping tool name -> tool object (for validation).
+            lenient: Also read a tagged call whose body is not strict JSON.
+                Off by default: a reader that accepts more changes which
+                readings the caller ever sees, so the caller asks for it.
 
         Returns:
             ToolCallResult with extracted information.
@@ -576,13 +847,26 @@ class ReActStrategy(ToolCallingStrategy):
 
     # -- Core parsing ------------------------------------------------------
 
-    def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:
+    def parse_response(
+        self, text: str, tools: dict[str, Any] | None = None, *, lenient: bool = False,
+    ) -> ToolCallResult:
         """Parse ReAct formatted response.
 
         This is extracted from ``Agent._parse_react_response()`` with the
         same logic and patterns, returning a ``ToolCallResult`` instead of
         a plain dict.
+
+        Args:
+            text: Raw model response text.
+            tools: Dict mapping tool name -> tool object (for validation).
+            lenient: Names a reader this format does not have; accepted so
+                every strategy takes the same arguments.
+
+        Returns:
+            ToolCallResult with the call or the final answer this format
+            states.
         """
+        del lenient
         result = ToolCallResult(raw_text=text)
 
         if not text or not isinstance(text, str):
@@ -650,6 +934,15 @@ class ReActStrategy(ToolCallingStrategy):
                         # Drop a same-line "Action Input:"/"Args:" section so the
                         # name resolves against the registry.
                         action = action_name(action)
+
+                        # "Action: None" says the turn takes no action. It
+                        # names no tool, so it is not dispatched as a call to
+                        # one; what the turn wrote after it is handed to the
+                        # loop to read again.
+                        if declares_no_action(action, tools):
+                            result.declared_no_action = True
+                            result.after_declaration = text_after_declaration(text)
+                            return result
 
                         # "Action: Final Answer" → treat as final answer
                         if action.lower() in ["final answer", "finalanswer", "answer"]:
@@ -790,7 +1083,9 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         """Strategy identifier: ``"native"``."""
         return "native"
 
-    def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:
+    def parse_response(
+        self, text: str, tools: dict[str, Any] | None = None, *, lenient: bool = False,
+    ) -> ToolCallResult:
         """Parse tool calls from native function calling response.
 
         Handles multiple response formats:
@@ -803,6 +1098,10 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         Args:
             text: Raw model response (may contain structured markers).
             tools: Dict mapping tool name -> tool object for validation.
+            lenient: Also read a tagged call whose body is a Python literal or
+                carries raw line breaks inside its JSON strings. Off by
+                default, so a body this reader alone can read is left
+                unparsed and the caller's other readers still see the turn.
 
         Returns:
             ToolCallResult
@@ -842,6 +1141,23 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
                     return result
             except (json.JSONDecodeError, TypeError) as e:
                 logger.debug(f"Failed to parse Qwen tool call JSON: {e}")
+
+        # --- A tagged call only a lenient reader can read ---
+        # A program written with raw line breaks inside its JSON string, or
+        # arguments quoted the way Python quotes them. The call is run only when
+        # it names a tool this agent holds and carries its arguments as a
+        # mapping; anything else is left to be reported as unreadable.
+        #
+        # Asked for, never assumed: reading a body here settles the turn, and a
+        # caller that would not run such a call needs the turn to reach its
+        # other readers instead — the same text often carries the call in a
+        # form one of them does read.
+        read = _read_tagged_call(text, tools) if lenient else None
+        if read is not None:
+            result.tool_name, result.arguments, result.read_how = read
+            result.is_tool_call = True
+            result.read_leniently = True
+            return result
 
         # --- Try the XML dialect ---
         # <function=NAME><parameter=KEY>value</parameter>…</function>, the shape
@@ -936,11 +1252,11 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         # --- No tool call found — check for plain text answer ---
         # If the response doesn't contain any tool call markers, treat as final answer
         text_stripped = text.strip()
-        if text_stripped and not any(marker in text for marker in [
-            "<tool_call>", "<|python_tag|>", "<function=", "[TOOL_CALLS]",
+        if text_stripped and not any(marker in text for marker in (
+            *CALL_OPENING_MARKERS,
             "Thought:", "Action:", "Tool:",
-            "<|channel>", "<channel|>", "<|tool_call>",
-        ]):
+            "<|channel>", "<channel|>",
+        )):
             # A bare "name"/"function" key is only evidence of a call the parse
             # above could not finish — a truncated one. When the JSON is
             # complete it is an answer (e.g. {"name": "Acme Corp", ...}), and
@@ -1072,15 +1388,29 @@ class HybridStrategy(ToolCallingStrategy):
         """Strategy identifier: ``"hybrid"``."""
         return "hybrid"
 
-    def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:
-        """Try native parsing first, then ReAct."""
-        result = self._native.parse_response(text, tools)
+    def parse_response(
+        self, text: str, tools: dict[str, Any] | None = None, *, lenient: bool = False,
+    ) -> ToolCallResult:
+        """Try native parsing first, then ReAct.
+
+        Args:
+            text: Raw model response text.
+            tools: Dict mapping tool name -> tool object (for validation).
+            lenient: Passed to the native reader, which alone has a lenient
+                body reader. It settles the turn when it succeeds, so asking
+                for it decides whether the turn reaches the ReAct reader at
+                all.
+
+        Returns:
+            ToolCallResult from whichever reader read the turn.
+        """
+        result = self._native.parse_response(text, tools, lenient=lenient)
         if result.is_tool_call or result.final_answer:
             logger.debug("Hybrid strategy: native parsing succeeded")
             return result
 
         logger.debug("Hybrid strategy: native parsing failed, trying ReAct")
-        return self._react.parse_response(text, tools)
+        return self._react.parse_response(text, tools, lenient=lenient)
 
     def format_tools_for_prompt(self, tools: list) -> Any:
         """Use native format (JSON Schema definitions)."""

@@ -408,6 +408,18 @@ NUDGE_MUST_EXECUTE = (
     "You have not run a tool yet. Run the {tool} tool and answer from what it "
     "returns, not from what you expect it to return."
 )
+# Sent back once to a turn that opened a tool call nothing could run: the tag
+# with nothing after it, arguments that did not read, or the call written out as
+# text. ``{reason}`` is one of the three ``CALL_NOT_READ_*`` phrases below and
+# nothing else, and the pattern that strips the nudge is anchored on its two
+# fixed halves (see ``_CALL_NOT_READ_RE``).
+NUDGE_CALL_NOT_READ = (
+    "[Your tool call could not be run: {reason}. Make the call again as a tool "
+    "call with its arguments as a JSON object.]"
+)
+CALL_NOT_READ_EMPTY = "nothing followed the call tag"
+CALL_NOT_READ_UNREAD = "its arguments could not be read"
+CALL_NOT_READ_WRITTEN = "it was written out as text instead of being made"
 # Sent back to a run whose search came back without what the question asked
 # for. It offers the move the retrieval close does not: search again, with
 # different words, before concluding. Bounded at one use per run, so a run that
@@ -495,6 +507,13 @@ _MUST_EXECUTE_RE = re.compile(
     + re.escape(NUDGE_MUST_EXECUTE.split("{tool}")[0])
     + r"[^\n]*?"
     + re.escape(NUDGE_MUST_EXECUTE.split("{tool}")[1])
+)
+# ``NUDGE_CALL_NOT_READ`` carries its reason in the middle; stripped the same way.
+_CALL_NOT_READ_RE = re.compile(
+    r"[ \t]*\n?[ \t]*"
+    + re.escape(NUDGE_CALL_NOT_READ.split("{reason}")[0])
+    + r"[^\n]*?"
+    + re.escape(NUDGE_CALL_NOT_READ.split("{reason}")[1])
 )
 
 # A line-anchored "Final Answer:" / "Answer:" label (allows quote/list prefixes).
@@ -827,6 +846,7 @@ _GEMMA_STRAY_TOKEN_RE = re.compile(
 #: The fixed openings every match of the two templated nudges starts with.
 _UNKNOWN_TOOL_OBS_HEAD = "No tool named '"
 _MUST_EXECUTE_HEAD = NUDGE_MUST_EXECUTE.split("{tool}")[0]
+_CALL_NOT_READ_HEAD = NUDGE_CALL_NOT_READ.split("{reason}")[0]
 
 
 def _may_contain(text: str, words: tuple[str, ...]) -> bool:
@@ -878,6 +898,8 @@ def sanitize_final_answer(text: str | None) -> str | None:
         s = _UNKNOWN_TOOL_OBS_RE.sub("", s)
     if _MUST_EXECUTE_HEAD in s:
         s = _MUST_EXECUTE_RE.sub("", s)
+    if _CALL_NOT_READ_HEAD in s:
+        s = _CALL_NOT_READ_RE.sub("", s)
     # 2. Remove tool-echo prefixes, keeping the result after the arrow.
     if "→" in s:
         s = _TOOL_ECHO_RE.sub("", s)

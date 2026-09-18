@@ -605,6 +605,14 @@ class AgentReActParsingMixin:
             # unchanged by it, and the message rendering sends it as the
             # assistant's words on the turn that made the call.
             "reasoning": result.reasoning,
+            # The call was read by the lenient reader, and how. The loop
+            # decides whether a run may take such a call.
+            "read_leniently": result.read_leniently,
+            "read_how": result.read_how,
+            # The turn said it takes no action (``Action: None``), and what it
+            # wrote after saying so, for the loop to read again.
+            "declared_no_action": result.declared_no_action,
+            "after_declaration": result.after_declaration,
         }
         if result.is_tool_call and result.tool_name:
             parsed["action"] = result.tool_name

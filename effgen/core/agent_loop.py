@@ -35,6 +35,7 @@ Everything here is private. This module imports nothing from ``agent.py``.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -66,9 +67,13 @@ from . import ledger as _ledger
 from .agent_config import AgentMode
 from .agent_response import AgentResponse, StreamEvent
 from .agent_runtime import (
+    CALL_NOT_READ_EMPTY,
+    CALL_NOT_READ_UNREAD,
+    CALL_NOT_READ_WRITTEN,
     CONTINUE_REASONING_LINE,
     DEFAULT_SYSTEM_PROMPT,
     NUDGE_ALREADY_COMPUTED,
+    NUDGE_CALL_NOT_READ,
     NUDGE_CONTINUE,
     NUDGE_HAVE_RESULTS,
     NUDGE_MUST_EXECUTE,
@@ -90,7 +95,13 @@ from .agent_runtime import (
     sanitize_final_answer,
     unknown_tool_observation,
 )
-from .agent_tool_loop import NativeToolLoop
+from .agent_tool_loop import (
+    ASK_AFTER_DECLARED,
+    LOST_CALL_ASK,
+    LOST_CALL_REPORT,
+    LOST_CALL_WARN,
+    NativeToolLoop,
+)
 from .execution_tracker import EventType, ExecutionEvent
 from .result_relay import relay_result
 from .retrieval_requery import (
@@ -116,6 +127,7 @@ from .thread_budget import (
 )
 from .thread_compaction import resolve_policy
 from .tool_call_record import ToolCallList
+from .tool_calling import opened_call
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Generator
@@ -212,6 +224,13 @@ class _LoopPolicy:
     #: The answer style this run states, resolved once from the call, the
     #: agent's configuration and the shipped default. ``None`` states nothing.
     answer_style: str | None = None
+    #: How many turns in a row may bring no new result before the run is asked
+    #: for its answer; the call's own value, else the agent's. ``None`` never
+    #: asks.
+    max_turns_without_progress: int | None = None
+    #: Whether this run reads a tool call the runtime could not run, and asks
+    #: again for one it could not read at all.
+    recover_lost_tool_calls: bool = False
 
     @property
     def tools_travel_as_parameter(self) -> bool:
@@ -253,6 +272,18 @@ class _LoopPolicy:
         max_iterations = (
             agent.config.max_iterations if requested is None else int(requested)
         )
+        from .agent_config import validate_max_turns_without_progress
+
+        max_turns_without_progress = validate_max_turns_without_progress(
+            kwargs["max_turns_without_progress"]
+            if "max_turns_without_progress" in kwargs
+            else getattr(agent.config, "max_turns_without_progress", None)
+        )
+        recover_lost = bool(
+            kwargs["recover_lost_tool_calls"]
+            if "recover_lost_tool_calls" in kwargs
+            else getattr(agent.config, "recover_lost_tool_calls", False)
+        )
         from ..prompts.answer_style import resolve_answer_style
 
         run_frame = frame_for(agent)
@@ -281,11 +312,15 @@ class _LoopPolicy:
             task_parts=task_parts,
             prior_steps=prior_steps,
             answer_style=answer_style,
+            max_turns_without_progress=max_turns_without_progress,
+            recover_lost_tool_calls=recover_lost,
         )
         logger.info(
-            "[loop] frame=%s tools_as_parameter=%s streamed=%s max_iterations=%d",
+            "[loop] frame=%s tools_as_parameter=%s streamed=%s max_iterations=%d "
+            "max_turns_without_progress=%s recover_lost_tool_calls=%s",
             policy.frame, policy.tools_travel_as_parameter,
             policy.emit_deltas, policy.max_iterations,
+            policy.max_turns_without_progress, policy.recover_lost_tool_calls,
         )
         return policy
 
@@ -1074,6 +1109,9 @@ def _compact_once(agent: Any, state: _RunState, thread: AgentThread) -> bool:
     after = (budget.stats.summarisation or {}).get("total_tokens", 0)
     state.tokens_used += max(0, after - before)
     budget.stats.firings += 1
+    # A result the model can no longer read in full is not in front of it any
+    # more, so fetching it again counts as new work.
+    state.guards.refresh_shown_results(thread.steps)
     logger.info(
         "[context] compacted the thread: %d tokens allowed, %d measured, "
         "%d observations shortened, %d steps dropped, about %d tokens released",
@@ -1159,6 +1197,175 @@ def _note_debug_turn(state: _RunState, response: dict[str, Any], **fields: Any) 
 
 
 def step(
+    agent: Any,
+    task: str,
+    policy: _LoopPolicy,
+    state: _RunState,
+    emitter: Any,
+) -> Generator[Any, None, _StepOutcome]:
+    """Take one turn, then judge whether it brought the run anything new.
+
+    A run that goes round again after a turn with a declared no-action, or
+    after ``max_turns_without_progress`` turns in a row without a new result,
+    is asked for its answer: the next turn offers no tools and says so. Nothing
+    here ends a run.
+
+    Args:
+        agent: The agent the run belongs to.
+        task: The task, as the caller wrote it.
+        policy: The run's policy, decided once before the first turn.
+        state: The run's conversation, guards and counters.
+        emitter: How this turn reaches the caller.
+
+    Returns:
+        Whether the run goes round again, or the response it ended with.
+    """
+    state.guards.begin_turn()
+    outcome = yield from _take_turn(agent, task, policy, state, emitter)
+    if outcome.kind == "continue":
+        _ask_for_the_answer_when_stalled(policy, state)
+    return outcome
+
+
+def _ask_for_the_answer_when_stalled(policy: _LoopPolicy, state: _RunState) -> None:
+    """Withdraw the tools and ask for the answer when the turn says to."""
+    decision = state.guards.end_turn()
+    if decision is None:
+        return
+    if decision == ASK_AFTER_DECLARED:
+        logger.info("[progress] the turn declared no action; asking for the answer")
+    else:
+        logger.info(
+            "[progress] %d turns in a row brought no new result; asking for the "
+            "answer",
+            policy.max_turns_without_progress or 0,
+        )
+    state.thread.append(
+        NudgeStep(text=NUDGE_HAVE_RESULTS, render_as="raw", nudge_id="have_results")
+    )
+
+
+def _lost_call(
+    agent: Any,
+    policy: _LoopPolicy,
+    state: _RunState,
+    text: str,
+    *,
+    reason: str,
+    tool: str | None,
+) -> _StepOutcome | None:
+    """Handle a turn that opened a tool call nothing could run.
+
+    The first such turn of a run is sent back once, saying why, and the next
+    turn is required to call where the request can require it. A later one
+    that names a held tool ends the run as a call written out instead of made.
+
+    Args:
+        agent: The agent the run belongs to.
+        policy: The run's policy.
+        state: The run's conversation and guards.
+        text: What the turn wrote.
+        reason: Why the call could not be run, one of the ``CALL_NOT_READ_*``
+            phrases.
+        tool: The held tool the turn named, or ``None``.
+
+    Returns:
+        The run's terminal outcome when the run is reported, else ``None``.
+    """
+    guards = state.guards
+    decision = guards.note_lost_call(
+        tool,
+        can_ask=policy.recover_lost_tool_calls and not guards.tools_suppressed(),
+    )
+    if decision == LOST_CALL_REPORT:
+        return _written_call(agent, state, guards.written_call, text)
+    if decision == LOST_CALL_ASK:
+        requirable = policy.tools_travel_as_parameter and model_can_require_tool_call(
+            agent.model
+        )
+        logger.info(
+            "[call] the turn opened a tool call that could not be read (%s); %s",
+            reason,
+            "requiring a call on the next turn" if requirable
+            else "asking again (no request-level constraint available here)",
+        )
+        state.thread.append(
+            NudgeStep(
+                text=NUDGE_CALL_NOT_READ.format(reason=reason),
+                render_as="observation",
+                nudge_id="call_not_read",
+            )
+        )
+    elif decision == LOST_CALL_WARN:
+        state.thread.append(
+            NudgeStep(
+                text=NUDGE_NOT_USABLE, render_as="observation", nudge_id="not_usable",
+            )
+        )
+    return None
+
+
+#: Whether a strategy class's ``parse_response`` takes ``lenient``, read once
+#: per class. A strategy written before that argument existed is called without
+#: it, so a caller's own reader keeps working whatever the run asked for.
+_READS_LENIENTLY: dict[type, bool] = {}
+
+
+def _accepts_lenient(strategy: Any) -> bool:
+    """Whether *strategy* takes the ``lenient`` argument at all."""
+    kind = type(strategy)
+    known = _READS_LENIENTLY.get(kind)
+    if known is not None:
+        return known
+    try:
+        parameters = inspect.signature(strategy.parse_response).parameters
+    except (TypeError, ValueError):  # a reader that cannot be inspected
+        known = False
+    else:
+        known = "lenient" in parameters or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+        )
+    _READS_LENIENTLY[kind] = known
+    return known
+
+
+def _read_turn(
+    strategy: Any, text: str, tools: Any, *, lenient: bool,
+) -> Any:
+    """Read one turn's text, asking for the lenient reader only when wanted.
+
+    A strategy of the caller's own may predate that argument, so it is named
+    only on a run that would run what it reads **and** only on a reader that
+    takes it; the shipped default calls the strategy exactly as it has always
+    been called, and a caller's own reader is never handed an argument it does
+    not have.
+
+    Args:
+        strategy: The strategy this turn's frame reads with.
+        text: What the turn produced.
+        tools: The agent's tools by name.
+        lenient: Whether a tagged call that is not strict JSON may be read.
+
+    Returns:
+        The strategy's ``ToolCallResult``.
+    """
+    if lenient and _accepts_lenient(strategy):
+        return strategy.parse_response(text, tools=tools, lenient=True)
+    return strategy.parse_response(text, tools=tools)
+
+
+def _unmade_call_in(agent: Any, guards: NativeToolLoop, text: str) -> str | None:
+    """The held tool whose call *text* writes out instead of making, or ``None``."""
+    cleaned = sanitize_final_answer(text) or text
+    written = find_written_tool_call(cleaned, agent.tools) or find_written_tool_call(
+        text, agent.tools
+    )
+    if written and guards.is_unmade_call(written, text):
+        return written
+    return None
+
+
+def _take_turn(
     agent: Any,
     task: str,
     policy: _LoopPolicy,
@@ -1500,7 +1707,12 @@ def step(
         }
 
     if guards.take_forced_tool_call():
-        if "tools" in gen_kwargs and model_can_require_tool_call(agent.model):
+        if guards.tools_suppressed():
+            # This turn asks for the answer. A request that forbids a call is
+            # never also made to require one.
+            logger.info("forced tool call: nudge only on iteration %d "
+                        "(the run's tools are withdrawn on this turn)", iterations)
+        elif "tools" in gen_kwargs and model_can_require_tool_call(agent.model):
             gen_kwargs["tool_choice"] = "required"
             logger.info("forced tool call: requiring a call on iteration %d",
                         iterations)
@@ -1695,6 +1907,9 @@ def step(
     # writing, so its text cannot state a result the batch returned; the answer
     # recovery below has to know that.
     dispatched_calls_this_turn = False
+    # The turn said it takes no action and wrote nothing that reads as an
+    # answer after it.
+    declared_no_action = False
 
     if len(native_tool_calls) > 1 and agent.tools:
         batch_observations: list[str] = []
@@ -1740,6 +1955,7 @@ def step(
                     duration=_batch_elapsed,
                     iteration=iterations,
                 )
+                guards.observe_result(_tname, _obs)
                 batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
             else:
                 # A call naming a tool this agent does not hold is still a call
@@ -1747,6 +1963,7 @@ def step(
                 # dropping it left the turn with a call nothing replied to and
                 # the model with no idea its request had been refused.
                 _declined = "unknown_tool"
+                guards.note_declined()
                 _obs = (
                     unknown_tool_observation(_tname, list(agent.tools))
                     if agent.tools
@@ -1797,10 +2014,48 @@ def step(
         parsed = agent._tool_call_result_to_dict(strategy_result)
     else:
         parse_strategy = agent._text_parse_strategy(turn_frame == "native")
-        strategy_result = parse_strategy.parse_response(
-            response["text"], tools=agent.tools,
+        # The lenient reader is asked for only by a run that would run what it
+        # reads. Leaving it out of the request — rather than dropping the call
+        # it returned — is what keeps a run at the shipped default reading the
+        # turn exactly as it always did: the reader that accepts more settles
+        # the turn as soon as it succeeds, and the turn never reaches the
+        # readers that would have found the call in the form they understand.
+        strategy_result = _read_turn(
+            parse_strategy, response["text"], agent.tools,
+            lenient=policy.recover_lost_tool_calls,
         )
         parsed = agent._tool_call_result_to_dict(strategy_result)
+        if parsed.get("read_leniently"):
+            logger.info(
+                "[call] read a tool call whose arguments were not strict JSON "
+                "(%s)", parsed.get("read_how"),
+            )
+        # A turn that said it takes no action ("Action: None") is not a call to
+        # a tool of that name. Say so on every turn it happens, so a run that
+        # reads differently for this reason says which turn and why. What the
+        # turn wrote after saying so is read again by the same reader: an
+        # answer found there is the turn's answer, and goes through every check
+        # an answer goes through. A turn that also opened a call is a lost
+        # call, not a declaration.
+        if parsed.get("declared_no_action"):
+            logger.info("[progress] the turn declared no action, which names no tool")
+        if parsed.get("declared_no_action") and opened_call(response["text"]) is None:
+            remainder = str(parsed.get("after_declaration") or "")
+            answer_after = None
+            if remainder.strip() and opened_call(remainder) is None:
+                reread = _read_turn(
+                    parse_strategy, remainder, agent.tools,
+                    lenient=policy.recover_lost_tool_calls,
+                )
+                if not reread.is_tool_call and (reread.final_answer or "").strip():
+                    answer_after = reread.final_answer
+            if answer_after is not None:
+                logger.info(
+                    "[progress] the turn declared no action and answered after it"
+                )
+                parsed["final_answer"] = answer_after
+            else:
+                declared_no_action = True
 
     logger.info(
         f"[Iteration {iterations}] Parsed - Action: {parsed.get('action')}, "
@@ -1849,12 +2104,23 @@ def step(
     # budget for the same outcome.
     if final_answer and not (sanitize_final_answer(final_answer) or "").strip():
         written = find_written_tool_call(final_answer, agent.tools)
-        if written and guards.is_unmade_call(written, final_answer):
-            if guards.note_written_call(written):
-                return _written_call(
-                    agent, state, guards.written_call, final_answer,
-                )
         logger.info("Discarding scaffolding-only final answer; continuing loop")
+        if written and guards.is_unmade_call(written, final_answer):
+            outcome = _lost_call(
+                agent, policy, state, final_answer,
+                reason=CALL_NOT_READ_WRITTEN, tool=written,
+            )
+            if outcome is not None:
+                return outcome
+            thread.append(
+                NudgeStep(
+                    text=CONTINUE_REASONING_LINE,
+                    render_as="raw",
+                    nudge_id="continue_reasoning",
+                )
+            )
+            _note_debug_turn(state, response, thought=parsed.get("thought", ""))
+            return CONTINUE
         thread.append(
             NudgeStep(
                 text=NUDGE_NOT_USABLE,
@@ -1862,6 +2128,7 @@ def step(
                 nudge_id="not_usable",
             )
         )
+        guards.note_reasoning_only()
         final_answer = None
 
     if final_answer:
@@ -1880,11 +2147,28 @@ def step(
                     nudge_id="must_execute",
                 )
             )
+            guards.note_neutral()
             return CONTINUE
 
         # A run whose search came back without what the question asked for has
         # one more query to spend before that answer is taken.
         if _requery(agent, state, policy, final_answer):
+            if emitter.emits_deltas:
+                emitter.reset_answer()
+            return CONTINUE
+
+        # An answer that is a call written out instead of made is sent back
+        # once, like any other call nothing could run. A run that does not
+        # recover lost calls reports it where it always did, in build_response.
+        unmade = (_unmade_call_in(agent, guards, final_answer)
+                  if policy.recover_lost_tool_calls else None)
+        if unmade is not None:
+            outcome = _lost_call(
+                agent, policy, state, final_answer,
+                reason=CALL_NOT_READ_WRITTEN, tool=unmade,
+            )
+            if outcome is not None:
+                return outcome
             if emitter.emits_deltas:
                 emitter.reset_answer()
             return CONTINUE
@@ -1908,6 +2192,7 @@ def step(
         state.tool_calls > 0
         and not parsed.get("action")
         and not dispatched_calls_this_turn
+        and not declared_no_action
     ):
         response_text = response["text"].strip()
         if any(
@@ -1917,6 +2202,18 @@ def step(
             ]
         ):
             if _requery(agent, state, policy, response_text):
+                if emitter.emits_deltas:
+                    emitter.reset_answer()
+                return CONTINUE
+            unmade = (_unmade_call_in(agent, guards, response_text)
+                      if policy.recover_lost_tool_calls else None)
+            if unmade is not None:
+                outcome = _lost_call(
+                    agent, policy, state, response_text,
+                    reason=CALL_NOT_READ_WRITTEN, tool=unmade,
+                )
+                if outcome is not None:
+                    return outcome
                 if emitter.emits_deltas:
                     emitter.reset_answer()
                 return CONTINUE
@@ -1930,6 +2227,43 @@ def step(
             return _StepOutcome("response", build_response(
                 agent, policy, state, snapshot, response_text,
             ))
+
+    # A turn that opened a call nothing could run — a template's call tag with
+    # nothing readable after it, or a call for a held tool written out as text —
+    # is sent back once and required to call, rather than costing a silent turn.
+    proposed = parsed.get("action")
+    if (
+        policy.recover_lost_tool_calls
+        and agent.tools
+        and not native_tool_calls
+        and not final_answer
+        and (not proposed or proposed not in agent.tools)
+    ):
+        opened = opened_call(response["text"])
+        unmade = _unmade_call_in(agent, guards, response["text"])
+        if opened or unmade:
+            reason = (
+                CALL_NOT_READ_WRITTEN if not opened
+                else CALL_NOT_READ_EMPTY if opened == "empty"
+                else CALL_NOT_READ_UNREAD
+            )
+            outcome = _lost_call(
+                agent, policy, state, response["text"], reason=reason, tool=unmade,
+            )
+            if outcome is not None:
+                return outcome
+            thread.append(
+                NudgeStep(
+                    text=CONTINUE_REASONING_LINE,
+                    render_as="raw",
+                    nudge_id="continue_reasoning",
+                )
+            )
+            _note_debug_turn(
+                state, response, thought=parsed.get("thought", ""),
+                action=proposed, action_input=parsed.get("action_input"),
+            )
+            return CONTINUE
 
     # Execute action if present
     if parsed.get("action") and parsed.get("action_input"):
@@ -1970,6 +2304,7 @@ def step(
             thread.append(ObservationStep(text=str(replay), call_id=call_id))
             yield from emitter.observation(action, str(replay))
             cur_observation = replay
+            guards.note_declined()
             nudge = guards.post_tool_nudge(iterations, action_call_count, replay)
             if nudge:
                 thread.append(
@@ -1979,6 +2314,7 @@ def step(
                 )
             return CONTINUE
         if check.is_loop:
+            guards.note_declined()
             logger.info(
                 f"[Loop detected] Repeated action '{action}' ({check.loop_type}) — "
                 f"the run stops offering this tool"
@@ -2046,6 +2382,7 @@ def step(
         # answered is rejected outright — so the call is declined and the run
         # goes round once more, this time without the definitions.
         if call_forbidden:
+            guards.note_declined()
             _decline_call(
                 thread, action, action_input,
                 call_id=call_id, reasoning=reasoning,
@@ -2071,6 +2408,7 @@ def step(
             thread.append(ObservationStep(
                 text=str(observation), call_id=call_id, declined="unknown_tool",
             ))
+            guards.note_declined()
             yield from emitter.observation(action, str(observation))
         else:
             # Execute tool inside tracing span
@@ -2095,6 +2433,7 @@ def step(
             # Keep the result against the exact call that produced it, so
             # proposing that call again is answered from the record.
             guards.record_pair_result(check, tool_result)
+            guards.observe_result(action, tool_result)
             cur_observation = tool_result
 
             labels = {"tool_name": action, "agent_name": agent.name}
@@ -2194,24 +2533,22 @@ def step(
                 )
 
     else:
-        # A turn that produced neither an action nor an answer, but did write
-        # out a call for a tool this agent holds, is the same failure the answer
-        # path reports: the model is writing the call instead of making it. Say
-        # so once, and on a second such turn report the cause rather than
-        # grinding to the iteration cap and reporting only that.
-        written = find_written_tool_call(response["text"], agent.tools)
-        if written and guards.is_unmade_call(written, response["text"]):
-            if guards.note_written_call(written):
-                return _written_call(
-                    agent, state, guards.written_call, response["text"],
+        # A turn that produced neither an action nor an answer. One such turn
+        # is planning; the progress policy reads two in a row as a stall, and a
+        # turn that said it takes no action as one at once. A turn that wrote
+        # out a call it did not make is handled above when the run recovers
+        # such calls, and here when it does not: said once, reported the second
+        # time, as it was before.
+        if not policy.recover_lost_tool_calls:
+            written = _unmade_call_in(agent, guards, response["text"])
+            if written is not None:
+                outcome = _lost_call(
+                    agent, policy, state, response["text"],
+                    reason=CALL_NOT_READ_WRITTEN, tool=written,
                 )
-            thread.append(
-                NudgeStep(
-                    text=NUDGE_NOT_USABLE,
-                    render_as="observation",
-                    nudge_id="not_usable",
-                )
-            )
+                if outcome is not None:
+                    return outcome
+        guards.note_reasoning_only(declared=declared_no_action)
         # No action specified, prompt to continue
         thread.append(
             NudgeStep(
@@ -2303,8 +2640,9 @@ def drive(
         # for every path, so all of them reach the same decisions.
         guards=NativeToolLoop(
             agent.tools,
-            nudge_cap=agent.config.max_iterations,
+            nudge_cap=policy.max_iterations,
             tool_use=agent._declared_tool_use(),
+            max_turns_without_progress=policy.max_turns_without_progress,
         ),
     )
     # Which protocol the run's turns went out on. Stamped here so every response
