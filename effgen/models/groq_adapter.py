@@ -11,6 +11,7 @@ the CerebrasAdapter closely with Groq-specific rate limits.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -102,6 +103,29 @@ def _is_request_too_large(message: str, message_lower: str) -> bool:
         or "request too large" in message_lower
         or "reduce your message size" in message_lower
     )
+
+
+def _failed_generation_text(exc: Exception, message: str) -> str:
+    """The text the model wrote, as Groq quotes it back in ``failed_generation``.
+
+    Read from the SDK's parsed error body when it has one, and otherwise from
+    the error message, which carries the same body as a Python literal.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and isinstance(err.get("failed_generation"), str):
+            return str(err["failed_generation"])
+    start = message.find("{")
+    if start < 0:
+        return ""
+    try:
+        data = ast.literal_eval(message[start:])
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return ""
+    err = data.get("error") if isinstance(data, dict) else None
+    text = err.get("failed_generation") if isinstance(err, dict) else None
+    return text if isinstance(text, str) else ""
 
 
 def _parse_failed_generation_json_call(message: str) -> dict[str, Any] | None:
@@ -723,6 +747,45 @@ class GroqAdapter(BaseModel):
                         },
                     )
 
+                if "tool_use_failed" in msg_lower and request_params.get("tools"):
+                    # The request offered tools and the model made a call Groq
+                    # could not parse. The call is the model's turn, so it is
+                    # handed back as written, in the call tag a tool-calling
+                    # loop reads: the loop reads it if it can and otherwise asks
+                    # for the call again, rather than the run failing here.
+                    written = _failed_generation_text(exc, msg)
+                    if written.strip():
+                        logger.info(
+                            "Groq rejected a tool call it could not parse; the call "
+                            "is handed back as the model wrote it"
+                        )
+                        prompt_tokens, completion_tokens = self._estimate_failed_usage(
+                            request_params, exc, msg,
+                        )
+                        lost_cost: float | None = None
+                        if self._enable_cost_tracking:
+                            lost_cost = CostTracker.get().record(
+                                provider="groq",
+                                model=self.model_name,
+                                prompt_tokens=prompt_tokens,
+                                completion_tokens=completion_tokens,
+                            )
+                        return GenerationResult(
+                            text=f"<tool_call>\n{written.strip()}\n</tool_call>",
+                            tokens_used=completion_tokens,
+                            finish_reason="stop",
+                            model_name=self.model_name,
+                            metadata={
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": prompt_tokens + completion_tokens,
+                                "provider": "groq",
+                                "cost_usd": lost_cost,
+                                "estimated_usage": True,
+                                "provider_error": "tool_use_failed",
+                                "unreadable_tool_call": True,
+                            },
+                        )
                 logger.error("Groq API call failed: %s", exc)
                 if "tool_use_failed" in msg_lower:
                     # The recovery above could not read the call. Say what the

@@ -660,6 +660,59 @@ class TestReActPathToolUseFailedRecovery:
         assert call["function"]["name"] == "calculator"
         assert json.loads(call["function"]["arguments"]) == {"expression": "234 * 567"}
 
+    def test_an_unreadable_call_on_a_request_with_tools_is_handed_back(self):
+        """A call Groq could not parse is the model's turn, not a failed run.
+
+        With tool definitions on the request, the model's call comes back as the
+        text it wrote, inside the call tag a tool-calling loop reads, so the
+        loop can ask for the call again. Usage is estimated and marked.
+        """
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Failed to parse tool call "
+            "arguments as JSON', 'type': 'invalid_request_error', 'code': "
+            "'tool_use_failed', 'failed_generation': '{\"name\": \"python_exec\", "
+            "\"arguments\": print(18+11)\\n\"}'}}"
+        )
+        tools = [{"type": "function", "function": {
+            "name": "python_exec", "description": "Run code.",
+            "parameters": {"type": "object", "properties": {"code": {"type": "string"}}},
+        }}]
+        result = adapter.generate_with_tools("Run it.", tools)
+
+        assert result.text.startswith("<tool_call>")
+        assert '"name": "python_exec"' in result.text
+        assert "print(18+11)" in result.text
+        assert not result.metadata.get("tool_calls")
+        assert result.metadata["provider_error"] == "tool_use_failed"
+        assert result.metadata["unreadable_tool_call"] is True
+        assert result.metadata["estimated_usage"] is True
+
+    def test_a_handed_back_call_is_asked_for_again_by_the_loop(self):
+        """The loop sends the turn back once with a call required, then reports."""
+        from effgen.core.agent import Agent, AgentConfig
+        from effgen.tools.builtin.calculator import Calculator
+
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Failed to parse tool call "
+            "arguments as JSON', 'type': 'invalid_request_error', 'code': "
+            "'tool_use_failed', 'failed_generation': '{\"name\": \"calculator\", "
+            "\"arguments\": 6*7)\"}'}}"
+        )
+        agent = Agent(AgentConfig(
+            name="groq-lost-call", model=adapter, tools=[Calculator()],
+            max_iterations=4, raise_on_error=False, enable_memory=False,
+            tool_calling_mode="native", recover_lost_tool_calls=True,
+        ))
+        response = agent.run("What is 6*7?")
+        sent = adapter._client.chat.completions.create.call_args_list
+
+        assert response.stop_reason == "written_tool_call"
+        assert len(sent) == 2
+        assert sent[1].kwargs.get("tool_choice") == "required"
+        assert "could not be run" in json.dumps(sent[1].kwargs.get("messages"))
+
     def test_an_unreadable_failed_generation_names_the_mode_to_switch_to(self):
         """When the call cannot be recovered the error says what happened."""
         adapter = self._loaded_adapter()
