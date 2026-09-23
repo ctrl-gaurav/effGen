@@ -575,8 +575,18 @@ def test_a_budget_file_that_is_not_a_mapping_is_treated_as_no_budget(budget) -> 
 # --------------------------------------------------------------------------
 
 
-def test_a_short_text_is_counted_once_and_then_remembered() -> None:
+class _WordEncoding:
+    """Stands in for a BPE encoding: a token per word."""
+
+    def encode(self, text: str, **_: Any) -> list[str]:
+        return text.split()
+
+
+def test_a_short_text_is_counted_once_and_then_remembered(monkeypatch) -> None:
     """The texts a tool call and its result are made of are short and repeated."""
+    # The count is remembered only for a real encoding; tiktoken's data may be
+    # absent on a machine with no route to its host, so the test brings its own.
+    monkeypatch.setattr(_adapter_utils, "_bpe_encodings", {"cl100k_base": _WordEncoding()})
     text = f"step-result-{time.time_ns()}"
     before = dict(_adapter_utils._token_count_stats)
     counts = [_adapter_utils.estimate_tokens(text) for _ in range(20)]
