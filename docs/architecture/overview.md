@@ -75,6 +75,27 @@ report `supports_tool_calling()` as True only when the template actually renders
 the definitions — a template that accepts a `tools` argument and discards it
 gives the model nothing to call.
 
+One loaded model is commonly shared by many agents at once. What each engine
+does then:
+
+- **Streaming, any adapter.** A stream records its own tool calls and usage for
+  its own consumer, so two agents streaming on one model object never read each
+  other's calls or token counts.
+- **`VLLMEngine`.** vLLM's in-process client takes one call at a time, so calls
+  take turns on the engine, and the call that takes it next sends every call
+  that arrived meanwhile as one batch, each prompt with its own sampling
+  settings. Loading asks which GPUs are visible and how much memory is free
+  through NVML, without starting CUDA in the agent's process, so the engine core
+  vLLM forks can reach the GPU.
+- **`GGUFEngine`.** One llama.cpp context holds one sequence, so calls take turns
+  on it. Consecutive calls reuse the KV cache for the prompt they share — each
+  turn of a run is the previous prompt plus what happened since — and the result
+  metadata reports `cached_prompt_tokens`. A call that fixes a seed starts from a
+  clear context, so the same seed on the same prompt draws the same text.
+- **`TransformersEngine`.** Calls take turns on the weights; there is no batching
+  across callers. For many concurrent agents, serve the model (vLLM, SGLang) and
+  point them at it with `base_url` (see `docs/models/openai-compatible.md`).
+
 Additional model infrastructure:
 - `router.py`: `ModelRouter` — automatic model selection by query complexity
 - `capabilities.py`: `MODEL_CAPABILITIES` — pre-populated profiles for 12+ models
