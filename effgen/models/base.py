@@ -11,6 +11,7 @@ import functools
 import logging
 import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -266,6 +267,73 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     meta["total_cost"] = fold_call_totals(model, cost, tokens)
 
 
+class _StreamState:
+    """What one stream has recorded: its tool calls so far and its usage."""
+
+    __slots__ = ("tool_calls", "usage")
+
+    def __init__(self) -> None:
+        self.tool_calls: list[dict[str, Any]] = []
+        self.usage: dict[str, Any] | None = None
+
+
+class _ThreadStreams(threading.local):
+    """Per thread, per model: the stream being pulled now, and the last one.
+
+    One model object is routinely shared — one loaded model, many agents on it
+    — and the attributes a stream used to record onto that object were shared
+    with it, so two streams at once read each other's tool calls and usage.
+    Each stream now records into a state of its own. A stream's generator runs
+    in whichever thread pulls it, and the consumer reads what it recorded in
+    that same thread straight after pulling, so the state is found through the
+    thread: ``active`` while the adapter is producing a piece, ``last`` for the
+    consumer afterwards.
+    """
+
+    def __init__(self) -> None:
+        self.active: weakref.WeakKeyDictionary[Any, _StreamState] = weakref.WeakKeyDictionary()
+        self.last: weakref.WeakKeyDictionary[Any, _StreamState] = weakref.WeakKeyDictionary()
+
+
+_THREAD_STREAMS = _ThreadStreams()
+
+
+def _stream_state(model: Any, *, active_only: bool = False) -> _StreamState | None:
+    """The state of the stream this thread is pulling (or last pulled) on *model*."""
+    try:
+        state = _THREAD_STREAMS.active.get(model)
+        if state is None and not active_only:
+            state = _THREAD_STREAMS.last.get(model)
+        return state
+    except TypeError:  # a model that cannot be weakly referenced keeps the attributes
+        return None
+
+
+def _pull_scoped(iterator: Iterator[Any], model: Any, state: _StreamState) -> Any:
+    """Pull one piece of *iterator* with *state* as *model*'s stream on this thread."""
+    try:
+        previous = _THREAD_STREAMS.active.get(model)
+        _THREAD_STREAMS.active[model] = state
+        _THREAD_STREAMS.last[model] = state
+    except TypeError:
+        return next(iterator)
+    try:
+        return next(iterator)
+    finally:
+        if previous is None:
+            _THREAD_STREAMS.active.pop(model, None)
+        else:
+            _THREAD_STREAMS.active[model] = previous
+
+
+def _forget_last_stream(model: Any) -> None:
+    """Drop this thread's record of the last stream on *model* (a new one starts)."""
+    try:
+        _THREAD_STREAMS.last.pop(model, None)
+    except TypeError:
+        pass
+
+
 def clear_stream_usage(model: "BaseModel") -> None:
     """Drop any usage recorded by a previous streaming call on *model*.
 
@@ -273,6 +341,11 @@ def clear_stream_usage(model: "BaseModel") -> None:
     the usage afterwards returns this call's numbers or ``None`` — never the
     previous call's numbers for a stream that reported none.
     """
+    state = _stream_state(model, active_only=True)
+    if state is not None:
+        state.usage = None
+    else:
+        _forget_last_stream(model)
     try:
         model._last_stream_usage = None  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - a model that rejects attributes still streams
@@ -287,7 +360,14 @@ def get_stream_usage(model: "BaseModel") -> dict[str, Any] | None:
     Returns ``None`` when the call reported no usage — local engines and
     providers that omit usage from their stream.
     """
-    usage = getattr(model, "_last_stream_usage", None)
+    state = _stream_state(model)
+    shared = getattr(model, "_last_stream_usage", None)
+    usage = state.usage if state is not None else shared
+    if state is not None and shared is not usage:
+        logger.debug(
+            "[stream] read this stream's own usage; another stream on the same "
+            "model recorded since"
+        )
     return usage if isinstance(usage, dict) else None
 
 
@@ -336,6 +416,9 @@ def record_stream_usage(
         usage["cached_input_tokens"] = int(cached_input_tokens)
     if cache_write_tokens is not None:
         usage["cache_write_tokens"] = int(cache_write_tokens)
+    state = _stream_state(model, active_only=True)
+    if state is not None:
+        state.usage = usage
     try:
         model._last_stream_usage = usage  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - usage accounting must not break streaming
@@ -348,6 +431,11 @@ def clear_stream_tool_calls(model: "BaseModel") -> None:
     Called immediately before a stream starts, so reading the buffer afterwards
     returns this call's tool calls or an empty list — never the previous call's.
     """
+    state = _stream_state(model, active_only=True)
+    if state is not None:
+        state.tool_calls = []
+    else:
+        _forget_last_stream(model)
     try:
         model._last_stream_tool_calls = []  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - a model that rejects attributes still streams
@@ -364,8 +452,15 @@ def get_stream_tool_calls(model: "BaseModel") -> list[dict[str, Any]]:
     answer. Returns ``[]`` when the stream declared none, or when the adapter
     does not record streamed calls (see :meth:`BaseModel.streams_tool_calls`).
     """
-    calls = getattr(model, "_last_stream_tool_calls", None)
-    return calls if isinstance(calls, list) else []
+    state = _stream_state(model)
+    shared = getattr(model, "_last_stream_tool_calls", None)
+    calls = state.tool_calls if state is not None else shared
+    if state is not None and isinstance(shared, list) and shared != calls:
+        logger.debug(
+            "[stream] read this stream's own tool calls; another stream on the "
+            "same model recorded since"
+        )
+    return list(calls) if isinstance(calls, list) else []
 
 
 def record_stream_tool_calls(
@@ -383,6 +478,9 @@ def record_stream_tool_calls(
         model: The adapter whose stream declared the calls.
         calls: The calls so far, in the documented ``tool_calls`` shape.
     """
+    state = _stream_state(model, active_only=True)
+    if state is not None:
+        state.tool_calls = list(calls)
     try:
         model._last_stream_tool_calls = list(calls)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - tool-call accounting must not break streaming
@@ -651,16 +749,27 @@ def _timed_generate_batch(func):
     return wrapper
 
 
-def _redacting_iter(iterator):
-    """Yield from *iterator*, redacting any error it raises mid-stream."""
+def _redacting_iter(iterator, model=None):
+    """Yield from *iterator*, redacting any error it raises mid-stream.
+
+    With *model* given, every piece is pulled with this stream's own state as
+    the model's current stream on the pulling thread, so what the adapter
+    records — tool calls, usage — belongs to this stream even while other
+    streams run on the same model object at the same time.
+    """
+    state = _StreamState()
     while True:
         try:
-            yield next(iterator)
+            if model is None:
+                item = next(iterator)
+            else:
+                item = _pull_scoped(iterator, model, state)
         except StopIteration:
             return
         except BaseException as exc:
             _redact_credentials(exc)
             raise
+        yield item
 
 
 def _budget_gated_stream(func):
@@ -680,7 +789,7 @@ def _budget_gated_stream(func):
         except BaseException as exc:
             _redact_credentials(exc)
             raise
-        return _redacting_iter(iterator)
+        return _redacting_iter(iterator, self)
     wrapper.__effgen_timed__ = True
     return wrapper
 
