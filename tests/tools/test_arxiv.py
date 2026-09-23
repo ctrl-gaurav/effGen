@@ -34,8 +34,13 @@ def _run(coro):
 def _ok(result: ToolResult):
     assert isinstance(result, ToolResult)
     if not result.success and result.error:
+        # arXiv answers shared CI addresses with 406 or 503 at busy times while
+        # the same request from elsewhere succeeds; that is the service's
+        # refusal, not the tool's.
         transient_markers = (
             "HTTP 429",
+            "HTTP 406",
+            "HTTP 503",
             "Too Many Requests",
             "timed out",
             "Timeout",
