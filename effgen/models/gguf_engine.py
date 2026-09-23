@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -57,6 +58,14 @@ class GGUFEngine(BaseModel):
         self.verbose = verbose
         self._extra = kwargs
         self._llm: Any = None
+        # One llama.cpp context holds one sequence's KV cache and is not safe to
+        # drive from two threads at once, so concurrent agents sharing this
+        # engine take turns. Counting tokens reads only the vocabulary and does
+        # not wait.
+        self._context_lock = threading.RLock()
+        #: Prompt tokens the last call took from the context's KV cache instead
+        #: of evaluating again.
+        self.last_reused_prompt_tokens = 0
 
     # ------------------------------------------------------------------ load/unload
     def load(self) -> None:
@@ -134,12 +143,9 @@ class GGUFEngine(BaseModel):
         params = self._to_kwargs(config)
         params.update(kwargs)
         try:
-            # Clear residual context/KV state from any prior call so each
-            # completion starts from a clean state. Without this the sampler's
-            # RNG continues from the previous call and a fixed seed does not
-            # reproduce.
-            self._llm.reset()
-            out = self._llm(prompt, **params)
+            with self._context_lock:
+                self._prepare_context(prompt, params)
+                out = self._llm(prompt, **params)
         except Exception as exc:
             raise provider_runtime_error(
                 "gguf", self.model_name, "generate", exc,
@@ -153,7 +159,12 @@ class GGUFEngine(BaseModel):
             tokens_used=int(usage.get("completion_tokens", 0)),
             finish_reason=choice.get("finish_reason", "stop") or "stop",
             model_name=self.model_name,
-            metadata={"prompt_tokens": usage.get("prompt_tokens", 0)},
+            metadata={
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": int(usage.get("completion_tokens", 0)),
+                "total_tokens": int(usage.get("total_tokens", 0)),
+                "cached_prompt_tokens": self.last_reused_prompt_tokens,
+            },
         )
 
     def generate_stream(
@@ -175,14 +186,52 @@ class GGUFEngine(BaseModel):
         params.update(kwargs)
         params["stream"] = True
         try:
-            self._llm.reset()
-            for chunk in self._llm(prompt, **params):
-                yield chunk["choices"][0].get("text", "")
+            with self._context_lock:
+                self._prepare_context(prompt, params)
+                for chunk in self._llm(prompt, **params):
+                    yield chunk["choices"][0].get("text", "")
         except Exception as exc:
             raise provider_runtime_error(
                 "gguf", self.model_name, "generate_stream", exc,
                 message="GGUF streaming generation failed",
             ) from exc
+
+    def _prepare_context(self, prompt: str, params: dict[str, Any]) -> None:
+        """Keep or clear the KV cache before a call, and log what is kept.
+
+        llama.cpp keeps the previous call's tokens and evaluates only what
+        follows the longest prefix a new prompt shares with them, so the turns
+        of one run — each the previous prompt plus what happened since — skip
+        recomputing the part they have in common. A prompt position computed
+        from the cache is not bit-for-bit the one a fresh evaluation computes,
+        so a call that fixes a seed starts from a clear context instead: the
+        same seed on the same prompt then draws the same text every time.
+        Called with the context lock held.
+        """
+        self.last_reused_prompt_tokens = 0
+        seed = params.get("seed")
+        if seed is not None and seed != -1:
+            self._llm.reset()
+            return
+        held = int(getattr(self._llm, "n_tokens", 0) or 0)
+        if held <= 0:
+            return
+        try:
+            tokens = self._llm.tokenize(prompt.encode("utf-8"), add_bos=True, special=True)
+            cached = list(self._llm._input_ids[:held])
+        except Exception:  # noqa: BLE001 - a count for the log, never a failure
+            return
+        shared = 0
+        for a, b in zip(cached, tokens[:-1]):
+            if a != b:
+                break
+            shared += 1
+        self.last_reused_prompt_tokens = shared
+        if shared:
+            logger.debug(
+                "[gguf] the prompt reuses %d of %d tokens already in the KV cache",
+                shared, len(tokens),
+            )
 
     def count_tokens(self, text: str) -> TokenCount:
         """Tokenize *text* with the model's own tokenizer and return the count."""

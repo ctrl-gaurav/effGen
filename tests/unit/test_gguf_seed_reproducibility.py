@@ -1,8 +1,9 @@
 """GGUF (llama.cpp) generation is reproducible for a fixed seed.
 
-Each completion clears the prior call's context so the sampler RNG restarts from
-the requested seed: the same seed yields identical text, a different seed yields
-different text, and greedy decoding (temperature 0) is deterministic. This drives
+The sampler is seeded on every completion, so the same seed yields identical
+text, a different seed yields different text, and greedy decoding (temperature 0)
+is deterministic — including when the second call reuses the first call's KV
+cache for the prompt they share. This drives
 a real cached GGUF model on CPU — no mock — and skips when llama-cpp-python or a
 cached GGUF file is unavailable.
 """
@@ -21,6 +22,7 @@ from effgen.models.gguf_engine import GGUFEngine  # noqa: E402
 
 def _find_gguf() -> str | None:
     roots = [
+        os.environ.get("HF_HUB_CACHE", ""),
         os.path.expanduser("~/.cache/huggingface/hub"),
         os.environ.get("HF_HOME", ""),
     ]
