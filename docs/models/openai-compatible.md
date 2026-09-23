@@ -64,7 +64,14 @@ load_model(model_id, provider="openai_compatible", base_url=URL)
 load_model(model_id, base_url=URL)                    # base_url is the whole instruction
 load_model(model_id, provider="openai", base_url=URL, api_key="EMPTY")
 load_model(f"openai_compatible:{model_id}", base_url=URL)
+load_model(f"openai:{model_id}", base_url=URL)
 ```
+
+In every one of them the server is asked for `model_id`: the `openai:` or
+`openai_compatible:` prefix names the adapter and is not sent, while any slash
+inside the id — `org/name`, `openai/<name>` — is part of the id and is. A prefix
+naming a different provider (`together:<org>/<name>` with a `base_url`) is sent
+as written, and the server answers that it has no such model.
 
 `"openai-compatible"`, `"openai_compat"`, `"compatible"`, `"server"`,
 `"vllm_server"` and `"local_server"` are accepted spellings of the provider.

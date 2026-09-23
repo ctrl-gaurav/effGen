@@ -117,10 +117,26 @@ class ModelLoaderRoutingMixin:
             # asked for the id its own catalog publishes. A prefix naming a
             # different provider is a real disagreement and is left in place,
             # so the error names what was actually asked for.
+            #
+            # The compatible adapter is the OpenAI adapter pointed at another
+            # endpoint — an ``openai:`` id with a base_url is routed to it below
+            # for exactly that reason — so an ``openai:`` prefix names this
+            # adapter too, and the endpoint is asked for the id after it. Which
+            # adapter a prefix names is read from the prefix and the endpoint,
+            # never from the rest of the id: cloud ids carry slashes of their
+            # own (``openai/gpt-oss-20b``, ``accounts/<org>/models/<name>``).
             if isinstance(model_name, str) and ":" in model_name:
                 _dup_prefix, _dup_rest = model_name.split(":", 1)
                 _dup = _dup_prefix.strip().lower()
-                if _dup_rest and _aliases.get(_dup, _dup) == provider:
+                _named = _aliases.get(_dup, _dup)
+                if _named == "openai" and provider == "openai_compatible":
+                    _named = "openai_compatible"
+                if _dup_rest and _named == provider:
+                    if provider == "openai_compatible":
+                        logger.info(
+                            "[models] the id's engine prefix names the adapter it "
+                            "selects; the endpoint is asked for %r", _dup_rest,
+                        )
                     model_name = _dup_rest
 
         # Support "provider:model_id" prefix syntax via ProviderRegistry
