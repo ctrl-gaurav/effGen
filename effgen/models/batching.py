@@ -16,6 +16,8 @@ use it as a context manager) when done.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import threading
 import time
@@ -37,6 +39,21 @@ class _Request:
     event: threading.Event = field(default_factory=threading.Event)
     result: GenerationResult | None = None
     error: BaseException | None = None
+
+
+def _settings_key(req: _Request) -> str:
+    """A key equal for two requests whose generation settings are equal."""
+    config = req.config
+    if config is None:
+        described: Any = None
+    elif dataclasses.is_dataclass(config) and not isinstance(config, type):
+        described = dataclasses.asdict(config)
+    else:
+        described = vars(config) if hasattr(config, "__dict__") else config
+    try:
+        return json.dumps([described, req.kwargs], sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        return repr((described, sorted(req.kwargs.items(), key=lambda kv: kv[0])))
 
 
 class ContinuousBatcher:
@@ -139,18 +156,25 @@ class ContinuousBatcher:
                     req.event.set()
 
     def _dispatch(self, batch: list[_Request]) -> None:
-        # Group by (config, kwargs identity) — only requests sharing identical
-        # generation params can be batched in a single forward pass.
-        groups: dict[int, list[_Request]] = {}
+        # Group by the generation settings' values — only requests sharing
+        # identical settings can be batched in a single forward pass. Two
+        # callers that each built an equal config are one group; keying on the
+        # config object's identity kept every caller in a group of its own, and
+        # a list among the keyword arguments (tool definitions) failed the whole
+        # batch on hashing.
+        groups: dict[str, list[_Request]] = {}
         for req in batch:
-            key = id(req.config), tuple(sorted(req.kwargs.items()))
-            groups.setdefault(hash(key), []).append(req)
+            groups.setdefault(_settings_key(req), []).append(req)
 
         for group in groups.values():
             prompts = [r.prompt for r in group]
             cfg = group[0].config
             kw = group[0].kwargs
             if isinstance(self.model, BatchModel) and len(prompts) > 1:
+                logger.debug(
+                    "[batch] %d requests with equal settings share one batched call",
+                    len(prompts),
+                )
                 results = self.model.generate_batch(prompts, cfg, **kw)
             else:
                 results = [self.model.generate(p, cfg, **kw) for p in prompts]
