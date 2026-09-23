@@ -13,7 +13,9 @@ This module provides high-performance inference using vLLM with features includi
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 try:
@@ -33,6 +35,18 @@ from effgen.models._adapter_utils import (
 from effgen.models.base import BatchModel, GenerationConfig, GenerationResult, ModelType, TokenCount
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _Waiting:
+    """One call waiting for the engine, and what the engine made of it."""
+
+    prompt: str
+    params: Any
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    done: bool = False
+    output: Any = None
+    error: BaseException | None = None
 
 
 def _is_cuda_oom_error(error: Exception) -> bool:
@@ -149,6 +163,16 @@ class VLLMEngine(BatchModel):
         # Cached chat-template tool-rendering probe, paired with the tokenizer it
         # was measured on so a reload re-measures instead of reusing a stale answer.
         self._tool_template_probe: tuple[Any, bool] | None = None
+        # One engine, many agents. vLLM's in-process client is not safe to call
+        # from two threads at once — a second call mid-flight corrupts the
+        # socket to its engine core and takes the process down — so calls take
+        # turns on the engine, and whoever takes it next sends every call that
+        # arrived meanwhile as one batch, which vLLM schedules together.
+        self._engine_lock = threading.Lock()
+        self._waiting_lock = threading.Lock()
+        self._waiting: list[_Waiting] = []
+        # A fast tokenizer refuses concurrent use ("Already borrowed").
+        self._tokenizer_lock = threading.Lock()
 
     def load(self) -> None:
         """
@@ -183,8 +207,12 @@ class VLLMEngine(BatchModel):
                 "vLLM was compiled against. Reinstalling vLLM alone will not fix it."
             ) from e
 
-        # Validate GPU availability
-        if not torch.cuda.is_available() and self.tensor_parallel_size > 0:
+        # Validate GPU availability without starting the CUDA driver here: vLLM
+        # forks its engine core, and a parent that started the driver leaves
+        # the child unable to reach the GPU (see cuda_device_visible).
+        from effgen.models._vram import cuda_device_visible
+
+        if not cuda_device_visible() and self.tensor_parallel_size > 0:
             raise RuntimeError("CUDA is not available but tensor_parallel_size > 0")
 
         if self.tensor_parallel_size > torch.cuda.device_count():
@@ -487,8 +515,7 @@ class VLLMEngine(BatchModel):
         kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
-            outputs = self.llm.generate([formatted_prompt], sampling_params, **kwargs)
-            output = outputs[0]
+            output = self._submit(formatted_prompt, sampling_params, kwargs)
 
             generated_text = output.outputs[0].text
             tokens_used = len(output.outputs[0].token_ids)
@@ -575,11 +602,11 @@ class VLLMEngine(BatchModel):
         kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
-            # vLLM's streaming interface
-            for output in self.llm.generate([formatted_prompt], sampling_params, **kwargs):
-                # Stream each token as it's generated
-                for token_output in output.outputs:
-                    yield token_output.text
+            # ``LLM.generate()`` returns whole outputs, so the stream is the
+            # finished text, delivered once.
+            output = self._submit(formatted_prompt, sampling_params, kwargs)
+            for token_output in output.outputs:
+                yield token_output.text
 
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
@@ -636,7 +663,8 @@ class VLLMEngine(BatchModel):
         kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
-            outputs = self.llm.generate(formatted_prompts, sampling_params, **kwargs)
+            with self._engine_lock:
+                outputs = self.llm.generate(formatted_prompts, sampling_params, **kwargs)
 
             results = []
             for output in outputs:
@@ -666,6 +694,55 @@ class VLLMEngine(BatchModel):
                 message="Batch generation failed",
             ) from e
 
+    def _submit(self, prompt: str, sampling_params: Any, kwargs: dict[str, Any]) -> Any:
+        """Run one prompt through the engine, batched with the calls waiting beside it.
+
+        Returns:
+            The ``RequestOutput`` vLLM produced for *prompt*.
+        """
+        mine = _Waiting(prompt, sampling_params, dict(kwargs))
+        with self._waiting_lock:
+            self._waiting.append(mine)
+        with self._engine_lock:
+            if not mine.done:
+                with self._waiting_lock:
+                    batch, self._waiting = self._waiting, []
+                self._run_waiting(batch)
+        if mine.error is not None:
+            raise mine.error
+        return mine.output
+
+    def _run_waiting(self, batch: list[_Waiting]) -> None:
+        """Send *batch* to the engine; calls with the same extra arguments go together.
+
+        Each prompt keeps its own sampling settings — ``LLM.generate()`` takes
+        one ``SamplingParams`` per prompt. Called with the engine lock held.
+        """
+        groups: dict[str, list[_Waiting]] = {}
+        for waiting in batch:
+            key = repr(sorted(waiting.kwargs.items(), key=lambda kv: kv[0]))
+            groups.setdefault(key, []).append(waiting)
+        for group in groups.values():
+            if len(group) > 1:
+                logger.debug(
+                    "[vllm] %d concurrent calls went to the engine as one batch", len(group)
+                )
+            # A call on its own goes exactly as it always has: one prompt, one
+            # ``SamplingParams``.
+            params = group[0].params if len(group) == 1 else [w.params for w in group]
+            try:
+                outputs = self.llm.generate(
+                    [w.prompt for w in group], params, **group[0].kwargs
+                )
+                for waiting, output in zip(group, outputs):
+                    waiting.output = output
+            except BaseException as exc:  # noqa: BLE001 - handed to every caller in the group
+                for waiting in group:
+                    waiting.error = exc
+            finally:
+                for waiting in group:
+                    waiting.done = True
+
     def count_tokens(self, text: str) -> TokenCount:
         """
         Count tokens in text.
@@ -683,7 +760,8 @@ class VLLMEngine(BatchModel):
             raise not_loaded_error("vllm", self.model_name, "count_tokens")
 
         try:
-            tokens = self.tokenizer.encode(text)
+            with self._tokenizer_lock:
+                tokens = self.tokenizer.encode(text)
             return TokenCount(count=len(tokens), model_name=self.model_name)
         except Exception as e:
             logger.error(f"Token counting failed: {e}")

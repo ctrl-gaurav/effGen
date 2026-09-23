@@ -166,11 +166,15 @@ class ModelLoaderLocalMixin:
         without ever raising.
         """
         try:
-            import torch
+            import torch  # noqa: F401
         except ImportError:
             return False
 
-        if not torch.cuda.is_available():
+        # Asked without starting the CUDA driver, which would leave the engine
+        # core vLLM forks unable to reach the GPU (see cuda_device_visible).
+        from effgen.models._vram import cuda_device_visible
+
+        if not cuda_device_visible():
             return False
         try:
             import importlib.util
@@ -206,14 +210,18 @@ class ModelLoaderLocalMixin:
         Raises:
             RuntimeError: If vLLM is unavailable or loading fails
         """
-        torch = _require_torch("vllm")
+        _require_torch("vllm")
 
         from effgen.models.vllm_engine import VLLMEngine
 
         logger.info(f"Attempting to load with vLLM: {model_name}")
 
-        # Check CUDA availability
-        if not torch.cuda.is_available():
+        # Check CUDA availability without starting the CUDA driver in this
+        # process: vLLM forks its engine core, and a parent that started the
+        # driver leaves that child unable to reach the GPU.
+        from effgen.models._vram import cuda_device_visible
+
+        if not cuda_device_visible():
             from effgen.gpu.cuda_compat import get_cuda_status
             status = get_cuda_status()
             if status.mismatch and status.message:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from ._vram import free_vram_gb
+from ._vram import cuda_device_visible, free_vram_gb
 
 logger = logging.getLogger("effgen.models.model_loader")
 
@@ -40,9 +40,9 @@ class ModelLoaderCapacityMixin:
         Returns:
             Quantization method or None
         """
-        import torch
-
-        if not torch.cuda.is_available():
+        # Asked without starting the CUDA driver, so a vLLM engine core forked
+        # later can still reach the GPU.
+        if not cuda_device_visible():
             return None
 
         # Base the decision on free VRAM, not total capacity, so a busy GPU
@@ -73,6 +73,10 @@ class ModelLoaderCapacityMixin:
         Returns:
             Quantization bits (4, 8) or None
         """
+        # Only the Transformers engine asks this, and it places the model with
+        # torch.cuda.is_available() right after, so the two must agree: a host
+        # whose driver lists a GPU that torch cannot use runs on CPU, where a
+        # bit width chosen from the GPU's free memory does not apply.
         import torch
 
         if not torch.cuda.is_available():
@@ -107,7 +111,9 @@ class ModelLoaderCapacityMixin:
         """
         import torch
 
-        if not torch.cuda.is_available():
+        # Asked without starting the CUDA driver, so a vLLM engine core forked
+        # later can still reach the GPU.
+        if not cuda_device_visible():
             return 1
 
         num_gpus = torch.cuda.device_count()
