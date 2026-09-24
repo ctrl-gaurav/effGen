@@ -26,6 +26,7 @@ from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
     REMEDIATION_BY_CATEGORY,
     BackendUnreachableError,
+    BudgetExceededError,
     ContextBudgetExceededError,
     InvalidRequestError,
     ModelAuthError,
@@ -733,6 +734,17 @@ class AgentGenerationMixin:
                     next_name, getattr(current_model, 'model_name', '?'),
                 )
 
+        # A spend cap that refused the last model asked for is the caller's own
+        # limit, not a failure of the model: every later call would be refused
+        # the same way. It leaves as the typed error, whatever raise_on_error
+        # says, so a batch stops at the cap instead of finishing on refusals.
+        if isinstance(last_error, BudgetExceededError):
+            logger.warning(
+                "spend cap: the run stops at the cap; raising %s to the caller",
+                type(last_error).__name__,
+            )
+            raise last_error
+
         # All models and retries exhausted — return a structured, redacted error
         # so callers (both the tool loop and the direct path) can fail explicitly.
         if last_error is not None:
@@ -804,6 +816,7 @@ class AgentGenerationMixin:
         try:
             from ..observability.metrics import (
                 record_model_call,
+                record_model_cost,
                 record_run_framework,
                 record_tokens,
             )
@@ -822,6 +835,10 @@ class AgentGenerationMixin:
                         outcome=call.outcome,
                         latency=max(0.0, call.wait_s),
                     )
+                    if call.outcome == "ok":
+                        record_model_cost(
+                            provider=provider, model=model_name, cost_usd=call.cost_usd,
+                        )
             record_run_framework(
                 agent=str(getattr(self, "name", "") or ""), seconds=ledger.framework_s,
             )
@@ -1473,7 +1490,7 @@ class AgentGenerationMixin:
                 },
             )
 
-        except ContextBudgetExceededError:
+        except (ContextBudgetExceededError, BudgetExceededError):
             raise
         except Exception as e:
             logger.error(f"Direct inference failed: {e}")

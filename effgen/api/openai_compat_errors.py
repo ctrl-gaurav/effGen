@@ -72,6 +72,13 @@ def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
     """
     if isinstance(exc, UnknownToolError):
         return 400, "invalid_request_error", "unknown_tool"
+    from effgen.models.errors import BudgetExceededError
+
+    if isinstance(exc, BudgetExceededError):
+        # The process's own spend cap refused the call: the same answer the
+        # server's per-principal cap gives, and the one OpenAI clients read as
+        # a spent quota rather than a malformed request.
+        return 429, "insufficient_quota", "budget_exceeded"
     category = "unknown"
     try:
         from effgen.models.errors import classify_provider_error

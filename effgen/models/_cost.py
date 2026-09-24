@@ -493,16 +493,88 @@ def call_cost(
 # Guard so the "no published price, so this spend is not counted" heads-up
 # fires at most once per provider/model per process.
 _UNPRICED_BUDGET_WARNED: set[str] = set()
+#: Held while the guard above is read and written, so agents recording calls on
+#: the same model at the same moment still produce one warning between them.
+_UNPRICED_BUDGET_WARNED_LOCK = threading.Lock()
+
+#: What the spend cap decided about each call it was asked about while a
+#: configured cap was already spent: refused, or allowed because the call
+#: cannot add spend the cap counts (a free tier, a model run on this machine, a
+#: server whose provider publishes no price). Read by :func:`spend_cap_decisions`.
+_SPEND_CAP_DECISIONS: dict[str, int] = {}
+_SPEND_CAP_DECISIONS_LOCK = threading.Lock()
 
 
 def reset_unpriced_budget_warnings() -> None:
     """Clear the once-per-process unpriced-spend warning guard (test helper)."""
-    _UNPRICED_BUDGET_WARNED.clear()
+    with _UNPRICED_BUDGET_WARNED_LOCK:
+        _UNPRICED_BUDGET_WARNED.clear()
+
+
+def spend_cap_decisions() -> dict[str, int]:
+    """How often the spend cap refused or allowed a call once it was spent.
+
+    Keys are ``refused`` and ``allowed_<reason>`` (``free``, ``local``,
+    ``unmetered``); a key appears once it has been counted. Only calls made
+    while a configured cap was at or over its limit are counted.
+    """
+    with _SPEND_CAP_DECISIONS_LOCK:
+        return dict(_SPEND_CAP_DECISIONS)
+
+
+def reset_spend_cap_decisions() -> None:
+    """Forget the counts :func:`spend_cap_decisions` reports."""
+    with _SPEND_CAP_DECISIONS_LOCK:
+        _SPEND_CAP_DECISIONS.clear()
+
+
+def _count_spend_cap_decision(decision: str) -> None:
+    with _SPEND_CAP_DECISIONS_LOCK:
+        _SPEND_CAP_DECISIONS[decision] = _SPEND_CAP_DECISIONS.get(decision, 0) + 1
+
+
+def spend_cap_exemption(provider: str | None, model: str) -> str | None:
+    """Why a spent cap lets a call to *provider*/*model* through, or ``None``.
+
+    The cap refuses calls whose spend it counts. A call it cannot count is not
+    refused, and the reason is returned:
+
+    * ``"local"`` — no provider: the model runs in this process, on this
+      machine, and nobody bills it.
+    * ``"free"`` — the catalog flags the model as a free tier.
+    * ``"unmetered"`` — the provider publishes no catalog at all, as with a
+      server the caller runs behind the OpenAI protocol, so no call on it is
+      ever priced.
+
+    A model missing from a provider that does publish prices (a new release, a
+    fine-tuned id) is still refused: that provider bills it, the cap just does
+    not know the rate.
+    """
+    if not provider:
+        return "local"
+    # Some adapters record under a name that is not the catalog's for the same
+    # provider (HF Inference records as ``hf_inference``, catalogued as ``hf``).
+    # The question is about the provider that bills, so ask the catalog's name.
+    name = _REFRESH_PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    status = pricing_status(name, model)
+    if status == "free":
+        return "free"
+    if status != "unpriced":
+        return None
+    try:
+        from effgen.models._catalog import known_providers
+
+        catalogued = name in known_providers()
+    except Exception:  # pragma: no cover - catalog import is best-effort
+        logger.debug("Could not list catalog providers", exc_info=True)
+        catalogued = True
+    return None if catalogued else "unmetered"
 
 
 #: Ledger provider keys that are not the catalog's name for the same provider.
 #: ``effgen models refresh`` only accepts the catalog name, so a heads-up that
-#: names the ledger key would hand the user a command that fails.
+#: names the ledger key would hand the user a command that fails; and the spend
+#: cap asks the catalog whether that provider bills (:func:`spend_cap_exemption`).
 _REFRESH_PROVIDER_ALIASES = {"hf_inference": "hf"}
 
 
@@ -536,9 +608,10 @@ def _warn_unpriced_spend(provider: str, model: str) -> None:
     repeat on every call of a loop.
     """
     key = f"{provider.lower()}:{model}"
-    if key in _UNPRICED_BUDGET_WARNED:
-        return
-    _UNPRICED_BUDGET_WARNED.add(key)
+    with _UNPRICED_BUDGET_WARNED_LOCK:
+        if key in _UNPRICED_BUDGET_WARNED:
+            return
+        _UNPRICED_BUDGET_WARNED.add(key)
     warnings.warn(
         f"effGen budget: no published price for '{key}', so this call's spend is "
         f"not counted toward the configured budget."
@@ -576,7 +649,9 @@ class CostTracker:
     - At 80% of daily or monthly budget → :class:`UserWarning` is emitted.
     - At 100% → :class:`~effgen.models.errors.BudgetExceededError` is raised
       for paid calls. Zero-cost calls are still allowed so router failover can
-      land on free-tier providers.
+      land on free-tier providers, and so are calls the budget cannot count: a
+      local engine, a free tier, a server whose provider publishes no prices
+      (see :func:`spend_cap_exemption`).
     - A call on a model with no published price is allowed at any budget level
       and emits a :class:`UserWarning` once per model saying its spend is not
       counted, rather than being silently added as $0.
@@ -743,7 +818,7 @@ class CostTracker:
                     model=model,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    cost_usd=cost or 0.0,
+                    cost_usd=cost,
                     timestamp=time.time(),
                 )
             except Exception as exc:
@@ -776,11 +851,32 @@ class CostTracker:
         pushes spend past the cap for the first time is still allowed through
         here and is caught after the fact by :meth:`_check_budget` inside
         :meth:`record`.
+
+        A spent cap refuses only a call whose spend it counts. A call it cannot
+        count — a free tier, a model run on this machine (*provider* empty), a
+        server whose provider publishes no prices — goes ahead, as the check
+        after the call would have let it (see :func:`spend_cap_exemption`).
         """
         budget_cfg = _load_budget()
         for period, budget_usd in _configured_budgets(budget_cfg):
             spend = self._period_spend(period)
             if spend >= budget_usd:
+                exemption = spend_cap_exemption(provider, model)
+                if exemption is not None:
+                    _count_spend_cap_decision(f"allowed_{exemption}")
+                    logger.debug(
+                        "spend cap: allowed a call it does not meter (%s:%s, %s); "
+                        "%s spend %s is at its cap %s",
+                        provider or "local", model, exemption, period,
+                        _format_usd(spend), _format_usd(budget_usd),
+                    )
+                    return
+                _count_spend_cap_decision("refused")
+                logger.warning(
+                    "spend cap: refused a call to %s:%s; %s spend %s has reached "
+                    "the cap %s",
+                    provider, model, period, _format_usd(spend), _format_usd(budget_usd),
+                )
                 from effgen.models.errors import BudgetExceededError
                 raise BudgetExceededError(
                     budget_usd=budget_usd,
@@ -813,6 +909,12 @@ class CostTracker:
             if ratio >= 1.0:
                 if cost <= 0.0:
                     continue
+                _count_spend_cap_decision("refused")
+                logger.warning(
+                    "spend cap: refused a call to %s:%s; %s spend %s has reached "
+                    "the cap %s",
+                    provider, model, period, _format_usd(spend), _format_usd(budget_usd),
+                )
                 from effgen.models.errors import BudgetExceededError
                 raise BudgetExceededError(
                     budget_usd=budget_usd,
@@ -936,7 +1038,7 @@ class CostTracker:
                         return float(spend_today())
                     logger.debug("budget preflight: period spend summed from rows (%s)",
                                  period)
-                    return sum(e.cost_usd for e in self._storage.query_today())
+                    return sum(e.cost_usd or 0.0 for e in self._storage.query_today())
                 if period == "monthly":
                     spend_month = getattr(self._storage, "spend_month", None)
                     if spend_month is not None:
@@ -947,15 +1049,15 @@ class CostTracker:
                                  period)
                     query_month = getattr(self._storage, "query_month", None)
                     if query_month is not None:
-                        return sum(e.cost_usd for e in query_month())
+                        return sum(e.cost_usd or 0.0 for e in query_month())
                     import time
 
-                    return sum(e.cost_usd for e in self._storage.query_since(
+                    return sum(e.cost_usd or 0.0 for e in self._storage.query_since(
                         time.time() - 30 * 86400.0
                     ))
             except Exception:
                 logger.warning("CostStore budget query failed; falling back to memory")
-        return self.total_cost()
+        return self._priced_total()
 
     def _add_period_spend(self, cost: float) -> None:
         """Fold spend this process just recorded into every cached reading.
@@ -978,7 +1080,7 @@ class CostTracker:
         with self._period_spend_lock:
             self._period_spend_cache.clear()
 
-    def total_cost(self, provider: str | None = None, model: str | None = None) -> float:
+    def total_cost(self, provider: str | None = None, model: str | None = None) -> float | None:
         """Return total USD cost accumulated in memory, optionally filtered.
 
         Args:
@@ -986,17 +1088,30 @@ class CostTracker:
             model: Filter to this model (None = all models).
 
         Returns:
-            Cumulative USD cost.
+            Cumulative USD cost of the priced calls. ``None`` when every call
+            the filter matches was on a model with no published price, so the
+            money is unknown rather than zero; ``0.0`` when nothing matched or
+            the calls were free.
         """
         with self._lock:
             total = 0.0
+            requests = unpriced = 0
             for (prov, mod), stats in self._data.items():
                 if provider and prov != provider.lower():
                     continue
                 if model and mod != model:
                     continue
                 total += stats.total_cost_usd
+                requests += stats.requests
+                unpriced += stats.unpriced_requests
+        if requests and unpriced == requests:
+            return None
         return total
+
+    def _priced_total(self) -> float:
+        """Spend of every priced call recorded in memory; unpriced calls add nothing."""
+        with self._lock:
+            return sum(stats.total_cost_usd for stats in self._data.values())
 
     def total_tokens(self, provider: str | None = None, model: str | None = None) -> dict[str, int]:
         """Return total token counts, optionally filtered.

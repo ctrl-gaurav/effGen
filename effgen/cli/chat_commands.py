@@ -200,7 +200,8 @@ class ChatCommandsMixin:
 
             tracker = CostTracker.get()
             total = tracker.total_cost()
-            if total > 0:
+            # None: every call so far was on a model with no published price.
+            if total is not None and total > 0:
                 self.cli.print(f"(process total across all models: {format_cost(total)})")
         except Exception:  # noqa: BLE001
             pass

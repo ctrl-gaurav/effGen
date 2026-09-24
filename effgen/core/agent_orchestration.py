@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..memory.long_term import ImportanceLevel, MemoryType
-from ..models.errors import classify_provider_error
+from ..models.errors import BudgetExceededError, classify_provider_error
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import AgentAttrs
 from ..observability.tracing import (
@@ -666,9 +666,12 @@ class AgentOrchestrationMixin:
                 # than swallowing it into a success=False response. A backend
                 # that was never reached propagates either way — that run has no
                 # result to swallow it into.
+                # A spend cap's refusal propagates too: the caller set the
+                # limit, and a run it stopped has no result to report.
                 if (
                     self.config.raise_on_error
                     or classify_provider_error(e).category == "unreachable"
+                    or isinstance(e, BudgetExceededError)
                 ):
                     prom_metrics.errors.inc(labels=labels)
                     set_span_error(e)

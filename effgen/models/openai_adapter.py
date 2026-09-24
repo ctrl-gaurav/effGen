@@ -685,8 +685,11 @@ class OpenAIAdapter(FunctionCallingModel):
             f"| call={cost_label(cost)} session=${self.total_cost:.6f}"
         )
 
+        # The tracker prices the call under the adapter's own provider, so a
+        # server the caller runs behind this protocol is never billed at the
+        # rate OpenAI publishes for a model that happens to share its id.
         record_tracker_cost(
-            "openai",
+            self._provider,
             self.model_name,
             prompt_tokens,
             completion_tokens,

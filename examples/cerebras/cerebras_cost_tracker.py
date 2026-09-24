@@ -49,7 +49,8 @@ def print_summary(label: str) -> None:
             f"    cost:        {_cost(row)} (free tier = $0)"
         )
     total = tracker.total_cost()
-    print(f"\n  Grand total cost: ${total:.6f}")
+    # None when every call recorded so far was on a model with no published price.
+    print(f"\n  Grand total cost: {'unpriced' if total is None else f'${total:.6f}'}")
 
 
 def main():

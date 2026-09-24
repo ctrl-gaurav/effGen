@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..models.errors import BudgetExceededError
+
 logger = logging.getLogger(__name__)
 
 # Field names accepted for the query text of a JSONL/CSV/JSON row, in priority
@@ -556,6 +558,14 @@ class BatchRunner:
                         self.agent.run, query, **run_kwargs,
                     )
                 return resp
+            except BudgetExceededError:
+                # The spend cap refused the call. Every other query would be
+                # refused the same way, so the batch stops here with the typed
+                # error rather than finishing as a column of failed rows.
+                logger.warning(
+                    "spend cap: the batch stops at the cap on query: %s", query[:80],
+                )
+                raise
             except TimeoutError:
                 last_exc = TimeoutError(
                     f"Query timed out after {config.timeout_per_item}s: {query[:80]}"

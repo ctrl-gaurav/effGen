@@ -251,14 +251,29 @@ class TestPreflightBudgetGate:
         monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
 
         tracker = CostTracker.get()
-        tracker.record("transformers", "mock-model", cost_usd=1.0)
+        tracker.record("openai", "gpt-4o-mini", cost_usd=1.0)
         cfg.write_text(_json.dumps({"daily": 0.01}))
 
-        model = MockModel(responses=["hi"])
+        model = _priced(MockModel)(responses=["hi"], model_name="gpt-4o-mini")
         with pytest.raises(BudgetExceededError):
             model.generate("hello")
         # The engine's own generate body never ran.
         assert model.call_count == 0
+
+    def test_a_local_engine_runs_when_the_cap_is_spent(self, tmp_path, monkeypatch):
+        """A model run on this machine is billed by nobody, so a spent cap lets it run."""
+        import json as _json
+
+        from tests.fixtures.mock_models import MockModel
+
+        cfg = tmp_path / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+        CostTracker.get().record("openai", "gpt-4o-mini", cost_usd=1.0)
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+
+        model = MockModel(responses=["hi"])
+        assert model.generate("hello").text == "hi"
+        assert model.call_count == 1
 
     def test_model_generate_stream_refuses_before_the_call_when_over_budget(
         self, tmp_path, monkeypatch,
@@ -272,10 +287,10 @@ class TestPreflightBudgetGate:
         monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
 
         tracker = CostTracker.get()
-        tracker.record("transformers", "mock-model", cost_usd=1.0)
+        tracker.record("openai", "gpt-4o-mini", cost_usd=1.0)
         cfg.write_text(_json.dumps({"daily": 0.01}))
 
-        model = MockModel(responses=["hi"])
+        model = _priced(MockModel)(responses=["hi"], model_name="gpt-4o-mini")
         with pytest.raises(BudgetExceededError):
             model.generate_stream("hello")
         assert model.call_count == 0
@@ -293,6 +308,11 @@ class TestPreflightBudgetGate:
         result = model.generate("hello")
         assert result.text == "hi"
         assert model.call_count == 1
+
+
+def _priced(model_cls):
+    """*model_cls* declared as a model a pricing provider bills."""
+    return type("PricedMock", (model_cls,), {"_provider": "openai"})
 
 
 class TestFormatUsd:

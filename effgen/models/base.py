@@ -497,8 +497,12 @@ _LOCAL_ENGINE_TYPES = frozenset(
 def _provider_of(model: "BaseModel") -> str | None:
     """Resolve the pricing-catalog provider name for *model*, or ``None``.
 
-    Adapters name their provider either in ``get_metadata()`` or through their
-    ``model_type``; local engines have no provider and return ``None``.
+    Adapters name their provider in ``get_metadata()``, in a ``_provider``
+    class attribute, or through their ``model_type``, in that order; local
+    engines have no provider and return ``None``. The class attribute comes
+    before ``model_type`` because an adapter that reuses another's protocol —
+    a server the caller runs, spoken to as OpenAI — keeps that adapter's model
+    type while naming a provider of its own.
     """
     try:
         provider = (model.get_metadata() or {}).get("provider")
@@ -506,6 +510,9 @@ def _provider_of(model: "BaseModel") -> str | None:
             return provider
     except Exception:  # noqa: BLE001 - metadata is optional
         pass
+    declared = getattr(type(model), "_provider", None)
+    if isinstance(declared, str) and declared:
+        return declared
     model_type = getattr(model, "model_type", None)
     value = getattr(model_type, "value", None)
     if isinstance(value, str) and value not in {t.value for t in _LOCAL_ENGINE_TYPES}:
@@ -668,7 +675,10 @@ def _preflight_budget_check(model: "BaseModel") -> None:
         from effgen.models._cost import CostTracker
     except ImportError:
         return
-    provider = getattr(getattr(model, "model_type", None), "value", "") or ""
+    # The provider the call is recorded under, so the preflight asks about the
+    # same price the check after the call will charge. A local engine has none:
+    # the cap lets it run, since nothing it does is billed.
+    provider = _provider_of(model) or ""
     model_name = getattr(model, "model_name", "") or ""
     CostTracker.get().check_preflight(provider, model_name)
 

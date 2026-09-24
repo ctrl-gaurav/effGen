@@ -149,7 +149,8 @@ class AgentConfig:
             ``response.success`` and ``response.metadata["reason"]`` yourself,
             which is what the CLI does so it can render a failure as a panel.
             A backend that never answered raises either way: that run produced
-            no result to inspect.
+            no result to inspect. So does a call the spend cap refuses: it
+            raises :class:`~effgen.models.errors.BudgetExceededError`.
 
             **Batch evaluation wants ``raise_on_error=False``.** Scoring a run
             that hit the iteration cap as an error rather than as a wrong answer
