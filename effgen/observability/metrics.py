@@ -6,6 +6,8 @@ Provides:
 - ``effgen_tool_call_latency_seconds{tool,outcome}`` — Histogram
 - ``effgen_agent_iteration_latency_seconds{preset}`` — Histogram
 - ``effgen_tokens_total{provider,model,kind}`` — Counter (kind ∈ input/output/cached)
+- ``effgen_model_cost_usd_total{provider,model}`` — Counter, spend on priced calls
+- ``effgen_model_unpriced_calls_total{provider,model}`` — Counter, calls with no published price
 
 Plus the legacy counters from ``effgen.utils.prometheus_metrics`` (still exported
 for backwards-compatibility).
@@ -329,6 +331,22 @@ tokens_total = LabeledCounter(
     help="Total tokens consumed, by provider/model/kind",
 )
 
+#: Spend on model calls whose price is known, in US dollars. A free-tier call
+#: adds ``0``, so its series exists and reads zero.
+#: Labels: provider, model
+model_cost_usd_total = LabeledCounter(
+    name="effgen_model_cost_usd_total",
+    help="Spend on priced model calls in US dollars, by provider/model",
+)
+
+#: Model calls on a model with no published price. Their spend is unknown, so
+#: they add to this count and nothing to the cost series above.
+#: Labels: provider, model
+model_unpriced_calls_total = LabeledCounter(
+    name="effgen_model_unpriced_calls_total",
+    help="Model calls whose model publishes no price, by provider/model",
+)
+
 #: HTTP request counter for the server's OpenAI-compatible API.
 #: Labels: route, method, status  (status is the numeric HTTP status code)
 http_requests_total = LabeledCounter(
@@ -501,6 +519,22 @@ def record_tokens(
         tokens_total.inc(cache_write_tokens, labels={**base, "kind": "cache_write"})
 
 
+def record_model_cost(*, provider: str, model: str, cost_usd: float | None) -> None:
+    """Record what one model call cost.
+
+    Args:
+        provider: Provider identifier.
+        model: Model name.
+        cost_usd: The call's cost; ``None`` when the model publishes no price,
+            which counts the call as unpriced instead of adding ``$0``.
+    """
+    labels = {"provider": provider, "model": model}
+    if cost_usd is None:
+        model_unpriced_calls_total.inc(1.0, labels=labels)
+    else:
+        model_cost_usd_total.inc(float(cost_usd), labels=labels)
+
+
 def record_http_request(
     *,
     route: str,
@@ -541,6 +575,8 @@ def export_metrics() -> str:
         run_framework_seconds.export(),
         agent_iteration_latency.export(),
         tokens_total.export(),
+        model_cost_usd_total.export(),
+        model_unpriced_calls_total.export(),
         http_requests_total.export(),
         circuit_breaker_state.export(),
         bulkhead_active.export(),
@@ -565,6 +601,8 @@ def reset_all() -> None:
     run_framework_seconds.reset()
     agent_iteration_latency.reset()
     tokens_total.reset()
+    model_cost_usd_total.reset()
+    model_unpriced_calls_total.reset()
     http_requests_total.reset()
     circuit_breaker_state.reset()
     bulkhead_active.reset()
@@ -579,6 +617,8 @@ __all__ = [
     "run_framework_seconds",
     "agent_iteration_latency",
     "tokens_total",
+    "model_cost_usd_total",
+    "model_unpriced_calls_total",
     "http_requests_total",
     "circuit_breaker_state",
     "bulkhead_active",
@@ -590,6 +630,7 @@ __all__ = [
     "record_run_framework",
     "record_agent_iteration",
     "record_tokens",
+    "record_model_cost",
     "record_http_request",
     # Export
     "export_metrics",
