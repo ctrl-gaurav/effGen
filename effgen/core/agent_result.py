@@ -43,8 +43,16 @@ class AgentResultMixin:
         *ledger* is the run's ledger recorder. Every way out of a run passes
         through here, so this is where the ledger is closed and its final form
         written to ``metadata["ledger"]``.
+
+        The run's latency is set here from the closed ledger, so
+        ``response.execution_time`` is the wall time the caller waited — the
+        session save, the final checkpoint and the telemetry written after the
+        answer included — and equals ``metadata["ledger"]["wall_s"]``, which
+        the ledger splits into model, tool, caller, child and framework time.
         """
-        _attach_ledger(response, ledger, close=True)
+        closed = _attach_ledger(response, ledger, close=True)
+        if closed is not None:
+            _report_run_wall(response, closed.wall_s)
         if response.task is None and isinstance(task, str):
             response.task = task
         if response.model is None:
@@ -162,3 +170,24 @@ class AgentResultMixin:
             )
         except Exception:  # noqa: BLE001 - run history must not break runs
             logger.debug("Run history logging failed", exc_info=True)
+
+
+def _report_run_wall(response: AgentResponse, wall_s: float) -> None:
+    """Report *wall_s* as the run's latency on *response*.
+
+    ``latency_ms`` / ``duration_s`` in the metadata mirror ``execution_time``
+    when they were derived from it; a value a path set for itself is kept.
+    """
+    earlier = float(response.execution_time or 0.0)
+    metadata = response.metadata if isinstance(response.metadata, dict) else None
+    mirrored = metadata is not None and (
+        "duration_s" not in metadata or metadata.get("duration_s") == round(earlier, 4)
+    )
+    response.execution_time = wall_s
+    if mirrored and metadata is not None and "duration_s" in metadata:
+        metadata["latency_ms"] = round(wall_s * 1000.0, 1)
+        metadata["duration_s"] = round(wall_s, 4)
+    logger.debug(
+        "run latency: reported the run's wall %.4fs (%.4fs before post-run work)",
+        wall_s, earlier,
+    )
