@@ -210,11 +210,19 @@ class FunctionTool(BaseTool):
         if self._is_async:
             return await self._func(**kwargs)
         # Run sync functions off the event loop so a slow tool doesn't block
-        # other concurrent tool/agent work.
-        loop = asyncio.get_running_loop()
+        # other concurrent tool/agent work. The worker thread runs in a copy of
+        # the caller's context, as ``asyncio.to_thread`` would: an agent the
+        # function starts is then counted as a child of the run that called the
+        # tool — its calls, tokens and cost in that run's ledger total — and
+        # its spans nest under the tool's.
+        import contextvars
         from functools import partial
 
-        return await loop.run_in_executor(None, partial(self._func, **kwargs))
+        loop = asyncio.get_running_loop()
+        context = contextvars.copy_context()
+        return await loop.run_in_executor(
+            None, partial(context.run, self._func, **kwargs),
+        )
 
     @classmethod
     def from_function(
