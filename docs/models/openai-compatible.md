@@ -101,6 +101,10 @@ The server serves its own model ids, so no OpenAI catalog is consulted.
   reasoning stream.
 - **Cost** — calls report no price. What your own server costs is not something
   effGen can derive from a token count, so it states nothing rather than `$0`.
+  The calls are recorded under the provider `openai_compatible` (which is also
+  what `response.provider` reads), never at the rate OpenAI charges for a model
+  that happens to share the id, and a spent daily budget does not refuse them
+  (see [`effgen cost`](../cli/cost.md)).
 
 Ask the endpoint what it serves:
 

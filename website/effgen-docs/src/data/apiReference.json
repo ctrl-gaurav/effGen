@@ -1,5 +1,5 @@
 {
- "derived_at": "2026-09-17",
+ "derived_at": "2026-09-24",
  "version": "1.1.0",
  "public_names": 251,
  "kind_counts": {
@@ -689,7 +689,7 @@
      "default": "True",
      "required": false,
      "keyword_only": false,
-     "description": "When True \u2014 the default since 1.0.0 \u2014 run() raises the typed error on failure instead of returning an AgentResponse with success=False. The same failure raises regardless of which internal path (direct or tool loop) produced it. Set False to inspect `response.success` and `response.metadata[\"reason\"]` yourself, which is what the CLI does so it can render a failure as a panel. A backend that never answered raises either way: that run produced no result to inspect. **Batch evaluation wants `raise_on_error=False`.** Scoring a run that hit the iteration cap as an error rather than as a wrong answer measures the reporting style instead of the model, and a small model hits that cap often. The pairing this flag was designed for is what makes that safe: an ordinary failure comes back to be inspected, while a backend that never answered still raises, so a broken endpoint cannot be silently scored as a wrong answer. One consequence to code for: with the flag off, a failed run's `response.output` is effGen's report of what stopped it, and the model's own text is in `response.metadata[\"partial_output\"]`. Read that key rather than `output` when a partial answer is what you want to score."
+     "description": "When True \u2014 the default since 1.0.0 \u2014 run() raises the typed error on failure instead of returning an AgentResponse with success=False. The same failure raises regardless of which internal path (direct or tool loop) produced it. Set False to inspect `response.success` and `response.metadata[\"reason\"]` yourself, which is what the CLI does so it can render a failure as a panel. A backend that never answered raises either way: that run produced no result to inspect. So does a call the spend cap refuses: it raises `effgen.models.errors.BudgetExceededError`. **Batch evaluation wants `raise_on_error=False`.** Scoring a run that hit the iteration cap as an error rather than as a wrong answer measures the reporting style instead of the model, and a small model hits that cap often. The pairing this flag was designed for is what makes that safe: an ordinary failure comes back to be inspected, while a backend that never answered still raises, so a broken endpoint cannot be silently scored as a wrong answer. One consequence to code for: with the flag off, a failed run's `response.output` is effGen's report of what stopped it, and the model's own text is in `response.metadata[\"partial_output\"]`. Read that key rather than `output` when a partial answer is what you want to score."
     },
     {
      "name": "system_prompt_template",
@@ -3956,7 +3956,7 @@
     {
      "name": "total_cost",
      "kind": "method",
-     "signature": "(provider: str | None = None, model: str | None = None) -> float",
+     "signature": "(provider: str | None = None, model: str | None = None) -> float | None",
      "summary": "Return total USD cost accumulated in memory, optionally filtered.",
      "is_async": false,
      "inherited_from": null
@@ -10944,7 +10944,7 @@
    "module": "effgen.models._cost_store",
    "area": "models",
    "summary": "Thread-safe, cross-process SQLite store for cost events.",
-   "signature": "(db_path: str | os.PathLike | None = None) -> None",
+   "signature": "(db_path: str | os.PathLike | None = None, *, max_rows: int | None = None) -> None",
    "params": [
     {
      "name": "db_path",
@@ -10953,6 +10953,14 @@
      "required": false,
      "keyword_only": false,
      "description": "Path to the SQLite file. Use `\":memory:\"` for tests. Defaults to `$EFFGEN_HOME/costs.sqlite` when `EFFGEN_HOME` is set, else `~/.effgen/costs.sqlite`. `EFFGEN_COST_DB` overrides both."
+    },
+    {
+     "name": "max_rows",
+     "type": "int | None",
+     "default": "None",
+     "required": false,
+     "keyword_only": true,
+     "description": "The row count past which the oldest rows are folded into hourly totals. Defaults to `EFFGEN_COST_MAX_ROWS` when set, else `RETENTION_MAX_ROWS`; `0` never folds."
     }
    ],
    "returns": null,
@@ -11000,9 +11008,17 @@
      "inherited_from": null
     },
     {
+     "name": "fold",
+     "kind": "method",
+     "signature": "() -> int",
+     "summary": "Fold the oldest rows into hourly totals until the table is under target.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "insert",
      "kind": "method",
-     "signature": "(provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float, timestamp: float | None = None) -> None",
+     "signature": "(provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float | None, timestamp: float | None = None) -> None",
      "summary": "Insert one cost event atomically, and return once it is written.",
      "is_async": false,
      "inherited_from": null

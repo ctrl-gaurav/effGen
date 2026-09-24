@@ -82,6 +82,28 @@ When a budget is configured, every paid API call checks cumulative daily and mon
 | >= 80% of budget | `UserWarning` emitted when the threshold is crossed |
 | >= 100% of budget | `BudgetExceededError` raised for paid calls; router fails over |
 
+### What a spent budget refuses
+
+Once a budget is spent, a call is refused only when its spend is something the
+budget counts. The call goes ahead when:
+
+- the model runs in this process on this machine (a Transformers, vLLM, MLX or
+  GGUF engine) — nobody bills it;
+- the catalog flags the model as a free tier;
+- the provider publishes no prices at all — a server you run yourself, reached
+  with `base_url=` or `provider="openai_compatible"`. Its calls are recorded
+  under `openai_compatible`, never priced at the rate a cloud provider charges
+  for a model with the same name.
+
+A model a pricing provider bills but the catalog does not list yet (a new
+release, a fine-tuned id) is still refused.
+
+A refusal reaches the caller as `BudgetExceededError` itself — from
+`Agent.run()` whatever `raise_on_error` says, from `Agent.stream()`, and from
+`Agent.run_batch()`, which stops at the first refused query rather than
+finishing as a column of failed rows. The server answers it with HTTP 429 and
+the error code `budget_exceeded`. The refused call never reaches the provider.
+
 ### Models with no published price
 
 The catalog does not publish a per-token rate for every model. A call on one of
@@ -97,7 +119,10 @@ not counted toward the configured budget. Run `effgen models refresh --provider
 groq` to pick up a published rate.
 ```
 
-The heads-up fires once per model per process, not once per call. Everywhere a
+The heads-up fires once per model per process, not once per call, however many
+agents record calls on that model at the same moment. For a server you run
+yourself the heads-up names `openai_compatible` and suggests no refresh, since
+no catalog prices such a server. Everywhere a
 cost is reported, such a call reads `unpriced` (or `None` in JSON) rather than
 `$0.000000` — a real `$0.00` means a genuine free tier.
 
@@ -146,24 +171,41 @@ effgen cost clear-budget
 Cost events are persisted in `~/.effgen/costs.sqlite`.  Each API call through effGen's adapters writes one row:
 
 ```
-cost_events(provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp)
+cost_events(provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp,
+            calls, unpriced_calls)
 ```
+
+`calls` is 1 for a single call; `unpriced_calls` is 1 when the call's model has
+no published price, in which case the row adds its tokens and nothing to
+`cost_usd`, and reads back as `cost_usd=None`. A ledger written by an earlier
+version gains the two columns when it is opened, every existing row reading as
+one priced call.
 
 The file is written automatically when you use `CostTracker.get()` (the default singleton).
 
 ### Keeping the ledger bounded
 
-The ledger gains one row per model call and normal operation removes none, so it
-grows for as long as you use effGen. Budget checks read a total summed in SQLite
-against an index on `timestamp`, so their cost follows the window they ask about
-rather than the size of the file, and a reading is reused for up to a second and
-updated in place with the spend this process records, so a burst of calls pays for
-one read — but the file itself keeps growing.
+The ledger gains one row per model call. Budget checks read a total summed in
+SQLite against an index on `timestamp`, so their cost follows the window they
+ask about rather than the size of the file, and a reading is reused for up to a
+second and updated in place with the spend this process records, so a burst of
+calls pays for one read.
 
-Once the ledger passes **250,000 events**, effGen logs one line naming
-`effgen cost prune`. Nothing is deleted for you: these are your own spend
-records, and `effgen cost by-provider` reports them over the ledger's whole
-lifetime.
+The ledger holds itself to **250,000 rows**. When it passes that, the oldest
+rows are folded into one row per provider, model and hour until the table is
+back to 80% of the ceiling (by day, then by 30 days, only if hourly buckets do
+not get it there). Folding keeps every total — spend, tokens, calls and unpriced
+calls per provider and model — so `effgen cost by-provider` reports the same
+lifetime numbers before and after; what it gives up is the per-call detail of
+the rows it folded. A folded row carries the time of its latest call, so a
+budget window counts that spend for at most one bucket longer, never shorter.
+The first fold in a process logs a warning (`cost ledger: folded ...`); later
+ones log at INFO.
+
+`EFFGEN_COST_MAX_ROWS` moves the ceiling; `EFFGEN_COST_MAX_ROWS=0` turns folding
+off, in which case the ledger grows without bound and logs one line naming
+`effgen cost prune` once it passes 250,000 events. Pruning deletes spend
+records, so it only happens when you ask:
 
 ```bash
 effgen cost prune --dry-run          # what would go, keeping the last 90 days

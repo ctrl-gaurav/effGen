@@ -150,7 +150,9 @@ except RunStoppedError as exc:
 With `raise_on_error=False` the same run comes back as a response with
 `success=False` and `outcome == "stopped"`. Batch evaluation still wants the
 flag off, so a stopped row is a row rather than an exception. A **failed** run
-raises what it always raised: the typed provider error, or `RuntimeError`.
+raises what it always raised: the typed provider error, or `RuntimeError`. A call
+the spend cap refuses raises `BudgetExceededError` whatever the flag says (see
+[`effgen cost`](../cli/cost.md)).
 
 ### Cost on the response
 
@@ -163,7 +165,21 @@ count of the ones missing from it. A genuine free tier reports `cost_usd: 0.0`,
 which is a real answer, not a placeholder.
 
 Per model call, `GenerationResult.metadata["cost_usd"]` follows the same rule:
-a float (possibly `0.0`) when a rate is published, `None` when it is not.
+a float (possibly `0.0`) when a rate is published, `None` when it is not. The
+same holds for the run's ledger (`metadata["ledger"]["cost_usd"]`), a stream's
+`last_stream_usage["cost_usd"]`, `CostTracker.total_cost()` (`None` when every
+call it covers was unpriced) and the Prometheus series: an unpriced call adds 1
+to `effgen_model_unpriced_calls_total{provider,model}` and nothing to
+`effgen_model_cost_usd_total{provider,model}`.
+
+### Latency on the response
+
+`result.execution_time` is the wall time the run took, from the moment `run()`
+started to the moment it returned — the session save, the final checkpoint and
+the telemetry written after the answer included. It equals
+`metadata["ledger"]["wall_s"]`, which splits the same time into `model_wait_s`,
+`tool_wait_s`, `caller_wait_s`, `child_wait_s` and `framework_s`;
+`metadata["latency_ms"]` and `metadata["duration_s"]` report the same number.
 
 ### Reasoning models that emit no visible token
 
