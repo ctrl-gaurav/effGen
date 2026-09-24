@@ -246,7 +246,7 @@ def _collect_spend() -> dict[str, Any]:
                 "cost_usd": 0.0,
             },
         )
-        row["requests"] += 1
+        row["requests"] += int(getattr(event, "calls", 1) or 1)
         row["tokens"] += int(event.prompt_tokens or 0) + int(event.completion_tokens or 0)
         row["cost_usd"] += float(event.cost_usd or 0.0)
 

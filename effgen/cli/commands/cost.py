@@ -61,11 +61,11 @@ def configured_daily_budget() -> float | None:
 def _handle_cost_prune(args, cli: "CLIInterface", store) -> int:
     """Handle ``effgen cost prune``: bound the size of the local spend ledger.
 
-    The ledger gains a row per model call and normal operation removes none, so
-    it grows for as long as effGen is used. Pruning is a command rather than
-    something that happens on its own, because the rows are the user's own
-    record of what they spent: ``--dry-run`` reports what would go, and nothing
-    is deleted without the user asking.
+    The ledger gains a row per model call and folds its oldest rows into hourly
+    totals at its ceiling, which keeps every total. Pruning deletes spend, so it
+    is a command rather than something that happens on its own: the rows are
+    the user's own record of what they spent, ``--dry-run`` reports what would
+    go, and nothing is deleted without the user asking.
     """
     import json as _json
 
@@ -215,14 +215,19 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                 'provider': ev.provider,
                 'model': model_label,
                 'requests': 0,
+                'unpriced_requests': 0,
                 'prompt_tokens': 0,
                 'completion_tokens': 0,
                 'cost_usd': 0.0,
             }
-        agg[key]['requests'] += 1
+        # A folded row stands for several calls; an unpriced call adds its
+        # tokens and no money.
+        calls = int(getattr(ev, 'calls', 1) or 1)
+        agg[key]['requests'] += calls
+        agg[key]['unpriced_requests'] += int(getattr(ev, 'unpriced_calls', 0) or 0)
         agg[key]['prompt_tokens'] += ev.prompt_tokens
         agg[key]['completion_tokens'] += ev.completion_tokens
-        agg[key]['cost_usd'] += ev.cost_usd
+        agg[key]['cost_usd'] += ev.cost_usd or 0.0
 
     rows = sorted(agg.values(), key=lambda r: r['cost_usd'], reverse=True)
     total_cost = sum(r['cost_usd'] for r in rows)
@@ -234,6 +239,9 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
 
     def _cost_label(row: dict) -> str:
         cost = row['cost_usd']
+        if row['requests'] and row['unpriced_requests'] >= row['requests']:
+            # Every call on this row was recorded without a price.
+            return 'unpriced'
         if cost > 0 or row['model'] == 'all models':
             return f"${cost:.6f}"
         status = _pricing_status(row['provider'], row['model'])
@@ -246,14 +254,19 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     def _row_cost(row: dict) -> float | None:
         """The row's spend, or ``None`` when the model publishes no price.
 
-        The ledger stores a non-null number for every call, so a row on an
-        unpriced model reads ``0.0`` there. Reporting that as the spend would
-        state a price nobody published; a reader of the JSON document gets the
-        same answer the table's label gives.
+        The ledger records each call's price, or that it had none; a row whose
+        calls were all unpriced — or whose model the catalog still does not
+        price — reports ``None`` rather than a ``0.0`` nobody published. A
+        reader of the JSON document gets the same answer the table's label
+        gives.
         """
         if _cost_label(row) == 'unpriced':
             return None
         return round(row['cost_usd'], 8)
+
+    # A window made only of unpriced calls has an unknown spend, not a $0 one.
+    total_known = not rows or any(_cost_label(r) != 'unpriced' for r in rows)
+    total_label = f"${total_cost:.6f}" if total_known else "unpriced"
 
     # Load budget for display
     budget_cfg = {}
@@ -268,13 +281,14 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         "period": period_label,
         "period_days": period_days,
         "total_requests": total_requests,
-        "total_cost_usd": round(total_cost, 8),
+        "total_cost_usd": round(total_cost, 8) if total_known else None,
         "daily_budget_usd": daily_budget,
         "rows": [
             {
                 "provider": r["provider"],
                 "model": r["model"],
                 "requests": r["requests"],
+                "unpriced_requests": r["unpriced_requests"],
                 "prompt_tokens": r["prompt_tokens"],
                 "completion_tokens": r["completion_tokens"],
                 "cost_usd": _row_cost(r),
@@ -349,7 +363,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         table.add_column("Prompt Tokens", justify="right")
         table.add_column("Completion Tokens", justify="right")
         table.add_column("Cost (USD)", style="effgen.cost", justify="right",
-                         footer=f"${total_cost:.6f}")
+                         footer=total_label)
 
         for r in rows:
             table.add_row(
@@ -363,7 +377,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
 
         cli.console.print(table)
         cli.console.print(f"\n[effgen.label]Total:[/effgen.label] {total_requests} requests  "
-                          f"[effgen.cost]${total_cost:.6f} USD[/effgen.cost]", highlight=False)
+                          f"[effgen.cost]{total_label} USD[/effgen.cost]", highlight=False)
         if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             filled = min(20, max(0, int(ratio * 20)))
@@ -390,7 +404,8 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             else:
                 print(f"{r['provider']:<12} {model:<48} {r['requests']:>5} {cost_label:>12}")
         print("-" * 80)
-        print(f"{'TOTAL':<12} {'':<48} {total_requests:>5} ${total_cost:>11.6f}")
+        total_cell = f"${total_cost:>11.6f}" if total_known else f"{'unpriced':>12}"
+        print(f"{'TOTAL':<12} {'':<48} {total_requests:>5} {total_cell}")
         if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             print(f"\nDaily budget: {format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)")

@@ -481,7 +481,9 @@ def read_executions(*, limit: int = 10, scan: int = 400) -> list[dict[str, Any]]
             "started": record.get("ts"),
             "updated": record.get("ts"),
             "runs": [],
-            "cost_usd": 0.0,
+            # None until a member run reports a price: runs on a model with no
+            # published price cost an unknown amount, not $0.
+            "cost_usd": None,
             "tokens": 0,
             "failed": 0,
         })
@@ -492,7 +494,8 @@ def read_executions(*, limit: int = 10, scan: int = 400) -> list[dict[str, Any]]
         if ts and ts > str(entry["updated"] or ""):
             entry["updated"] = ts
         try:
-            entry["cost_usd"] += float(record.get("cost_usd") or 0.0)
+            if record.get("cost_usd") is not None:
+                entry["cost_usd"] = float(entry["cost_usd"] or 0.0) + float(record["cost_usd"])
         except (TypeError, ValueError):
             # A record with an unusable cost contributes nothing to the total
             # rather than failing the whole grouping.
@@ -515,7 +518,8 @@ def read_executions(*, limit: int = 10, scan: int = 400) -> list[dict[str, Any]]
     executions = sorted(grouped.values(), key=lambda e: str(e["updated"] or ""), reverse=True)
     for entry in executions:
         entry["runs"].reverse()  # oldest first, the order they ran in
-        entry["cost_usd"] = round(entry["cost_usd"], 6)
+        if entry["cost_usd"] is not None:
+            entry["cost_usd"] = round(entry["cost_usd"], 6)
     return executions[:limit]
 
 

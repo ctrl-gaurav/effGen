@@ -47,7 +47,9 @@ def _node(nodes: dict[str, dict[str, Any]], node_id: str, node_type: str) -> dic
             "role": None,
             "runs": 0,
             "calls": 0,
-            "cost_usd": 0.0,
+            # None until a run on this node reports a price: an unpriced model
+            # costs an unknown amount, not $0.
+            "cost_usd": None,
             "tokens": 0,
             "duration_s": 0.0,
             "agent": None,
@@ -123,7 +125,8 @@ def _apply_run(
     node["runs"] += 1
     node["role"] = role or node["role"]
     node["model"] = record.get("model") or node["model"]
-    node["cost_usd"] = round(node["cost_usd"] + _float(record.get("cost_usd")), 8)
+    if record.get("cost_usd") is not None:
+        node["cost_usd"] = round(_float(node["cost_usd"]) + _float(record.get("cost_usd")), 8)
     node["tokens"] += _int(record.get("input_tokens")) + _int(record.get("output_tokens"))
     node["duration_s"] = round(node["duration_s"] + _float(record.get("duration_s")), 3)
     if node["task"] is None:
@@ -220,7 +223,7 @@ def build_topology(*, limit: int = 6, span_limit: int = 400) -> dict[str, Any]:
             "started": first.get("ts"),
             "updated": first.get("ts"),
             "runs": [],
-            "cost_usd": 0.0,
+            "cost_usd": None,
             "tokens": 0,
             "failed": 0,
         })
@@ -252,7 +255,7 @@ def build_topology(*, limit: int = 6, span_limit: int = 400) -> dict[str, Any]:
             "name": execution.get("name") or execution["id"],
             "started": execution.get("started"),
             "updated": execution.get("updated"),
-            "cost_usd": execution.get("cost_usd", 0.0),
+            "cost_usd": execution.get("cost_usd"),
             "tokens": execution.get("tokens", 0),
             "status": "error" if execution.get("failed") else "ok",
             "nodes": node_list,
