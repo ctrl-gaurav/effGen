@@ -727,6 +727,10 @@ ALLOWED_LOCKED_IO = {
         "a report, asked for by a person rather than by a run",
     "effgen/models/_cost_store.py:prune":
         "asked for by a person, not by a run",
+    "effgen/models/_cost_store.py:fold":
+        "one transaction when the ledger passes its row ceiling — tens of "
+        "thousands of calls apart — made by the caller that holds the write token, "
+        "so it is the batch write's own lock, not a new one",
     "effgen/models/_cost_store.py:cleanup":
         "asked for by a person, not by a run",
 }

@@ -318,11 +318,12 @@ def test_totals_agree_with_the_rows_to_the_cent(tmp_path, monkeypatch):
 
 
 def test_the_size_warning_fires_once_not_per_call(tmp_path, caplog):
-    """Crossing the ceiling says so one time and names the command."""
+    """With folding off, crossing the ceiling says so one time and names the command."""
     path = tmp_path / "c.sqlite"
     from effgen.models._cost_store import RETENTION_WARN_ROWS
 
     store = _ledger(path, 5)
+    store._max_rows = 0
     store._rows = RETENTION_WARN_ROWS - 1
     with caplog.at_level(logging.WARNING, logger="effgen.models._cost_store"):
         for _ in range(20):

@@ -14,8 +14,18 @@ Schema
         prompt_tokens     INTEGER NOT NULL DEFAULT 0,
         completion_tokens INTEGER NOT NULL DEFAULT 0,
         cost_usd          REAL    NOT NULL DEFAULT 0.0,
-        timestamp         REAL    NOT NULL   -- UNIX epoch (time.time())
+        timestamp         REAL    NOT NULL,  -- UNIX epoch (time.time())
+        calls             INTEGER NOT NULL DEFAULT 1,
+        unpriced_calls    INTEGER NOT NULL DEFAULT 0
     )
+
+A row is one model call (``calls = 1``) or, once the ledger has been folded
+(see *Growth*), the total of several. ``unpriced_calls`` counts the calls on a
+model with no published price: their tokens are known and their cost is not,
+so they add nothing to ``cost_usd`` and a row made only of them reads as
+unpriced rather than as ``$0``. A ledger written before these two columns
+existed gains them when it is opened, with every existing row read as one
+priced call, which is what it recorded.
 
 Concurrency
 -----------
@@ -54,10 +64,17 @@ themselves and is what a report needs; it builds one :class:`CostEvent` per row.
 
 Growth
 ------
-The table gains a row per model call and nothing removes one during normal
-operation. Crossing :data:`RETENTION_WARN_ROWS` logs one line naming
-``effgen cost prune``; :meth:`SQLiteCostStore.prune` is the only thing that
-deletes, and only when it is called.
+The table gains a row per model call. When it passes :data:`RETENTION_MAX_ROWS`
+rows, the oldest are folded into one row per provider, model and hour, until
+the table is back to :data:`RETENTION_FOLD_TARGET` of the ceiling. Folding
+keeps every total — spend, tokens, calls, unpriced calls — per provider and
+model, so ``effgen cost`` reports the same lifetime numbers before and after;
+what it gives up is the per-call detail of the rows it folded. A folded row
+carries the time of the latest call in it, so a budget window counts that spend
+for at most one bucket longer than it would have, never shorter.
+``EFFGEN_COST_MAX_ROWS`` (or ``SQLiteCostStore(max_rows=...)``) moves the
+ceiling, and ``0`` turns folding off. :meth:`SQLiteCostStore.prune` is the only
+thing that deletes spend, and only when it is called.
 """
 
 from __future__ import annotations
@@ -98,9 +115,18 @@ CREATE TABLE IF NOT EXISTS cost_events (
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd          REAL    NOT NULL DEFAULT 0.0,
-    timestamp         REAL    NOT NULL
+    timestamp         REAL    NOT NULL,
+    calls             INTEGER NOT NULL DEFAULT 1,
+    unpriced_calls    INTEGER NOT NULL DEFAULT 0
 );
 """
+
+#: Columns a ledger written before a row could stand for several calls lacks.
+#: Added on open; every existing row keeps meaning one priced call.
+_ADDED_COLUMNS = (
+    ("calls", "INTEGER NOT NULL DEFAULT 1"),
+    ("unpriced_calls", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 _CREATE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_cost_events_lookup
@@ -142,21 +168,50 @@ SELECT COUNT(*) FROM cost_events WHERE timestamp >= ?;
 """
 
 _INSERT = """
+INSERT INTO cost_events (provider, model, prompt_tokens, completion_tokens, cost_usd,
+                         timestamp, calls, unpriced_calls)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+"""
+
+#: Rows a ledger without the per-row call counts was read with: one priced call each.
+_INSERT_WITHOUT_COUNTS = """
 INSERT INTO cost_events (provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp)
 VALUES (?, ?, ?, ?, ?, ?);
 """
 
+_SELECT_COLUMNS = ("provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp, "
+                   "calls, unpriced_calls")
+_SELECT_COLUMNS_WITHOUT_COUNTS = ("provider, model, prompt_tokens, completion_tokens, cost_usd, "
+                                  "timestamp, 1, 0")
+
 _QUERY_SINCE = """
-SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp
+SELECT {columns}
 FROM cost_events
 WHERE timestamp >= ?
 ORDER BY timestamp ASC;
 """
 
 _QUERY_ALL = """
-SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp
+SELECT {columns}
 FROM cost_events
 ORDER BY timestamp ASC;
+"""
+
+#: Fold the rows older than a cutoff into one row per provider, model and time
+#: bucket. The rows written by this statement get ids above ``max_id`` and are
+#: kept by the delete that follows it.
+_FOLD_INSERT = """
+INSERT INTO cost_events (provider, model, prompt_tokens, completion_tokens, cost_usd,
+                         timestamp, calls, unpriced_calls)
+SELECT provider, model, SUM(prompt_tokens), SUM(completion_tokens), SUM(cost_usd),
+       MAX(timestamp), SUM(calls), SUM(unpriced_calls)
+FROM cost_events
+WHERE timestamp < ? AND id <= ?
+GROUP BY provider, model, CAST(timestamp / ? AS INTEGER);
+"""
+
+_FOLD_DELETE = """
+DELETE FROM cost_events WHERE timestamp < ? AND id <= ?;
 """
 
 _DELETE_OLD = """
@@ -178,6 +233,33 @@ DELETE FROM cost_events WHERE id NOT IN (
 #: reports it over the store's whole lifetime.
 RETENTION_WARN_ROWS = 250_000
 RETENTION_MAX_AGE_DAYS = 90.0
+
+#: The row ceiling the ledger holds itself to (see *Growth* in the module
+#: docstring). The same number as :data:`RETENTION_WARN_ROWS`: the size at
+#: which the ledger used to ask to be pruned is the size it now folds at.
+RETENTION_MAX_ROWS = RETENTION_WARN_ROWS
+
+#: A fold brings the table back to this fraction of its ceiling, so the next
+#: one is tens of thousands of calls away rather than one.
+RETENTION_FOLD_TARGET = 0.8
+
+#: Bucket widths a fold tries, narrowest first. A wider one is used only when
+#: the narrower one leaves the table above its target, which takes a great many
+#: distinct provider and model pairs.
+_FOLD_WIDTHS_S = (3600.0, 86400.0, 30 * 86400.0)
+
+
+def _max_rows_from_env() -> int:
+    """The row ceiling ``EFFGEN_COST_MAX_ROWS`` asks for; the default otherwise."""
+    raw = os.environ.get("EFFGEN_COST_MAX_ROWS")
+    if raw is None or not raw.strip():
+        return RETENTION_MAX_ROWS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Ignoring EFFGEN_COST_MAX_ROWS=%r; it is not a whole number.", raw)
+        return RETENTION_MAX_ROWS
+    return max(0, value)
 
 #: SQLite page cache per connection, in KiB. A file-backed store opens one
 #: connection per thread that uses it, and SQLite's default gives each 2 MiB, so
@@ -204,15 +286,15 @@ class _PendingRows(threading.Condition):
 
     def __init__(self) -> None:
         super().__init__()
-        self._rows: list[tuple[str, str, int, int, float, float]] = []
+        self._rows: list[tuple[str, str, int, int, float, float, int, int]] = []
 
     def __len__(self) -> int:
         return len(self._rows)
 
-    def append_row(self, row: tuple[str, str, int, int, float, float]) -> None:
+    def append_row(self, row: tuple[str, str, int, int, float, float, int, int]) -> None:
         self._rows.append(row)
 
-    def take(self) -> list[tuple[str, str, int, int, float, float]]:
+    def take(self) -> list[tuple[str, str, int, int, float, float, int, int]]:
         """Return everything waiting and leave the list empty."""
         rows, self._rows = self._rows, []
         return rows
@@ -220,13 +302,35 @@ class _PendingRows(threading.Condition):
 
 @dataclass
 class CostEvent:
-    """One recorded cost event row."""
+    """One recorded cost event row.
+
+    Attributes:
+        provider: The provider that served the calls.
+        model: The model id the calls used.
+        prompt_tokens: Input tokens, summed over the row's calls.
+        completion_tokens: Output tokens, summed over the row's calls.
+        cost_usd: What the priced calls cost; ``None`` when every call in the
+            row was on a model with no published price.
+        timestamp: When the call was made; for a folded row, the latest call.
+        calls: Model calls the row stands for (1 unless the row was folded).
+        unpriced_calls: How many of them had no published price.
+    """
     provider: str
     model: str
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     timestamp: float
+    calls: int = 1
+    unpriced_calls: int = 0
+
+
+def _event(row: tuple) -> CostEvent:
+    """A :class:`CostEvent` from a stored row, unpriced rows reading ``None``."""
+    event = CostEvent(*row)
+    if event.calls and event.unpriced_calls >= event.calls:
+        event.cost_usd = None
+    return event
 
 
 class SQLiteCostStore:
@@ -237,9 +341,13 @@ class SQLiteCostStore:
                  Defaults to ``$EFFGEN_HOME/costs.sqlite`` when ``EFFGEN_HOME``
                  is set, else ``~/.effgen/costs.sqlite``. ``EFFGEN_COST_DB``
                  overrides both.
+        max_rows: The row count past which the oldest rows are folded into
+                 hourly totals. Defaults to ``EFFGEN_COST_MAX_ROWS`` when set,
+                 else :data:`RETENTION_MAX_ROWS`; ``0`` never folds.
     """
 
-    def __init__(self, db_path: str | os.PathLike | None = None) -> None:
+    def __init__(self, db_path: str | os.PathLike | None = None, *,
+                 max_rows: int | None = None) -> None:
         if db_path is None:
             # Allow tests / sandboxes to redirect persistence away from the
             # user's real ~/.effgen/costs.sqlite via EFFGEN_COST_DB.
@@ -260,6 +368,15 @@ class SQLiteCostStore:
         #: the write path to answer a question that only changes by one.
         self._rows: int | None = None
         self._warned_retention = False
+        self._max_rows = _max_rows_from_env() if max_rows is None else max(0, int(max_rows))
+        #: Whether the table carries the per-row call counts (it can lack them
+        #: when a ledger from before they existed could not be written to).
+        self._has_counts = True
+        #: Folds made, rows they removed, and the rows the table held after the
+        #: last one. A fold that could not reach its target is not retried until
+        #: the table has grown by another tenth of its ceiling.
+        self.fold_stats: dict[str, int] = {"folds": 0, "rows_removed": 0, "rows_after": 0}
+        self._fold_retry_at = 0
         #: Events recorded and not yet written. A model call records one and
         #: returns once it is written; whichever caller finds the write token
         #: free writes everything waiting in one transaction, and the others
@@ -301,6 +418,23 @@ class SQLiteCostStore:
                 conn.execute(_CREATE_INDEX)
                 self._create_time_index(conn)
         return conn
+
+    def _add_missing_columns(self, conn: sqlite3.Connection) -> None:
+        """Give a ledger from before per-row call counts its two new columns.
+
+        A ledger that cannot be written is still read: its rows are one priced
+        call each, which is what such a ledger recorded.
+        """
+        present = {row[1] for row in conn.execute("PRAGMA table_info(cost_events);")}
+        for name, decl in _ADDED_COLUMNS:
+            if name in present:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE cost_events ADD COLUMN {name} {decl};")
+            except sqlite3.Error:
+                logger.debug("Could not add %s to the cost ledger; reading its rows "
+                             "as one priced call each", name, exc_info=True)
+                self._has_counts = False
 
     def _conn(self) -> sqlite3.Connection:
         if self._shared_lock is not None:
@@ -350,6 +484,10 @@ class SQLiteCostStore:
             conn.execute(_CREATE_TABLE)
             conn.execute(_CREATE_INDEX)
             self._create_time_index(conn)
+            self._add_missing_columns(conn)
+
+    def _columns(self) -> str:
+        return _SELECT_COLUMNS if self._has_counts else _SELECT_COLUMNS_WITHOUT_COUNTS
 
     # ------------------------------------------------------------------
     # Public API
@@ -361,7 +499,7 @@ class SQLiteCostStore:
         model: str,
         prompt_tokens: int,
         completion_tokens: int,
-        cost_usd: float,
+        cost_usd: float | None,
         timestamp: float | None = None,
     ) -> None:
         """Insert one cost event atomically, and return once it is written.
@@ -379,13 +517,17 @@ class SQLiteCostStore:
             model: The model id the call used.
             prompt_tokens: Input tokens the call consumed.
             completion_tokens: Output tokens the call produced.
-            cost_usd: What the call cost in US dollars.
+            cost_usd: What the call cost in US dollars; ``None`` when the model
+                has no published price, which is recorded as an unpriced call
+                rather than as a call that cost nothing.
             timestamp: Unix time of the call, defaulting to now.
         """
         ts = timestamp if timestamp is not None else time.time()
+        unpriced = 1 if cost_usd is None else 0
         with self._pending:
             self._pending.append_row(
-                (provider, model, prompt_tokens, completion_tokens, cost_usd, ts)
+                (provider, model, prompt_tokens, completion_tokens,
+                 0.0 if cost_usd is None else float(cost_usd), ts, 1, unpriced)
             )
             self._recorded += 1
             mine = self._recorded
@@ -470,7 +612,10 @@ class SQLiteCostStore:
             with self._exclusive() as conn:
                 conn.execute("BEGIN IMMEDIATE;")
                 try:
-                    conn.executemany(_INSERT, batch)
+                    if self._has_counts:
+                        conn.executemany(_INSERT, batch)
+                    else:
+                        conn.executemany(_INSERT_WITHOUT_COUNTS, [row[:6] for row in batch])
                     conn.execute("COMMIT;")
                 except Exception:
                     conn.execute("ROLLBACK;")
@@ -491,20 +636,26 @@ class SQLiteCostStore:
         return written
 
     def _note_insert(self, added: int = 1) -> None:
-        """Track the row count and say once when the ledger crosses its ceiling.
+        """Track the row count and hold the ledger to its ceiling.
 
         The count is read from the database once, on the first insert of this
         store, and incremented from then on: the write path already knows it
         added exactly one row, so asking the database again per call would put a
         second query on it to learn something it could have counted.
 
-        The message is emitted once per store. It says what to run, and it does
-        not prune: a spend record is the user's to keep or drop.
+        Past the ceiling the oldest rows are folded (see :meth:`fold`). With
+        folding off (``max_rows=0``) the ledger says once, per store, that it
+        has passed :data:`RETENTION_WARN_ROWS` and names the command that
+        bounds it; nothing is deleted either way.
         """
         try:
             if self._rows is None:
                 self._rows = self._count_rows()
             self._rows += added
+            if self._max_rows:
+                if self._rows > self._max_rows and self._rows >= self._fold_retry_at:
+                    self.fold()
+                return
             if self._warned_retention or self._rows < RETENTION_WARN_ROWS:
                 return
             self._warned_retention = True
@@ -518,12 +669,92 @@ class SQLiteCostStore:
             # Bookkeeping must never be the reason a recorded call fails.
             logger.debug("Could not track cost-ledger size", exc_info=True)
 
+    def fold(self) -> int:
+        """Fold the oldest rows into hourly totals until the table is under target.
+
+        The rows older than a cutoff are replaced, in one transaction, by one
+        row per provider, model and hour holding their summed tokens, spend,
+        calls and unpriced calls, stamped with the latest call's time. Every
+        total the ledger reports per provider and model is unchanged; only the
+        per-call detail of those rows goes. If hourly buckets leave the table
+        above :data:`RETENTION_FOLD_TARGET` of its ceiling, the same rows are
+        folded again by day, then by 30 days.
+
+        Returns:
+            How many rows the table lost. ``0`` when folding is off, the table
+            is already under its target, or the ledger cannot be written.
+        """
+        if not self._max_rows or not self._has_counts:
+            return 0
+        target = max(1, int(self._max_rows * RETENTION_FOLD_TARGET))
+        # A wider bucket is tried only when the narrower one left the table more
+        # than halfway back to its ceiling; a few rows over target is not worth
+        # giving up hourly detail for.
+        wider_above = target + max(0, self._max_rows - target) // 2
+        started = time.perf_counter()
+        removed = 0
+        width_used = 0.0
+        with self._exclusive() as conn:
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                before = int(conn.execute(_COUNT_ALL).fetchone()[0])
+                rows = before
+                for width in _FOLD_WIDTHS_S:
+                    if rows <= (target if width_used == 0.0 else wider_above):
+                        break
+                    width_used = width
+                    # The cutoff leaves the newest ``target`` rows as they are.
+                    cutoff_row = conn.execute(
+                        "SELECT timestamp FROM cost_events ORDER BY timestamp DESC "
+                        "LIMIT 1 OFFSET ?;", (target,)
+                    ).fetchone()
+                    if cutoff_row is None:
+                        break
+                    cutoff = float(cutoff_row[0]) + 1e-6
+                    max_id = int(conn.execute("SELECT MAX(id) FROM cost_events;").fetchone()[0])
+                    conn.execute(_FOLD_INSERT, (cutoff, max_id, width))
+                    conn.execute(_FOLD_DELETE, (cutoff, max_id))
+                    rows = int(conn.execute(_COUNT_ALL).fetchone()[0])
+                conn.execute("COMMIT;")
+            except Exception:
+                conn.execute("ROLLBACK;")
+                logger.debug("Could not fold the cost ledger", exc_info=True)
+                return 0
+        removed = before - rows
+        self._rows = rows
+        if not removed:
+            # The count this store kept was ahead of the table (another process
+            # pruned it, or it was never this large): nothing to fold.
+            if rows > wider_above:
+                self._fold_retry_at = rows + max(1, self._max_rows // 10)
+            logger.debug("cost ledger: nothing to fold (%d rows, ceiling %d)",
+                         rows, self._max_rows)
+            return 0
+        if rows > wider_above:
+            # Folding could not reach the target; look again once the table has
+            # grown by a tenth of its ceiling rather than on every call.
+            self._fold_retry_at = rows + max(1, self._max_rows // 10)
+        self.fold_stats["folds"] += 1
+        self.fold_stats["rows_removed"] += removed
+        self.fold_stats["rows_after"] = rows
+        level = logging.INFO if self._warned_retention else logging.WARNING
+        self._warned_retention = True
+        logger.log(
+            level,
+            "cost ledger: folded %d events into totals by provider, model and %s "
+            "(%s now holds %d rows, ceiling %d; spend and token totals unchanged) in %.0f ms",
+            removed, _width_name(width_used), self._path, rows, self._max_rows,
+            (time.perf_counter() - started) * 1000.0,
+        )
+        return removed
+
     def query_since(self, since: float) -> list[CostEvent]:
         """Return all events with timestamp >= *since*."""
         self.flush()
         with self._exclusive() as conn:
-            rows = conn.execute(_QUERY_SINCE, (since,)).fetchall()
-        return [CostEvent(*row) for row in rows]
+            rows = conn.execute(_QUERY_SINCE.format(columns=self._columns()),
+                                (since,)).fetchall()
+        return [_event(row) for row in rows]
 
     def spend_since(self, since: float) -> float:
         """Return total USD spend with ``timestamp >= since``, summed in SQLite.
@@ -635,8 +866,8 @@ class SQLiteCostStore:
         """Return all stored events (lifetime)."""
         self.flush()
         with self._exclusive() as conn:
-            rows = conn.execute(_QUERY_ALL).fetchall()
-        return [CostEvent(*row) for row in rows]
+            rows = conn.execute(_QUERY_ALL.format(columns=self._columns())).fetchall()
+        return [_event(row) for row in rows]
 
     def cleanup(self, max_age_seconds: float) -> int:
         """Delete events older than *max_age_seconds*.  Returns rows deleted."""
@@ -672,3 +903,8 @@ class SQLiteCostStore:
         if conn is not None:
             conn.close()
             self._local.conn = None
+
+
+def _width_name(width_s: float) -> str:
+    """How a fold's bucket width reads in its log line."""
+    return {3600.0: "hour", 86400.0: "day", 30 * 86400.0: "30 days"}.get(width_s, f"{width_s:g}s")
