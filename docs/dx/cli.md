@@ -98,6 +98,21 @@ Each score carries `responses` — what the model actually answered on every cas
 that could not be run at all is reported as failed (`error`) rather than scored
 `0%`, and is never recommended.
 
+## `effgen bench`
+
+Run a suite file of your own tasks against a model and print what the agent spent:
+accuracy beside LLM calls, tool calls, prompt, completion and cached-input tokens,
+wall and framework time, and stop reasons. `effgen bench compare` pairs two saved
+runs task by task and prints a noise band beside every delta. The suite format,
+the table and the band are described in [`effgen bench`](../cli/bench.md).
+
+```bash
+effgen bench init suite.yaml
+effgen bench run suite.yaml --model my-model --base-url http://127.0.0.1:8000/v1 --out runs/a
+effgen bench run suite.yaml --model my-model --base-url http://127.0.0.1:8000/v1 --out runs/b
+effgen bench compare runs/a runs/b
+```
+
 ## `effgen battle`
 
 Race several models on one ad-hoc prompt and watch the answers arrive side by

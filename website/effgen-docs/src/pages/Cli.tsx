@@ -19,8 +19,8 @@ const globalOptions = siteData.cli.global_options;
 /**
  * Where each command is documented in full.
  *
- * A command with no entry is described here and nowhere else — every one of the
- * 29 is in the table below either way, so the list on this page is the command
+ * A command with no entry is described here and nowhere else — every command
+ * is in the table below either way, so the list on this page is the command
  * surface and not a selection from it.
  */
 const DOCUMENTED_AT: Record<string, string> = {
@@ -307,7 +307,7 @@ _effgen_completion() {
     cur="\${COMP_WORDS[COMP_CWORD]}"
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="batch battle chat code compare config cost create-plugin debug doctor eval examples health loadtest models monitor presets prompts quickstart report resume run runs serve sessions tools top tutorial workflow"
+    commands="batch battle bench chat code compare config cost create-plugin debug doctor eval examples health loadtest models monitor presets prompts quickstart report resume run runs serve sessions tools top tutorial workflow"
     presets="coding general math media minimal multimodal notify rag research"
     tools="agentic_search anthropic_bash anthropic_computer anthropic_text_editor arxiv audio_transcribe bash calculator code_execution code_executor crypto_price currency_converter dataframe datetime discord_webhook docker docx email_draft email_imap email_smtp excel file_operations geocode git github google_search hackernews http image_caption image_info json_tool language_detect maps multimodal_describe news notification ocr openai_code_interpreter openai_file_search openai_web_search pdf plot pubmed python_repl qr_generate qr_read reddit retrieval rss_feed semantic_scholar slack_draft slack_webhook stackoverflow stats stock_price system_info text_processing translate url_context url_fetch weather web_search wikipedia wolfram_alpha youtube_metadata youtube_transcript"`}
         maxLines={14}

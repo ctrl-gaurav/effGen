@@ -56,7 +56,7 @@ export const commandGroups: CommandGroup[] = [
       "A scored suite, an ad-hoc race, a graded evaluation, or a server under load. " +
       "Each writes a shareable HTML report.",
     accent: "#ffd700",
-    commands: ["eval", "compare", "battle", "loadtest"],
+    commands: ["eval", "compare", "battle", "bench", "loadtest"],
   },
   {
     id: "serve",
