@@ -18,6 +18,9 @@ recursive-include docs *.md
 # Plugin scaffold templates (shipped as package data).
 recursive-include effgen/cli/_templates *.tmpl
 
+# The starter bench suite `effgen bench init` writes (shipped as package data).
+recursive-include effgen/bench/examples *.yaml
+
 # Keep heavy / internal repo material out of the published tarball.
 prune build_plan
 prune node_modules

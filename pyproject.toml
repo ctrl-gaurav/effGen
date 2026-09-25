@@ -530,6 +530,7 @@ effgen = [
     "config/*.json",
     "models/_data/*.json",
     "cli/_templates/plugin/*.tmpl",
+    "bench/examples/*.yaml",
     "py.typed",
     "dashboard/static/*.html",
     "dashboard/static/*.js",

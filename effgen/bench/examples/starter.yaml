@@ -1,0 +1,36 @@
+# A starter bench suite. Edit the tasks, or point `tasks_file:` at a JSON Lines
+# file of your own, then run:
+#
+#   effgen bench run starter.yaml --model <model id> [--base-url <endpoint>]
+#
+# Every key is described in the effgen bench documentation (docs/cli/bench.md).
+name: starter
+description: Arithmetic word problems answered with the calculator tool.
+seed: 42
+tools: [calculator]
+scorer: number
+agent:
+  system_prompt: >-
+    Solve the problem. Use the calculator for arithmetic. Finish with a line
+    of the form 'Answer: <number>'.
+  temperature: 0.1
+  max_iterations: 5
+tasks:
+  - id: crates
+    input: A crate holds 24 apples. How many apples are in 17 crates?
+    expected: 408
+  - id: tickets
+    input: A concert sold 1,250 tickets at $38 each. How many dollars did the tickets bring in?
+    expected: 47500
+  - id: reading
+    input: A book has 432 pages. Reading 18 pages a day, how many days does it take to finish?
+    expected: 24
+  - id: fuel
+    input: A car uses 7.5 litres of fuel per 100 km. How many litres does it use on a 340 km trip?
+    expected: 25.5
+  - id: shelves
+    input: A library puts 36 books on each shelf and has 1,008 books. How many shelves does it fill?
+    expected: 28
+  - id: savings
+    input: Maya saves $125 a month for 3 years, then spends $900. How many dollars are left?
+    expected: 3600
