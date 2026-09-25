@@ -680,6 +680,7 @@ Model id formats:
     jobs.add_eval_parser(subparsers, preset_choices=_preset_choices)
     jobs.add_compare_parser(subparsers, preset_choices=_preset_choices)
     jobs.add_battle_parser(subparsers)
+    jobs.add_bench_parser(subparsers)
     agent.add_debug_parser(subparsers, preset_choices=_preset_choices)
     jobs.add_cost_parser(subparsers)
     jobs.add_report_parser(subparsers)
@@ -776,6 +777,9 @@ def _dispatch(args: argparse.Namespace, cli: "CLIInterface", parser: argparse.Ar
     elif args.command in ('top', 'monitor'):
         from effgen.cli.monitor import run_monitor_command
         exit_code = run_monitor_command(args)
+    elif args.command == 'bench':
+        from effgen.cli.commands.bench import _handle_bench_command
+        exit_code = _handle_bench_command(args, cli)
     elif args.command == 'cost':
         exit_code = _handle_cost_command(args, cli)
     elif args.command == 'report':

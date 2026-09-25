@@ -299,6 +299,81 @@ def add_battle_parser(subparsers: argparse._SubParsersAction) -> None:
     battle_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                                 help='Skip the live side-by-side view and print the result')
 
+def add_bench_parser(subparsers: argparse._SubParsersAction) -> None:
+    """Declare ``effgen bench`` — run a suite file and compare runs."""
+    bench_parser = subparsers.add_parser(
+        'bench', help='Measure an agent on a suite file: accuracy, calls, tokens, time',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen bench init suite.yaml\n"
+            "  effgen bench run suite.yaml -m my-model \\\n"
+            "      --base-url http://127.0.0.1:8000/v1 --out runs/a\n"
+            "  effgen bench run suite.yaml -m <provider>:<model> --out runs/b --json\n"
+            "  effgen bench compare runs/a runs/b\n"
+            "\n"
+            "A suite is a YAML or JSON file naming tasks, tools, a scorer, n and a\n"
+            "seed; `effgen bench init` writes a starter one. `run` prints accuracy,\n"
+            "tasks, errors, LLM and tool calls, prompt, completion and cached-input\n"
+            "tokens, wall, framework, model and tool time, cost and stop reasons, and\n"
+            "saves the run. `compare` pairs two runs task by task and prints a noise\n"
+            "band (two standard errors of the per-task differences) beside every\n"
+            "delta; a delta within its band is not a measured difference.\n"
+        ),
+    )
+    bench_sub = bench_parser.add_subparsers(dest='bench_command', help='Bench command')
+
+    bench_init = bench_sub.add_parser('init', help='Write the starter suite file to edit')
+    bench_init.add_argument('path', nargs='?', default='bench-suite.yaml',
+                            help='Where to write it (default: bench-suite.yaml)')
+    bench_init.add_argument('--force', action='store_true', help='Overwrite an existing file')
+
+    bench_run = bench_sub.add_parser('run', help='Run a suite and print its table')
+    bench_run.add_argument('suite', help='The suite file (.yaml, .yml or .json)')
+    bench_run.add_argument('-m', '--model', help="Model id; overrides the suite's 'model'")
+    bench_run.add_argument('--base-url', dest='base_url', metavar='URL',
+                           help='An OpenAI-protocol endpoint serving the model, '
+                                'e.g. http://127.0.0.1:8000/v1')
+    bench_run.add_argument('--api-key-env', dest='api_key_env', metavar='VAR',
+                           help='Name of the environment variable holding the '
+                                "endpoint's key (the key itself is never printed)")
+    bench_run.add_argument('-e', '--engine', choices=['transformers', 'vllm', 'auto-fast'],
+                           help='Local engine for a model loaded in this process')
+    bench_run.add_argument('--n', dest='n', type=int, default=None,
+                           help="Tasks to run; overrides the suite's 'n'")
+    bench_run.add_argument('--seed', type=int, default=None,
+                           help="Seed; overrides the suite's 'seed' (picks the n tasks "
+                                "and is sent to the model)")
+    bench_run.add_argument('-c', '--concurrency', type=int, default=4,
+                           help='Tasks in flight at once (default: 4)')
+    bench_run.add_argument('--temperature', type=float, default=None,
+                           help="Sampling temperature; overrides the suite's")
+    bench_run.add_argument('--max-tokens', dest='max_tokens', type=int, default=None,
+                           help="Output token cap per model call; overrides the suite's")
+    bench_run.add_argument('--max-iterations', dest='max_iterations', type=int, default=None,
+                           help="Agent loop iterations per task; overrides the suite's")
+    bench_run.add_argument('--label', help='A name for this run, shown by compare')
+    bench_run.add_argument('--out', metavar='DIR',
+                           help='Save run.json and records.jsonl here (default: a new '
+                                'directory under $EFFGEN_BENCH_DIR, $EFFGEN_HOME/bench '
+                                'or ~/.effgen/bench)')
+    bench_run.add_argument('--no-save', dest='no_save', action='store_true',
+                           help='Do not save the run')
+    bench_run.add_argument('--max-errors', dest='max_errors', type=int, default=0,
+                           help='Exit 1 when more tasks than this never produced a run '
+                                '(default: 0)')
+    bench_run.add_argument('--json', dest='output_json', action='store_true',
+                           help='Print the run document (table and every task) as JSON')
+    bench_run.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                           help='Disable the live progress bar')
+
+    bench_compare = bench_sub.add_parser(
+        'compare', help='Compare two saved runs, with a noise band beside every delta')
+    bench_compare.add_argument('a', help='The first run: a run.json file or its directory')
+    bench_compare.add_argument('b', help='The second run')
+    bench_compare.add_argument('--json', dest='output_json', action='store_true',
+                               help='Print the comparison as JSON')
+
 def add_cost_parser(subparsers: argparse._SubParsersAction) -> None:
     """Declare ``effgen cost`` — the spend dashboard and budget subcommands."""
     _cost_output_help = ('Output file for the spend summary. The extension chooses the '
