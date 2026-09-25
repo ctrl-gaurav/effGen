@@ -149,6 +149,7 @@ PARSER_BUILDERS = {
     ("effgen.cli.parsers.jobs", "add_eval_parser"): ["eval"],
     ("effgen.cli.parsers.jobs", "add_compare_parser"): ["compare"],
     ("effgen.cli.parsers.jobs", "add_battle_parser"): ["battle"],
+    ("effgen.cli.parsers.jobs", "add_bench_parser"): ["bench"],
     ("effgen.cli.parsers.agent", "add_debug_parser"): ["debug"],
     ("effgen.cli.parsers.jobs", "add_cost_parser"): ["cost"],
     ("effgen.cli.parsers.jobs", "add_report_parser"): ["report"],
@@ -161,7 +162,7 @@ COMMAND_ORDER = [
     "run", "resume", "sessions", "runs", "chat", "code", "serve", "top",
     "monitor", "config", "tools", "models", "examples", "health", "doctor",
     "create-plugin", "presets", "quickstart", "tutorial", "workflow", "batch",
-    "eval", "compare", "battle", "debug", "cost", "report", "prompts",
+    "eval", "compare", "battle", "bench", "debug", "cost", "report", "prompts",
     "loadtest",
 ]
 
