@@ -73,6 +73,14 @@ promotional use ("a first-class experience") needs a human. ``cutting-edge`` and
 branch is ("installs the bleeding-edge main branch") as often as they praise.
 Those words are scrubbed by human review, not by this gate.
 
+**(c) Benchmark and dataset names in the shipped package.** Behaviour in
+``effgen/`` never keys on the name of an evaluation set, so no file under
+``effgen/`` names one (``BENCHMARK_NAME_PATTERN``). Suite files shipped as
+examples for ``effgen bench`` are data a user reads and edits, and may name the
+public set their tasks came from, so exactly the data files
+(``BENCHMARK_NAME_ALLOWED_SUFFIXES``) under ``BENCHMARK_NAME_ALLOWED_PREFIXES``
+are exempt; the command's own code is not, even placed in that directory.
+
 Both classes are matched against each line twice: as written, and with
 identifiers broken into words, so a gated term hidden inside a function or class
 name (``test_fails_gracefully``, ``TestExecutorHonesty``) is caught too.
@@ -1122,3 +1130,97 @@ def test_no_test_module_lets_the_repo_dotenv_override_the_environment():
         "load_dotenv without an explicit override= (use override=False):\n  "
         + "\n  ".join(offenders)
     )
+
+
+# ── (c) benchmark and dataset names in the shipped package ────────────────────
+# Behaviour in ``effgen/`` is chosen from declared capability — a tool's
+# category, an adapter's features, the caller's configuration — never from the
+# name of an evaluation set. A name is matched with letters and digits (not
+# underscores) as its boundary, so it is caught inside an identifier such as
+# ``GSM8K_PROMPT`` too.
+BENCHMARK_NAME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(?:gsm8k|gsm_?plus|math[-_]?500|bb_(?:easy|med|hard)|beyond_?bench"
+    r"|big[-_ ]?bench|bbh|arc_[ce]|arc[-_ ](?:easy|challenge)|csqa|commonsense_?qa"
+    r"|simpleqa|gaia|locomo|longmemeval|hotpot_?qa|mmlu|humaneval|agentloop)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
+
+# Example suites shipped for ``effgen bench`` are data files, not code: exactly
+# the data files under these paths may name the public set an example's tasks
+# were drawn from. A module placed there is still code and is still checked.
+BENCHMARK_NAME_ALLOWED_PREFIXES = ("effgen/bench/examples/",)
+BENCHMARK_NAME_ALLOWED_SUFFIXES = (".yaml", ".yml", ".json", ".jsonl")
+
+_BINARY_SUFFIXES = {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2",
+                    ".ttf", ".otf", ".pkl", ".so", ".gz", ".zip", ".whl"}
+
+
+def find_benchmark_names(rel_path: str, text: str) -> list[tuple[int, str]]:
+    """``(line number, line)`` for every benchmark or dataset name in *text*.
+
+    A path under ``effgen/`` is checked unless it is a data file
+    (``BENCHMARK_NAME_ALLOWED_SUFFIXES``) under ``BENCHMARK_NAME_ALLOWED_PREFIXES``;
+    anything outside ``effgen/`` returns nothing.
+    """
+    if not rel_path.startswith("effgen/"):
+        return []
+    if (rel_path.startswith(BENCHMARK_NAME_ALLOWED_PREFIXES)
+            and rel_path.endswith(BENCHMARK_NAME_ALLOWED_SUFFIXES)):
+        return []
+    return [(n, line.strip()) for n, line in enumerate(text.splitlines(), 1)
+            if BENCHMARK_NAME_PATTERN.search(line)]
+
+
+def _package_files() -> list[str]:
+    listings = []
+    for args in (["ls-files", "effgen/"], ["ls-files", "--others", "--exclude-standard", "effgen/"]):
+        try:
+            listings.append(subprocess.run(
+                ["git", "-C", str(REPO_ROOT), *args],
+                capture_output=True, text=True, check=True,
+            ).stdout)
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip("git not available / not a git checkout")
+    seen: dict[str, None] = {}
+    for out in listings:
+        for rel in out.splitlines():
+            if rel and not set(Path(rel).suffixes) & _BINARY_SUFFIXES:
+                seen[rel] = None
+    return list(seen)
+
+
+def test_the_shipped_package_names_no_benchmark_or_dataset():
+    hits = []
+    for rel in _package_files():
+        try:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        hits += [f"{rel}:{n} {line[:160]}" for n, line in find_benchmark_names(rel, text)]
+    assert not hits, (
+        "A benchmark or dataset name in effgen/. Select behaviour from declared "
+        "capability, not from the name of an evaluation set:\n  " + "\n  ".join(hits)
+    )
+
+
+def test_benchmark_name_detector_catches_a_planted_name():
+    for line in ('if suite == "gsm8k":', "PROMPTS = {'bb_hard': ...}",
+                 "GSM8K_PROMPT = 'x'", "# tuned for MMLU", 'name.startswith("arc_c")'):
+        assert find_benchmark_names("effgen/bench/runner.py", line), line
+        assert find_benchmark_names("effgen/core/agent.py", line), line
+    # Words that merely contain a name's letters are not names.
+    for line in ("gaiapath = 1", "the archive", "commonsense reasoning", "bbhx"):
+        assert not find_benchmark_names("effgen/core/agent.py", line), line
+
+
+def test_benchmark_names_are_allowed_only_in_shipped_example_suites():
+    line = "description: tasks drawn from gsm8k"
+    assert not find_benchmark_names("effgen/bench/examples/grade_school.yaml", line)
+    assert find_benchmark_names("effgen/bench/suite.py", line)
+    assert find_benchmark_names("effgen/bench/examples_loader.py", line)
+    # Code placed beside the example suites is code, and is checked.
+    assert find_benchmark_names("effgen/bench/examples/loader.py", line)
+    assert find_benchmark_names("effgen/bench/examples/notes.md", line)
+    assert BENCHMARK_NAME_ALLOWED_PREFIXES == ("effgen/bench/examples/",)
+    # The example suites are still read by the jargon and praise scans.
+    assert _is_scanned_path("effgen/bench/examples/starter.yaml")
