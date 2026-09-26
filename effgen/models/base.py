@@ -1131,6 +1131,25 @@ class BaseModel(ABC):
         """
         return False
 
+    def supports_stop_with_tools(self) -> bool:
+        """Whether a request that carries tool definitions may also carry stop sequences.
+
+        The agent sends a stop sequence beside its tools so that a model which
+        writes a tool call as text stops where the tool's result would begin,
+        instead of writing that result itself. An adapter whose provider rejects
+        ``stop`` alongside ``tools`` answers ``False``; the agent then leaves the
+        stop sequences off such a request and cuts the returned text at them
+        itself, so the reading is the same and the request is accepted.
+
+        The default is ``True``: it is what every request carried before this
+        question existed, and it is what the providers the shipped adapters
+        talk to accept.
+
+        Returns:
+            bool: True if ``stop`` may travel beside ``tools``.
+        """
+        return True
+
     def supports_forced_tool_call(self) -> bool:
         """Whether a turn can be sent that *requires* the model to call a tool.
 

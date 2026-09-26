@@ -161,6 +161,11 @@ STATIC_METHODS = ("_free_vram_gb", "_is_cuda_device_side_assert")
 #: the model declares rather than from substrings of the model's name. This
 #: engine inherits it and declares nothing, so a local model is described in
 #: full exactly as it was.
+#:
+#: ``supports_stop_with_tools`` was added on 2026-09-26, also on ``BaseModel``, so
+#: whether a request carrying tools may also carry stop sequences comes from what
+#: the adapter declares rather than from a provider name. This engine inherits it
+#: and answers True: it applies stop sequences itself, tools or not.
 ENGINE_MEMBERS = (
     "_HF_GEN_PARAMS",
     "_abc_impl",
@@ -213,6 +218,7 @@ ENGINE_MEMBERS = (
     # Inherited from BaseModel and answering None/False: a model served from
     # local weights has no provider cache to keep a prefix in, and no request
     # layer that could carry "offer these tools but do not call one".
+    "supports_stop_with_tools",
     "supports_suppressed_tool_call",
     "supports_tool_calling",
     "tool_call_support",

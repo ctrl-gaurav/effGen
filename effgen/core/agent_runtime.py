@@ -186,6 +186,34 @@ def model_can_forbid_tool_call(model: Any) -> bool:
         return False
 
 
+def model_takes_stop_with_tools(model: Any) -> bool:
+    """Whether *model* accepts stop sequences on a request that carries tools.
+
+    Asks the adapter (``supports_stop_with_tools()``). An adapter that does not
+    answer — an older one, a duck-typed stand-in, a probe that raises — reads as
+    "yes": that is what every request sent before the question existed assumed,
+    and a stop list beside tools is what the providers this framework ships
+    adapters for accept.
+
+    Args:
+        model: The loaded model, or ``None``.
+
+    Returns:
+        bool: False only when the adapter says its provider rejects the two
+        together.
+    """
+    if model is None:
+        return True
+    probe = getattr(model, "supports_stop_with_tools", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe())
+    except Exception:
+        logger.debug("supports_stop_with_tools probe failed", exc_info=True)
+        return True
+
+
 def model_prompt_cache_policy(model: Any) -> Any:
     """The prompt-cache policy *model* declares, or ``None``.
 
