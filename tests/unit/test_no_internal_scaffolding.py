@@ -8,7 +8,9 @@ text file and fails on two classes of text:
 **(a) Internal process jargon** that should never ship:
 
 * internal tracking IDs (e.g. ``VF5``, ``GA4``, ``RA-N3``, ``SEC1``, ``FN-2``,
-  ``Audit-2 #x``) and per-finding IDs (e.g. ``E1-1``, ``E11-3``),
+  ``Audit-2 #x``) and per-finding IDs (e.g. ``E1-1``, ``E11-3``), including a
+  bare criterion or finding number used as a comment's section header
+  (``# R1 — the turn that asks``, ``# F40 — …``),
 * internal milestone references (``Phase 7``, ``Phase-7``, ``Phase_7``,
   ``Phases 16/21/23``, ``build plan``, ``stabilization sprint``) — the
   separator between ``Phase`` and its number may be a space, hyphen, or
@@ -16,7 +18,11 @@ text file and fails on two classes of text:
 * author/process breadcrumbs (``this phase``, ``as per audit``,
   ``fixed in phase``, ``builder/verifier/planner/validator added``, and the
   role names that have no ordinary technical use at all — ``lead architect``,
-  ``scrub agent``, ``release-verifier``),
+  ``scrub agent``, ``release-verifier``), and the review protocol's own labels
+  for a test (``over-correction guard``) or for the tree a change is compared
+  against (``pre-fix tree``, ``pre-change copy``),
+* the release-notes disclaimer about benchmarks (``not tuned for a
+  benchmark``, ``chase a score``), which public documents do not carry,
 * names of internal planning artifacts (``findings report``, ``phase brief``,
   ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``, and the planning
   tree's own files by name — ``HANDOVER.md``, ``DIAGNOSIS.md``, ``RUNBOOK.md``,
@@ -190,6 +196,10 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+|BUG-\d+|ISSUE-\d+"
         r"|AC-\d+|CE-\d+)\b"
         r"|Audit-2 #"
+        # The same kind of number used bare as a comment's section header
+        # ("# R1 — the turn that asks", "# F40 — a bare str"): a letter, one or
+        # two digits, then a dash, alone after the comment marker.
+        r"|^\s*(?:#+|//)\s*[A-Z]\d{1,2}\s+[—–]\s"
     ),
     # internal milestone / planning references. The separator between "Phase"
     # and the number may be a space, hyphen, or underscore ("Phase 7",
@@ -214,7 +224,19 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"\bthe report (?:asked|requested|wanted)\b|\bbuilder agent\b|"
         r"\b(?:builder|verifier|explorer|planner|validator) "
         r"(?:added|fixed|confirmed|noted|reported)\b|"
-        r"\blead architect\b|\bscrub agent\b|\brelease[ -]verifier\b",
+        r"\blead architect\b|\bscrub agent\b|\brelease[ -]verifier\b|"
+        # The review protocol's labels: a test "guarding over-correction", the
+        # "pre-fix tree" a change was compared against. They describe how the
+        # change was checked, not what the code does.
+        r"\bover[ -]correction guards?\b|\bguards? (?:against )?over[ -]correction\b|"
+        r"\bpre[ -](?:fix|change) (?:tree|copy)\b",
+        re.IGNORECASE,
+    ),
+    # The benchmark disclaimer public documents do not carry: a release note
+    # says what changed and what it cost, not what it was or was not tuned for.
+    "benchmark-disclaimer": re.compile(
+        r"\bnot tuned for (?:a|any) benchmark\b|\btuned for a benchmark\b"
+        r"|\bchase (?:a|the) score\b",
         re.IGNORECASE,
     ),
     # Names of internal planning artifacts. These describe how the project is
@@ -520,6 +542,9 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "GA4 covered the catalog refresh",
         "RA-N3 and SEC1 and FN-2 all landed",
         "closes BUG-012 and ISSUE-7",
+        "# R1 — the turn that asks for the answer",
+        "# F40 — a bare str is wrapped",
+        "// A3 — coerce the input",
     ],
     "milestone-reference": [
         "see Phase 7 of the build plan",
@@ -541,6 +566,16 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "the lead architect signed this off",
         "held for the scrub agent",
         "the release-verifier re-derived it",
+        '"""Over-correction guard: only equal settings share a pass."""',
+        "Guards over-correction: the default loses no call.",
+        "These guard against over-correction, so they pass anyway",
+        "they pass on the pre-fix tree too",
+        "run it against the pre-change copy",
+    ],
+    "benchmark-disclaimer": [
+        "None of this is tuned for a benchmark.",
+        "It is not tuned for any benchmark.",
+        "rather than to chase a score",
     ],
     "planning-artifact": [
         "see the findings report for the full list",
@@ -929,6 +964,8 @@ def test_gated_vocabulary_covers_the_house_style_list():
         "recorded in HANDOVER.md", "the section DIAGNOSIS.md cites",
         "overridden by LEAD_ADDENDUM", "the rule is §G.1", "house style §1.12",
         "TODO", "FIXME", "XXX", "HACK", "breakpoint()", "pdb.set_trace()",
+        "# R2 — a session keeps one shape", "an over-correction guard",
+        "the pre-fix tree", "None of it is tuned for a benchmark",
         # self-praise
         "fails honestly", "an honest error", "the honesty of it",
         "degrades gracefully", "a graceful fallback",
@@ -956,6 +993,18 @@ def test_gated_vocabulary_covers_the_house_style_list():
     # the prompt library ships. It must not read as a planning cross-reference.
     for legal in ("Cal. Bus. & Prof. Code § 16600", "18 U.S.C. § 1030"):
         assert not find_violations("s.py", legal), legal
+
+    # The section-header form needs the id alone after the comment marker and a
+    # dash after it; an id inside ordinary prose, a model or engine name inside
+    # a sentence, and a header whose first word merely starts with a capital
+    # stay legal. So do the ordinary words the protocol labels are built from.
+    for ordinary in (
+        "# The turn that asks for the answer", "x = 1  # R1 — inline, not a header",
+        "# Qwen2 — a model family", "# V8 engine — not a header",
+        "the model corrects itself once", "a guard against overflow",
+        "the fixed tree is walked twice", "a change to the pre-flight check",
+    ):
+        assert not find_violations("s.py", ordinary), ordinary
 
     # The planning files are matched in capitals only: the lowercase words are
     # ordinary ones, and a retrieval example ships a corpus that uses them.
