@@ -17,8 +17,9 @@ What is pinned here:
   and never names a form of its own;
 * the budget follows the shape the run declared, a caller's own value always
   wins, and a model that declares it reasons is never starved;
-* the four ReAct labels go out with the prompts that write them and with
-  nothing else.
+* the four ReAct labels go out with the prompts that write them, and a
+  tool-holding turn read by a reader that falls back to ReAct text carries the
+  observation label alone.
 """
 
 from __future__ import annotations
@@ -505,12 +506,18 @@ class TestStopSequencesFollowTheFrame:
         assert framework_stop_sequences("react_text") == DEFAULT_STOP_SEQUENCES
         assert framework_stop_sequences("custom_template") == DEFAULT_STOP_SEQUENCES
         assert framework_stop_sequences("native") == ()
+        # A native turn whose text may be read as a written action carries the
+        # observation label, and only that one.
+        assert framework_stop_sequences(
+            "native", reads_written_actions=True) == ("\nObservation:",)
 
-    def test_the_native_frame_sends_no_react_labels(self):
+    def test_the_native_frame_sends_only_the_observation_label(self):
+        """A tool-holding native turn stops where a written call's result would
+        begin; the three labels that cut prose stay off it."""
         model = _Recorder()
         with _agent(model, tools=[CALC()]) as agent:
             agent.run("What is 6*7?")
-        assert not model.configs[0].stop_sequences
+        assert model.configs[0].stop_sequences == ["\nObservation:"]
 
     def test_the_text_frame_still_sends_them(self):
         class _NoTools(_Recorder):
@@ -624,5 +631,5 @@ class TestTheFrameIsResolvedForTheTurnNotTheRun:
         with _agent(model, tools=[CALC()]) as agent:
             native, _ = resolve_turn_config(agent, {}, frame="native")
             text, _ = resolve_turn_config(agent, {}, frame="react_text")
-        assert not native.stop_sequences
+        assert native.stop_sequences == ["\nObservation:"]
         assert text.stop_sequences == list(DEFAULT_STOP_SEQUENCES)

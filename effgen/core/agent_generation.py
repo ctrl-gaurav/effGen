@@ -466,10 +466,11 @@ class AgentGenerationMixin:
         # loop resolves it from the frame this turn is written in and hands it
         # over; a direct call that never went through the loop resolves the same
         # thing from this agent's own frame. Either way the four ReAct labels go
-        # out with the prompts that write them and with nothing else -- sending
-        # them to a model that was never shown the scaffold cuts any answer
-        # containing a line that begins "Question:".
-        from .agent_loop import frame_for, framework_stop_sequences
+        # out with the prompts that write them -- sending them to a model that
+        # was never shown the scaffold cuts any answer containing a line that
+        # begins "Question:" -- and a tool-holding turn whose text may be read as
+        # a written call carries the observation label alone.
+        from .agent_loop import frame_for, framework_stops_for, stops_go_to_the_provider
 
         if resolved_stops is not None:
             default_stop_sequences = list(resolved_stops)
@@ -480,7 +481,7 @@ class AgentGenerationMixin:
             # different requests, and which one went out is not otherwise
             # readable from a log.
             own_frame = frame_for(self)
-            default_stop_sequences = list(framework_stop_sequences(own_frame))
+            default_stop_sequences = list(framework_stops_for(self, own_frame))
             logger.info(
                 "[stop] stop sequences for frame=%s: the framework sends %d",
                 own_frame, len(default_stop_sequences),
@@ -536,9 +537,16 @@ class AgentGenerationMixin:
             # token stream matches stop sequences against the chain as well, so
             # sending them can end generation before the first visible token.
             # Cut the returned answer here instead.
+            # A provider that rejects stop sequences beside tools (declared by
+            # its adapter) gets none on a request that carries tools; the text
+            # it returns is cut at them here instead.
+            to_provider = stops_go_to_the_provider(
+                current_model, bool(kwargs.get("tools")),
+            )
             local_stop_sequences = (
                 list(requested_stop_sequences or [])
-                if self._interleaves_reasoning(current_model) else None
+                if self._interleaves_reasoning(current_model) or not to_provider
+                else None
             )
 
             for attempt in range(max_retries):
@@ -594,9 +602,16 @@ class AgentGenerationMixin:
                     )
                     response_text = str(raw_text) if raw_text else ""
                     if local_stop_sequences:
-                        response_text = apply_stop_sequences(
+                        cut_text = apply_stop_sequences(
                             response_text, local_stop_sequences,
                         )
+                        if cut_text != response_text:
+                            logger.info(
+                                "[stop] a stop sequence cut the returned text "
+                                "locally (%d characters dropped)",
+                                len(response_text) - len(cut_text),
+                            )
+                        response_text = cut_text
                     tokens_used = turn_result.tokens_used if turn_result and hasattr(turn_result, 'tokens_used') else 0
                     finish_reason = turn_result.finish_reason if turn_result and hasattr(turn_result, 'finish_reason') else "unknown"
                     total_tokens += tokens_used
@@ -1249,9 +1264,9 @@ class AgentGenerationMixin:
         models_to_run = self._all_models[:2]
         base_temperature = kwargs.get('temperature', self.config.temperature)
 
-        from .agent_loop import frame_for, framework_stop_sequences
+        from .agent_loop import frame_for, framework_stops_for
 
-        default_stop_sequences = list(framework_stop_sequences(frame_for(self)))
+        default_stop_sequences = list(framework_stops_for(self, frame_for(self)))
 
         gen_config = GenerationConfig(
             temperature=base_temperature,

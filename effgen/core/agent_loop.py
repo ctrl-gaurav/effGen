@@ -91,6 +91,7 @@ from .agent_runtime import (
     model_can_forbid_tool_call,
     model_can_require_tool_call,
     model_prompt_cache_policy,
+    model_takes_stop_with_tools,
     resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
@@ -158,19 +159,73 @@ DEFAULT_STOP_SEQUENCES = (
 #: answer that quotes the question it was asked came back truncated.
 FRAMES_THAT_WRITE_REACT_LABELS = ("react_text", "custom_template")
 
-def framework_stop_sequences(frame: str) -> tuple[str, ...]:
+#: The one label that ends a turn at a tool call the model wrote as text. A
+#: turn on any other frame can still be read as ReAct text when the agent's
+#: reader falls back to it, and a model that writes ``Action:`` there goes on to
+#: write the tool's result itself unless generation stops where the result
+#: would begin. The other three labels guard a different thing (a model writing
+#: the next question or the user's turn) and are not sent there, because
+#: ``"\nQuestion:"`` cuts ordinary prose.
+OBSERVATION_STOP_SEQUENCES = ("\nObservation:",)
+
+
+def framework_stop_sequences(
+    frame: str, *, reads_written_actions: bool = False,
+) -> tuple[str, ...]:
     """The stop sequences the framework sends for a turn written in *frame*.
 
-    Read from the frame in use and from nothing else — never from a model id,
-    never from the task. A caller's own ``stop_sequences`` is separate and is
-    always sent; this is only what the framework asks for when the caller asked
-    for nothing.
+    Read from the frame in use and from what the turn's reader does with it —
+    never from a model id, never from the task. A caller's own
+    ``stop_sequences`` is separate and is always sent; this is only what the
+    framework asks for when the caller asked for nothing.
+
+    Args:
+        frame: The frame the turn is written in.
+        reads_written_actions: Whether the turn's text may be read as a ReAct
+            action (see :func:`reads_written_actions`). On a frame that does
+            not write the labels, it adds the observation label alone.
+
+    Returns:
+        The stop sequences, possibly empty.
     """
-    return (
-        DEFAULT_STOP_SEQUENCES
-        if frame in FRAMES_THAT_WRITE_REACT_LABELS
-        else ()
+    if frame in FRAMES_THAT_WRITE_REACT_LABELS:
+        return DEFAULT_STOP_SEQUENCES
+    if reads_written_actions:
+        return OBSERVATION_STOP_SEQUENCES
+    return ()
+
+
+def reads_written_actions(agent: Any) -> bool:
+    """Whether this agent's turns may be read as a tool call written as text.
+
+    True when the agent holds tools and the reader for its turns falls back to
+    ReAct text (the ``hybrid`` and ``react`` strategies). Read from the agent's
+    configured strategy and its tools, never from the model's name.
+    """
+    if not getattr(agent, "tools", None):
+        return False
+    strategy = getattr(agent, "_tool_calling_strategy", None)
+    return getattr(strategy, "name", "") in ("hybrid", "react")
+
+
+def framework_stops_for(agent: Any, frame: str) -> tuple[str, ...]:
+    """The framework's stop sequences for a turn of *agent* written in *frame*."""
+    return framework_stop_sequences(
+        frame, reads_written_actions=reads_written_actions(agent),
     )
+
+
+def stops_go_to_the_provider(model: Any, carries_tools: bool) -> bool:
+    """Whether stop sequences can travel on this request, or must be applied locally.
+
+    A request that carries no tool definitions always takes them. One that does
+    takes them unless the adapter declares its provider rejects the two together
+    (``supports_stop_with_tools()``); then the framework cuts the returned text
+    at the same sequences instead, which is what the provider would have done.
+    """
+    if not carries_tools:
+        return True
+    return model_takes_stop_with_tools(model)
 
 
 @dataclass(frozen=True)
@@ -417,7 +472,7 @@ def resolve_turn_config(
         answer_style = resolve_answer_style(
             kwargs.get("answer_style"), getattr(config, "answer_style", None)
         )
-    framework_stops = framework_stop_sequences(frame)
+    framework_stops = framework_stops_for(agent, frame)
     logger.info(
         "[stop] stop sequences for frame=%s: the framework sends %d",
         frame, len(framework_stops),
@@ -431,7 +486,14 @@ def resolve_turn_config(
     except Exception:  # noqa: BLE001 - a capability probe never breaks a run
         logger.debug("reasoning-interleave probe failed", exc_info=True)
         interleaves = False
-    if interleaves:
+    carries_tools = frame == "native" and bool(getattr(agent, "tools", None))
+    to_provider = stops_go_to_the_provider(agent.model, carries_tools)
+    if requested_stops and not to_provider:
+        logger.info(
+            "[stop] the adapter declares its provider takes no stop sequences "
+            "beside tools; the framework cuts the returned text at them instead"
+        )
+    if interleaves or not to_provider:
         local_stops = tuple(requested_stops or ())
     gen_config = GenerationConfig(
         temperature=kwargs.get("temperature", config.temperature),
@@ -1434,7 +1496,7 @@ def _take_turn(
     # its own, and every other turn sends the run's configuration unchanged.
     turn_stops = tuple(
         normalize_stop_sequences(
-            kwargs.get("stop_sequences", list(framework_stop_sequences(turn_frame)))
+            kwargs.get("stop_sequences", list(framework_stops_for(agent, turn_frame)))
         ) or ()
     )
     turn_config = policy.gen_config
