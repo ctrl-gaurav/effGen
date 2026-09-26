@@ -119,3 +119,21 @@ any attached tool one the run may not answer without — including on this path'
 5. Tool is executed, result fed back to the model
 
 In `"hybrid"` mode, if native parsing fails, the system falls back to ReAct text parsing automatically.
+
+A model on this path sometimes writes its call as text (`Action: calculator` /
+`Action Input: {...}`) instead of making a native call. Nothing has run at that
+point, so the agent treats the turn as ending there:
+
+- A tool-holding turn read by the `"hybrid"` or `"react"` reader is sent the
+  stop sequence `"\nObservation:"`, so generation ends where the tool's result
+  would begin. Only that one label is sent on the native path; the labels that
+  would cut ordinary prose (`"\nQuestion:"` and the like) are not. A
+  `stop_sequences` you pass yourself replaces it.
+- Whatever the stop sequence did, the reader runs the written call and discards
+  anything the model wrote after it — a result it made up under `Observation:`,
+  or an answer built on one. The log line
+  `[reader] a written action is run and what the model wrote after it is discarded`
+  marks each time this happens.
+- An adapter whose provider rejects `stop` beside `tools` says so with
+  `supports_stop_with_tools()` returning `False`. Such a request then goes out
+  without stop sequences and the returned text is cut at them instead.

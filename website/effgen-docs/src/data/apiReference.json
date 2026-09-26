@@ -1,5 +1,5 @@
 {
- "derived_at": "2026-09-24",
+ "derived_at": "2026-09-26",
  "version": "1.1.0",
  "public_names": 251,
  "kind_counts": {
@@ -2238,6 +2238,14 @@
      "kind": "method",
      "signature": "() -> bool",
      "summary": "Whether this adapter carries a tool call and a tool result through.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "supports_stop_with_tools",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether a request that carries tool definitions may also carry stop sequences.",
      "is_async": false,
      "inherited_from": null
     },
