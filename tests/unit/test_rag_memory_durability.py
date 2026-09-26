@@ -20,7 +20,7 @@ from effgen.tools.builtin.retrieval import Retrieval
 from tests.fixtures.mock_models import MockToolCallingModel
 
 # ---------------------------------------------------------------------------
-# F44 — RAG sources / citations are surfaced
+# RAG sources / citations are surfaced
 # ---------------------------------------------------------------------------
 
 def _rag_agent(final_answer: str = "The capital of Atlantis is Marisol.") -> Agent:

@@ -90,7 +90,7 @@ def test_the_default_vllm_load_starts_no_cuda_in_this_process(no_cuda_start) -> 
 
 
 def test_a_process_with_no_visible_device_is_told_so(no_cuda_start, monkeypatch) -> None:
-    """Over-correction guard: no device still refuses, with the same message."""
+    """No device still refuses, with the same message."""
     from effgen.models import load_model
 
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
@@ -100,7 +100,7 @@ def test_a_process_with_no_visible_device_is_told_so(no_cuda_start, monkeypatch)
 
 
 def test_transformers_bit_width_follows_where_torch_can_run(monkeypatch) -> None:
-    """Over-correction guard: the device list is not the question for Transformers.
+    """The device list is not the question for Transformers.
 
     A host whose driver lists a GPU that torch cannot start (a driver older than
     torch's CUDA build) runs a Transformers model on CPU, so no bit width is

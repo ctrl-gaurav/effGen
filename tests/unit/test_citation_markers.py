@@ -306,8 +306,8 @@ class TestDefaultAnswerCarriesNoMarkers:
 class TestTheStripIsGated:
     """The cases where the answer must be left exactly as the model wrote it.
 
-    These guard against over-correction, so they pass on the pre-fix tree too —
-    that tree never strips anything. They are here to fail if a later change
+    They pass whether or not the strip exists, since leaving the answer alone
+    is also what no strip at all does. They are here to fail if a later change
     widens the strip, which is a failure mode no positive test can catch.
     """
 
@@ -488,8 +488,9 @@ def _unresolvable(resp) -> list[int]:
 class TestNothingElseMoves:
     """Invariants: what a caller saw before, they still see.
 
-    Like :class:`TestTheStripIsGated`, these pass against the pre-fix tree by
-    design — an invariant that only held after the change would not be one.
+    Like :class:`TestTheStripIsGated`, these held before markers became opt-in
+    too, by design — an invariant that only held after the change would not be
+    one.
     """
 
     def test_default_mode_citations_and_sources_are_unchanged(self):

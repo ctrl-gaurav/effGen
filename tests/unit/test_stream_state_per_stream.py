@@ -123,7 +123,7 @@ def test_streams_on_two_threads_read_their_own_calls_and_usage() -> None:
 
 
 def test_a_record_made_outside_a_stream_is_still_read_back() -> None:
-    """Over-correction guard: a caller that records on a model directly still reads it."""
+    """A caller that records on a model directly still reads it."""
     model = _Recorder()
     record_stream_tool_calls(model, [tool_call_entry("echo", json.dumps({"v": "direct"}))])
     assert _argument(model) == "direct"

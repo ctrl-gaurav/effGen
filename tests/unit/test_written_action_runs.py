@@ -18,7 +18,7 @@ Two guards, each enough on its own:
   invented observation cannot become the answer even if the model ignores the
   stop sequence.
 
-The over-correction guards pin what must not change: an answer with no action
+Other tests pin what must not change: an answer with no action
 is taken as written, prose that quotes "Observation:" with no action before it
 is left whole, and an agent whose reader never reads ReAct text, or which
 holds no tools, is sent no stop sequence.
@@ -42,8 +42,8 @@ from effgen.tools.base_tool import (
     ToolMetadata,
 )
 
-#: The turn the defect was read from: a written call, then the model's own
-#: result for it, then an answer built on that result. The real tool says 9.
+#: A turn that writes a call as text, then the model's own result for it,
+#: then an answer built on that result. The real tool says 9.
 INVENTED = (
     "Thought: I will count them with the tool.\n"
     "Action: counter\n"
@@ -278,7 +278,7 @@ class TestAProviderThatTakesNoStopBesideTools:
 
 
 # --------------------------------------------------------------------------- #
-# Over-correction guards: what must not change
+# What must not change
 # --------------------------------------------------------------------------- #
 class TestNothingElseIsCut:
     def test_a_genuine_final_answer_with_no_action_is_taken_unchanged(self):

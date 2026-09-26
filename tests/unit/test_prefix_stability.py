@@ -180,7 +180,7 @@ def _shared_prefix(a: str, b: str) -> float:
 
 
 # --------------------------------------------------------------------------
-# R1 — the turn that asks for the answer
+# The turn that asks for the answer
 # --------------------------------------------------------------------------
 
 def _withdrawal_pair_prefix(model: Scripted) -> float:
@@ -260,7 +260,7 @@ def test_a_model_that_ignores_the_constraint_falls_back_and_still_answers():
 
 
 # --------------------------------------------------------------------------
-# R2 — a session keeps one shape
+# A session keeps one shape
 # --------------------------------------------------------------------------
 
 def _kinds(model: Scripted) -> list[str]:

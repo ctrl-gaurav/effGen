@@ -107,7 +107,7 @@ def test_load_model_with_a_base_url_asks_the_server_for_the_id(endpoint) -> None
 
 
 def test_a_bare_id_with_a_base_url_is_sent_unchanged(endpoint) -> None:
-    """Over-correction guard: the documented form already worked and still does."""
+    """The documented form already worked and still does."""
     _agent(SERVED, endpoint).run("What is 2 + 2?")
     assert set(_Endpoint.seen) == {SERVED}
 
@@ -118,7 +118,7 @@ def test_a_cloud_id_with_a_slash_behind_a_base_url_keeps_its_slash(endpoint) -> 
 
 
 def test_a_prefix_naming_another_provider_is_left_for_the_server_to_refuse(endpoint) -> None:
-    """Over-correction guard: only the prefix that names this adapter is dropped."""
+    """Only the prefix that names this adapter is dropped."""
     from effgen.models.errors import ModelNotFoundError
 
     agent = _agent("together:meta-llama/Llama-3.3-70B-Instruct-Turbo", endpoint)
@@ -140,7 +140,7 @@ def test_a_prefix_naming_another_provider_is_left_for_the_server_to_refuse(endpo
 def test_a_cloud_id_with_a_slash_and_no_base_url_goes_to_its_provider(
     model_id, adapter, wire_id, monkeypatch
 ) -> None:
-    """Over-correction guard: a slash in a cloud id is not read as a local model."""
+    """A slash in a cloud id is not read as a local model."""
     from effgen import Agent
     from effgen.core.agent_config import AgentConfig
 

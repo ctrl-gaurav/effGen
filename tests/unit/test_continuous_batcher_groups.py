@@ -83,7 +83,7 @@ def test_equal_settings_built_separately_share_one_batch() -> None:
 
 
 def test_different_settings_are_not_batched_together() -> None:
-    """Over-correction guard: only equal settings share a forward pass."""
+    """Only equal settings share a forward pass."""
     model = _Counting()
     with ContinuousBatcher(model, max_batch_size=8, max_wait_ms=300) as batcher:
         out = _submit_all(batcher, [

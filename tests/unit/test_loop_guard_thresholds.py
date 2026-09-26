@@ -18,11 +18,11 @@ What is pinned here:
 - the "you already have results" reminder waits for a call count that is
   genuinely unusual rather than merely plural.
 
-Seven of these pass against the tree before the change as well, and are guards
-rather than proof of it: the over-correction case (a run that only repeats one
-call still ends), the two rules about a failed dispatch, the exact-repeat report
-itself, the wider count a data-processing tool gets, and the threshold bounds at
-the budgets where the old derivation and the new one agree.
+Seven of these held under the earlier thresholds as well, and pin what must
+not change: a run that only repeats one call still ends, the two rules about a
+failed dispatch, the exact-repeat report itself, the wider count a
+data-processing tool gets, and the threshold bounds at the budgets where the
+old derivation and the new one agree.
 
 The model is an in-process script, which is what makes the loop deterministic;
 this is loop policy, not provider behavior.
@@ -260,7 +260,7 @@ def test_a_two_step_task_is_not_told_it_already_has_the_answer():
 def test_a_run_that_only_repeats_one_call_still_breaks_out():
     """The replays are capped, so the exact-repeat path cannot spin.
 
-    This is the over-correction guard: a tool that always returns the same
+    A tool that always returns the same
     unhelpful thing must still end the run, inside the budget, with a typed
     partial rather than with a fabricated answer.
     """

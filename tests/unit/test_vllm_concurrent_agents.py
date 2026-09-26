@@ -106,14 +106,14 @@ def test_calls_that_arrive_together_go_as_one_batch_with_their_own_settings(engi
 
 
 def test_a_call_on_its_own_is_sent_as_before(engine) -> None:
-    """Over-correction guard: one prompt, one ``SamplingParams`` — not a list of one."""
+    """One prompt, one ``SamplingParams`` — not a list of one."""
     engine.generate("alone", GenerationConfig(temperature=0.0, max_tokens=8))
     assert engine.llm.batches == [["alone"]]
     assert not isinstance(engine.llm.params[0], list)
 
 
 def test_a_failing_batch_reaches_every_caller_in_it(engine) -> None:
-    """Over-correction guard: an engine error still reaches each caller as its own."""
+    """An engine error still reaches each caller as its own."""
     def refuse(prompts, sampling_params, **kwargs):
         time.sleep(0.05)
         raise RuntimeError("engine said no")

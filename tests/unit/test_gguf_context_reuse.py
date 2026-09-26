@@ -147,7 +147,7 @@ def test_agents_sharing_one_engine_take_turns_on_its_context() -> None:
 
 
 def test_counting_tokens_does_not_wait_for_a_call_in_progress() -> None:
-    """Over-correction guard: taking turns on the context does not hold up a count."""
+    """Taking turns on the context does not hold up a count."""
     llama = _Llama(pause=0.5)
     engine = _engine(llama)
     worker = threading.Thread(target=engine.generate, args=("User: a long question", GREEDY))

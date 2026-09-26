@@ -461,7 +461,7 @@ def test_the_shipped_default_does_not_recover_a_lost_call(caplog) -> None:
 
 
 def test_the_shipped_default_still_reaches_the_reader_that_reads_the_call() -> None:
-    """Guards over-correction: the default loses no call it used to run.
+    """The default loses no call it used to run.
 
     The turn writes the call twice — once in a tagged body only the lenient
     reader reads, and once in the format the ordinary reader reads. A reader
@@ -545,7 +545,7 @@ def test_a_readers_own_strategy_is_never_handed_an_argument_it_lacks(
 
 
 def test_an_agent_left_at_the_default_keeps_its_tools(caplog) -> None:
-    """Guards over-correction: stalled turns ask for nothing unless the caller opts in."""
+    """Stalled turns ask for nothing unless the caller opts in."""
     caplog.set_level(logging.INFO, logger="effgen")
     error = RuntimeError("the input file is missing")
     model = _Script([_code_turn(1), _code_turn(2), _code_turn(3), "Final Answer: missing"])
@@ -609,7 +609,7 @@ def test_the_same_error_on_two_further_attempts_asks_for_the_answer(caplog) -> N
 
 
 def test_different_errors_then_a_success_are_all_progress(caplog) -> None:
-    """Guards over-correction: a run that fails differently each time is working."""
+    """A run that fails differently each time is working."""
     caplog.set_level(logging.INFO, logger="effgen")
     model = _Script([_code_turn(1), _code_turn(2), _code_turn(3), "Final Answer: 7"])
     agent = _agent(model, [_executor([
@@ -641,8 +641,8 @@ def test_with_the_setting_off_the_run_keeps_its_tools(caplog) -> None:
 def test_nothing_is_withdrawn_before_the_executor_has_run(caplog) -> None:
     """Two reasoning turns before the first call are not a stall.
 
-    Guards over-correction: the refusal of an answer given without running the
-    executor still fires, and the run is not asked for its answer early.
+    The refusal of an answer given without running the executor still
+    fires, and the run is not asked for its answer early.
     """
     caplog.set_level(logging.INFO, logger="effgen")
     model = _Script([
@@ -715,7 +715,7 @@ def test_a_declared_no_action_with_nothing_after_it_asks_for_the_answer(caplog) 
     "",
 ])
 def test_scaffolding_after_the_declaration_is_not_an_answer(after: str, caplog) -> None:
-    """Guards over-correction: the scaffold's next labels are not an answer."""
+    """The scaffold's next labels are not an answer."""
     caplog.set_level(logging.INFO, logger="effgen")
     model = _Script([
         {"text": "", "calls": [_call("calculator", expression="6*7")]},
@@ -742,7 +742,7 @@ def test_each_declaration_is_read_as_no_action(words: str) -> None:
 
 
 def test_a_tool_actually_named_none_is_still_called() -> None:
-    """Guards over-correction: a held tool is a tool, whatever its name."""
+    """A held tool is a tool, whatever its name."""
     from effgen.core.tool_calling import ReActStrategy
 
     result = ReActStrategy().parse_response(
@@ -826,7 +826,7 @@ def test_a_dangling_call_tag_is_asked_for_in_words_elsewhere(caplog) -> None:
 
 
 def test_a_second_dangling_tag_names_no_tool_and_the_run_goes_on(caplog) -> None:
-    """Guards over-correction: a tag that names nothing is not reported as a call."""
+    """A tag that names nothing is not reported as a call."""
     caplog.set_level(logging.INFO, logger="effgen")
     model = _Script([DANGLING, DANGLING, _code_turn(1), "Final Answer: [1, 3]"])
     response = _agent(model, [_executor(["[1, 3]"])]).run(TASK)
@@ -879,7 +879,7 @@ def test_a_written_out_call_twice_is_reported() -> None:
 
 
 def test_a_call_shown_in_a_code_block_is_documentation(caplog) -> None:
-    """Guards over-correction: an answer that shows a call is still an answer."""
+    """An answer that shows a call is still an answer."""
     caplog.set_level(logging.INFO, logger="effgen")
     answer = 'Run it like this: `calculator("6*7")`, which returns 42.'
     model = _Script([answer])
@@ -947,8 +947,8 @@ STREAM_SCRIPTS = {
 def test_a_streamed_run_takes_the_same_turns(name: str) -> None:
     """``stream()`` reaches every decision ``run()`` reaches, on the same turns.
 
-    Guards over-correction as well: both paths share one loop, so the parity
-    held before these decisions existed and has to keep holding with them.
+    Both paths share one loop, so the parity held before these decisions
+    existed and has to keep holding with them.
     """
     script, replies = STREAM_SCRIPTS[name]
     blocking_model = _Script(script)
@@ -975,7 +975,7 @@ def test_a_streamed_run_takes_the_same_turns(name: str) -> None:
 
 
 def test_an_agent_with_no_tools_reads_none_of_this(caplog) -> None:
-    """Guards over-correction: no tools, nothing to lose or to declare."""
+    """No tools, nothing to lose or to declare."""
     caplog.set_level(logging.INFO, logger="effgen")
     model = _Script([DANGLING])
     response = _agent(model, []).run(TASK)

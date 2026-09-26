@@ -40,7 +40,7 @@ def test_inputs_is_explicit_param(method):
 
 
 # ---------------------------------------------------------------------------
-# A3 — _coerce_task_input accepts str | Message | list[ContentPart]
+# _coerce_task_input accepts str | Message | list[ContentPart]
 # ---------------------------------------------------------------------------
 
 def test_coerce_plain_str_passthrough():
@@ -103,7 +103,7 @@ def test_preview_list_without_text():
 
 
 # ---------------------------------------------------------------------------
-# F40 — a bare str in a Message content list is auto-wrapped in a TextPart
+# A bare str in a Message content list is auto-wrapped in a TextPart
 # ---------------------------------------------------------------------------
 
 def test_message_bare_str_in_content_wrapped():
@@ -120,7 +120,7 @@ def test_message_invalid_content_still_rejected():
 
 
 # ---------------------------------------------------------------------------
-# F42 — image_from URL fetch sends a real User-Agent
+# ``image_from`` URL fetch sends a real User-Agent
 # ---------------------------------------------------------------------------
 
 def test_fetch_url_sends_user_agent(monkeypatch):

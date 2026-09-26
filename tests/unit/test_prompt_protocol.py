@@ -301,8 +301,8 @@ def test_the_model_s_own_words_and_the_provider_s_call_id_survive() -> None:
 def test_carrying_the_reasoning_does_not_move_the_flat_transcript() -> None:
     """``to_text()`` is what the flat prompt embeds; it must not move.
 
-    A guard against over-correction, not a proof of the change: it passes
-    against the tree before the protocol existed too, and it is supposed to.
+    It held before the protocol existed too, and it is supposed to keep
+    holding.
     """
     thread = AgentThread()
     thread.append(ThoughtStep(text=""))
