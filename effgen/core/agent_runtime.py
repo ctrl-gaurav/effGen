@@ -1585,11 +1585,10 @@ class AgentRuntimeMixin:
         thing here that must not change. A contract read before the question
         stops being the instruction in force when the model decides what to do
         next, and on every turn after the first it adds "finish by stating the
-        final answer" to the top of a request whose point is to keep going. On
-        the hardest coding set a 7B model went from 3.4 model calls and 1.6
-        executor calls per sample to 2.2 and exactly 1.0 — it ran the executor
-        once, took the first result, and answered — and accuracy fell 47 points.
-        Where the framework's own sentence belongs is last, where a caller who
+        final answer" to the top of a request whose point is to keep going. A
+        model shown the contract first runs a code executor once, takes the
+        first result and answers, where it would otherwise check the result and
+        try again. Where the framework's own sentence belongs is last, where a caller who
         wants that place can take it with ``answer_style``.
 
         The answer style, when the run states one, is the last line of all: it

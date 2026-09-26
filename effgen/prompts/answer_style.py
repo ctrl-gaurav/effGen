@@ -52,17 +52,11 @@ ANSWER_STYLE_TEXTS: dict[str, str] = {
 #: The style a run states when neither the call nor the agent named one.
 #:
 #: ``None`` states nothing, which is the prompt every run sent before this
-#: existed. It is the shipped default, and it is measured rather than assumed:
-#: stating the line by default was run over ten sets at two model sizes against
-#: the same samples, beside the same tree with it off. It does buy output — on a
-#: multiple-choice set it takes a larger model's answer from 141 tokens to 105 —
-#: but it also takes away the model's reason to use a tool, and where searching
-#: is what answers the question that costs accuracy. On the set whose tool
-#: reaches the network, at the smaller size, searches per sample fell to 0.000
-#: and the answer was right once in fifty against eight in fifty; that set's two
-#: arms cannot be paired, so it is a direction rather than a result, but one
-#: arithmetic set read 5.5 points below its own 3.9-point band as well, which
-#: is a result and is the clause that decides this.
+#: existed. It is the shipped default because stating a brief-answer line on
+#: every run shortens answers but also takes away the model's reason to use a
+#: tool: a model told to keep its answer short answers from what it already
+#: knows instead of searching or computing, and where a tool is what answers the
+#: question that costs accuracy.
 #:
 #: So the control ships and the default does not. A caller who wants shorter
 #: answers asks for them — ``AgentConfig(answer_style="brief")`` or

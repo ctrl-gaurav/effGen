@@ -447,10 +447,12 @@ def resolve_turn_config(
     (:func:`~effgen.core.agent_runtime.resolve_output_budget`). And the
     framework's own stop sequences follow the frame the turn is written in
     (:func:`framework_stop_sequences`), so the four ReAct labels go out with the
-    prompts that write them and with nothing else.
+    prompts that write them, and a tool-holding turn whose reader may read a
+    call written as text carries the observation label alone.
 
-    A model that matches stop sequences against its own reasoning chain is sent
-    none and has them applied to the text it returns; those are the second
+    A model that matches stop sequences against its own reasoning chain, or
+    whose adapter declares its provider takes no stop sequence beside tools, is
+    sent none and has them applied to the text it returns; those are the second
     element of the pair.
 
     Args:
