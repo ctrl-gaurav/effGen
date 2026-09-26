@@ -629,6 +629,80 @@ def text_after_declaration(text: str) -> str:
     return rest.strip()
 
 
+#: A written ``Action:`` line (not ``Action Input:``) and the value after it.
+_WRITTEN_ACTION_LINE_RE = re.compile(r"^[ \t]*Action:[ \t]*(\S[^\n]*)$", re.IGNORECASE | re.MULTILINE)
+#: A label that states the result of a call or the run's answer. After an
+#: action nothing has run yet, so whatever such a label introduces there is the
+#: model's own writing, not a result.
+_RESULT_OR_ANSWER_RE = re.compile(
+    r"^[ \t]*(Observation:|Answer:|The answer is:)|Final Answer:",
+    re.IGNORECASE | re.MULTILINE,
+)
+#: The labels the ReAct reader takes an answer from, which may legitimately come
+#: before any action (an answer that states itself first is an answer).
+_ANSWER_LABEL_RE = re.compile(
+    r"Final Answer:|^[ \t]*(?:Answer:|The answer is:)", re.IGNORECASE | re.MULTILINE,
+)
+#: Logged each time a turn's text after its written action is discarded, so the
+#: firings can be counted.
+DISCARDED_AFTER_ACTION_LOG = (
+    "[reader] a written action is run and what the model wrote after it is "
+    "discarded (%s, %d characters)"
+)
+
+
+def split_at_unrun_action(
+    text: str, tools: dict[str, Any] | None = None,
+) -> tuple[str, str, str] | None:
+    """Split a turn at the point its written action stops being the model's to write.
+
+    A turn that writes ``Action:`` / ``Action Input:`` has asked for a tool to
+    run; nothing has run yet. Anything it goes on to write under an
+    ``Observation:`` label is a result the model made up, and an ``Answer`` or
+    ``Final Answer`` after that is an answer built on it. Only text from the
+    action on is looked at: an answer, or a quoted "Observation:", that comes
+    before any action is left exactly as it is.
+
+    ``Action: None`` (a declaration that no action is taken) is not a call and
+    is skipped: the first action that names something is the one that counts.
+    ``Action: Final Answer`` is the model answering, and an answer stated before
+    any call is an answer; both are left to the reader's own handling.
+
+    Args:
+        text: The turn's text.
+        tools: The agent's tools by name.
+
+    Returns:
+        ``(head, discarded, kind)`` — the text to read the call from (up to and
+        including the action; it starts at the action when a declaration came
+        before it), the text after it, and ``"observation"`` or ``"answer"`` for
+        the label that began the discarded part — or ``None`` when the turn has
+        no written action followed by such a label.
+    """
+    if not text or "action" not in text.lower():
+        return None
+    match = None
+    declared_before = False
+    for candidate in _WRITTEN_ACTION_LINE_RE.finditer(text):
+        value = action_name(candidate.group(1).strip().replace('"', "").replace("'", ""))
+        if declares_no_action(value, tools):
+            declared_before = True
+            continue
+        if value.lower() in ("final answer", "finalanswer", "answer"):
+            return None
+        match = candidate
+        break
+    if match is None or _ANSWER_LABEL_RE.search(text[:match.start()]):
+        return None
+    after = _RESULT_OR_ANSWER_RE.search(text, match.end())
+    if after is None:
+        return None
+    label = after.group(0).strip().lower()
+    kind = "observation" if label.startswith("observation") else "answer"
+    start = match.start() if declared_before else 0
+    return text[start:after.start()].strip(), text[after.start():], kind
+
+
 def name_positional_arguments(
     tool_name: str, positional: list[Any], tools: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -874,6 +948,19 @@ class ReActStrategy(ToolCallingStrategy):
             return result
 
         try:
+            # --- A written action ends the turn ---
+            # Nothing has run when the model writes an action, so a result or an
+            # answer it writes after one is its own invention. The action is read
+            # from the text up to that point and the rest is discarded, whatever
+            # stop sequences the request carried.
+            unrun = split_at_unrun_action(text, tools)
+            if unrun is not None:
+                head, discarded, kind = unrun
+                action_result = self.parse_response(head, tools)
+                if action_result.is_tool_call:
+                    logger.info(DISCARDED_AFTER_ACTION_LOG, kind, len(discarded))
+                    return action_result
+
             # --- Final answer (highest priority) ---
             final_patterns = [
                 r"Final Answer:\s*(.+)",
