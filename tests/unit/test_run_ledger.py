@@ -165,7 +165,9 @@ def test_a_tool_run_counts_its_calls_tokens_and_cached_tokens():
 def test_a_run_with_no_tools_is_one_call_in_one_step():
     ledger = _agent(answer="The answer is 4.").run("what is 2+2?").ledger
     assert (ledger.llm_calls, ledger.tool_calls, len(ledger.steps)) == (1, 0, 1)
-    assert ledger.framework_s + ledger.model_wait_s <= ledger.wall_s + 1e-6
+    # Each field is rounded to the microsecond on its own, so two rounded parts can
+    # sum to a microsecond or so above the rounded wall time.
+    assert ledger.framework_s + ledger.model_wait_s <= ledger.wall_s + 1e-5
 
 
 def test_the_split_adds_up_to_the_wall_time():
