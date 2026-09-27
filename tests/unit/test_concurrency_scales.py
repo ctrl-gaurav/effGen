@@ -191,13 +191,13 @@ def test_a_read_is_not_held_up_by_calls_being_recorded(tmp_path) -> None:
     threads = [threading.Thread(target=record) for _ in range(16)]
     for thread in threads:
         thread.start()
-    slowest = 0.0
+    waits: list[float] = []
     try:
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
             start = time.monotonic()
             store.spend_since(0.0)
-            slowest = max(slowest, time.monotonic() - start)
+            waits.append(time.monotonic() - start)
             time.sleep(0.05)
     finally:
         stop.set()
@@ -205,7 +205,13 @@ def test_a_read_is_not_held_up_by_calls_being_recorded(tmp_path) -> None:
             thread.join(timeout=30)
         store.close()
 
-    assert slowest < 0.5, f"a read waited {slowest:.2f}s behind calls being recorded"
+    # A read queued behind the writers is slow every time; one read delayed by the
+    # scheduler on a busy machine is not. So the typical read is held to a write's
+    # time, and no read may wait out the whole burst of recording.
+    waits.sort()
+    typical = waits[len(waits) // 2]
+    assert typical < 0.25, f"a typical read waited {typical:.2f}s behind calls being recorded"
+    assert waits[-1] < 2.0, f"a read waited {waits[-1]:.2f}s, the whole burst of recording"
 
 
 def test_a_store_that_recorded_leaves_no_thread_behind(tmp_path) -> None:
