@@ -128,19 +128,22 @@ def test_a_prefix_naming_another_provider_is_left_for_the_server_to_refuse(endpo
 
 
 @pytest.mark.parametrize(
-    ("model_id", "adapter", "wire_id"),
+    ("model_id", "adapter", "wire_id", "sdk"),
     [
-        ("groq:openai/gpt-oss-20b", "GroqAdapter", "openai/gpt-oss-20b"),
+        ("groq:openai/gpt-oss-20b", "GroqAdapter", "openai/gpt-oss-20b", None),
         ("together:meta-llama/Llama-3.3-70B-Instruct-Turbo", "TogetherAdapter",
-         "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+         "meta-llama/Llama-3.3-70B-Instruct-Turbo", None),
+        # The Fireworks adapter builds its SDK client when it loads.
         ("fireworks:accounts/fireworks/models/llama-v3p1-8b-instruct", "FireworksAdapter",
-         "accounts/fireworks/models/llama-v3p1-8b-instruct"),
+         "accounts/fireworks/models/llama-v3p1-8b-instruct", "fireworks.client"),
     ],
 )
 def test_a_cloud_id_with_a_slash_and_no_base_url_goes_to_its_provider(
-    model_id, adapter, wire_id, monkeypatch
+    model_id, adapter, wire_id, sdk, monkeypatch
 ) -> None:
     """A slash in a cloud id is not read as a local model."""
+    if sdk is not None:
+        pytest.importorskip(sdk)
     from effgen import Agent
     from effgen.core.agent_config import AgentConfig
 
