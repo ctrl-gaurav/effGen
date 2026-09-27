@@ -221,12 +221,11 @@ class TestNoContractAsksForMoreOutput:
             assert phrase not in contract.lower(), contract
 
     def test_the_executing_contract_keeps_its_one_line_of_narration(self):
-        """The one demand that was measured and earns its tokens.
+        """The executing contract alone still asks for a line of narration.
 
-        Taking it out cost a 7B model 25.7 accuracy points on the hardest
-        coding set, against a noise band of 7.6, and it called its executor 19 %
-        less often for no saving in output. A tool that does work the model
-        cannot do is the case where saying what is about to be computed pays.
+        A tool that does work the model cannot do is the case where saying what
+        is about to be computed plausibly earns its tokens, so that wording stays
+        until something measures it on its own; the other contracts ask for none.
         """
         assert "say in one line" in TOOL_CONTRACT_EXECUTE.lower()
         for contract in (TOOL_CONTRACT_GENERAL, TOOL_CONTRACT_VERIFY,
@@ -372,8 +371,8 @@ class TestTheAnswerStyleIsStatedOnce:
 
         Ahead of the task, and repeated every turn, it reads as "finish by
         stating the final answer" at the top of a request whose point is to
-        keep going: a 7B model on the hardest coding set went from 1.6 executor
-        calls per sample to exactly 1.0 and lost 47 accuracy points.
+        keep going: a model shown it there runs a code executor once, takes the
+        first result and answers, where it would otherwise check and try again.
         """
         model = _Recorder()
         with _agent(model, tools=[CALC()]) as agent:

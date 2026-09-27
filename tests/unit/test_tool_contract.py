@@ -239,11 +239,10 @@ class TestTheContractReachesEveryPath:
     def test_the_native_path_states_it_on_the_opening_turn_only(self):
         """Later turns close with an instruction of their own to follow.
 
-        Repeating it every turn, ahead of the task, was tried and measured: it
-        puts "finish by stating the final answer" at the top of a request whose
-        point is to keep going, and a 7B model on the hardest coding set then
-        ran its executor once, took the first result and answered — 47 accuracy
-        points worse.
+        Repeated every turn, ahead of the task, it puts "finish by stating the
+        final answer" at the top of a request whose point is to keep going, and
+        a model then runs its executor once, takes the first result and answers,
+        where it would otherwise check and try again.
         """
         model = _NativeApi([CALL_TURN, ANSWER])
         agent = Agent(config=AgentConfig(
