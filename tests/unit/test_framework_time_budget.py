@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import statistics
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -321,6 +322,21 @@ def _sixteen_at_once(url: str, pool: ThreadPoolExecutor) -> list:
 
 
 # ------------------------------------------------------------------ ceilings
+def _traced() -> bool:
+    """Whether a tracer such as coverage is timing this process along with effGen."""
+    if sys.gettrace() is not None:
+        return True
+    coverage = sys.modules.get("coverage")
+    return coverage is not None and coverage.Coverage.current() is not None
+
+
+#: A ceiling is a time, and under a tracer the time is mostly the tracer's: the
+#: framework's own time roughly doubles, so the ceilings are checked only in an
+#: untraced process. The counted work below is checked either way.
+untraced = pytest.mark.skipif(_traced(), reason="framework-time ceilings are not measured under a tracer")
+
+
+@untraced
 @pytest.mark.parametrize("shape", list(SHAPES))
 def test_framework_time_per_run_stays_under_its_ceiling(shape, model_url, encoding, writes):
     steps, tools, runs = SHAPES[shape]
@@ -334,6 +350,7 @@ def test_framework_time_per_run_stays_under_its_ceiling(shape, model_url, encodi
     assert framework_ms <= FRAMEWORK_CEILING_MS[shape], (shape, framework_ms)
 
 
+@untraced
 def test_sixteen_runs_at_once_each_stay_under_the_ceiling(model_url, encoding, writes):
     # Sixteen runs share one interpreter, so a run's framework time includes
     # waiting while the others do their own work. However slow the machine (or
