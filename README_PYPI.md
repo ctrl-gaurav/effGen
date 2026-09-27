@@ -85,6 +85,7 @@ print(f"Answer: {result.output}")
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🧾 | **27 Sep 2026** | **v1.2.0 Released** — every run now keeps a ledger: `response.ledger` (a `RunLedger`) says what the run spent — model and tool calls, prompt, completion and cached tokens, cost — and where its time went: the model, tools, the caller, child runs or the framework. A tool result the model writes itself is never taken as the answer. A provider's prompt cache is kept warm and its hits are priced; a request carries less of the framework's own text; `reasoning_effort` reaches `run()`; a model you serve yourself reads as unpriced, not free, and a spent cap no longer refuses it (a refusal now raises `BudgetExceededError`). New `effgen bench` measures an agent on your own tasks with a noise band beside every difference.  Public surface 250 → 251 names, nothing removed. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#120---2026-09-27) |
 | 🧵 | **14 Sep 2026** | **v1.1.0 Released** — a run now keeps its conversation as typed steps instead of one growing string. `response.thread` is what the run did, and the command line (`effgen run --show-thread`), the run card, the debug inspector and the dashboard all render the same steps. A run is bounded by what it may send (`context_budget=`, default `"auto"`) and gives up its oldest material first. A saved run resumes where it stopped instead of restarting the task. One agent loop replaces three, so a streamed run sends the same prompt, tool definitions and sampling settings as a blocking one. New `prompt_protocol=` sends a conversation as turns; the default stays flat for a single-turn run, and why is in the changelog. A run sends 26% fewer prompt tokens at 1.5B and 18% fewer at 7B and makes about 16% fewer model calls, and three sample sets got worse. Public surface 225 → 250 names, nothing removed. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#110---2026-09-14) |
 | 🔧 | **8 Sep 2026** | **v1.0.1 Released** - fixes to how the framework reports what a run did, what it puts in a prompt, and what its own bookkeeping costs. A run that stops without an answer now reports `success=False`, `outcome="stopped"` and a typed `stop_reason`, keeps what it reached in `.partial`, and raises `RunStoppedError` under the default `raise_on_error=True`. Citation markers are opt-in (`cite_sources=`) and point at real sources when you ask for them. The loop guards no longer stop runs that are still working. Every tool-calling path tells the model what the tools are for. The budget check against a 500,000 row ledger went from 1,278 ms to 0.044 ms. The Groq default points at a model Groq still serves. A run costs 37% more model calls and 57% more prompt tokens than 1.0.0, and two retrieval sets got worse. [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#101---2026-09-08) |
 | 🎉 | **14 Aug 2026** | **v1.0.0 Released** — the first stable release. Point effGen at any OpenAI-compatible server (`base_url`, vLLM/Ollama/LM Studio/a gateway), read back which tool calls a run made, wrap the agent loop in middleware, give one agent many conversations with `run(session=...)`, choose a context-compaction strategy, and resume a `WorkflowDAG` that died half way through. Plus `effgen code` (a terminal coding agent), a model/pricing browser, shareable HTML reports and run cards, `effgen top`, `effgen battle`, and a long pass over everything that used to report the wrong thing: a failed run raises, an unpriced model reports no cost, and a tool call written in an unfamiliar shape is understood. **Three breaking changes** (Python 3.11 floor, `raise_on_error=True`, an unreachable backend raises). [Changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#100---2026-08-14) |
@@ -316,6 +317,89 @@ Observability<br/>
 </div>
 
 <details open>
+<summary><b>🆕 What's new in v1.2.0</b></summary>
+
+<br/>
+
+**Every run now keeps a ledger of what it spent and where its time went.** `response.ledger` is a
+`RunLedger`: model and tool calls, prompt, completion and cached tokens, cost, and wall time split
+into model, tool, caller, child and framework time. It matches what goes over the wire. Fourteen changes are visible to existing code, and the public surface
+grew from 250 names to 251 with nothing removed or renamed.
+
+- **A model's invented tool result is never the answer.** A tool-holding turn is sent the stop
+  sequence `"\nObservation:"`, and a written action runs while whatever the model wrote after it is
+  discarded. An adapter whose provider rejects `stop` beside `tools` declares
+  `supports_stop_with_tools()` as `False`, and the text is cut locally instead.
+- **Prompt caching you can see.** A run with tools keeps one request shape on a provider with a
+  prompt cache; `cache_system_prompt` and `cache_tools` now work on Anthropic; cached tokens are read
+  on five more providers and priced at the cached rate where the catalog carries one.
+- **Less of the framework's own text in a request.** Tool rules are stated once, a repeated tool
+  result is sent once, and the tool contracts stop asking for text the task did not ask for: requests
+  are shorter, with every answer and call count unchanged.
+  `AgentConfig(answer_style=...)` asks for a shorter or a fuller answer; the default states nothing.
+- **Cost that reads true.** A model with no published price reads `None`, not `$0`; a server reached
+  with `base_url=` records as `openai_compatible`; a spent cap no longer refuses local, free or
+  self-hosted calls, and a refusal raises `BudgetExceededError`. The spend ledger stops growing at
+  250,000 rows with every total kept exact.
+- **The loop.** A tool that keeps returning new results is no longer withdrawn at 12 calls;
+  `run(max_iterations=N)` moves the loop's thresholds too; `reasoning_effort` reaches `run()` and
+  `run_async()`. Opt-in: `max_turns_without_progress=` and `recover_lost_tool_calls=`.
+- **Local and streamed runs.** Concurrent streams keep their own tool arguments; `openai:<id>` with
+  `base_url=` sends the id without the prefix; concurrent agents share one in-process vLLM engine;
+  a GGUF run reuses its cache across turns.
+- **`effgen bench`.** Run a suite of your own tasks against a model, and compare two runs with a noise
+  band beside every difference.
+
+```python
+from effgen import Agent, AgentConfig
+from effgen.tools.builtin import Calculator
+
+agent = Agent(AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+    tools=[Calculator()],
+))
+response = agent.run("What is 17 * 23?")
+ledger = response.ledger
+
+print(response.output)
+print(ledger.llm_calls, ledger.tool_calls, ledger.prompt_tokens, ledger.completion_tokens)
+print(f"model {ledger.model_wait_s:.2f} s, tools {ledger.tool_wait_s:.3f} s, "
+      f"framework {ledger.framework_s * 1000:.1f} ms")
+print(ledger.cost_usd)   # None: a model you serve yourself has no published price
+```
+
+```python
+from effgen import AgentConfig
+
+config = AgentConfig(model="openai:gpt-5-nano", answer_style="brief")
+print(config.answer_style)                 # brief: one line, stated last
+print(config.max_turns_without_progress)   # None: off unless you set it
+print(config.recover_lost_tool_calls)      # False: off unless you set it
+```
+
+```bash
+effgen bench init
+effgen bench run bench-suite.yaml --model Qwen/Qwen2.5-1.5B-Instruct --base-url http://127.0.0.1:8000/v1 --out runs/a
+```
+
+```bash
+pip install --upgrade effgen
+effgen --version
+```
+
+**What it cost.** Against 1.1.0, accuracy holds on every task measured after the final fix.
+Answers that need no tool are far shorter. Arithmetic and math tasks that use a calculator write
+shorter answers but make more model calls and send more prompt tokens, and question-answering tasks
+with a search tool search more often and answer more questions correctly. Tool-using runs still make
+more model calls than they need to, and reducing that is the focus of the next release. No cloud
+model was measured at full size.
+
+[Full v1.2.0 changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#120---2026-09-27)
+
+</details>
+
+<details>
 <summary><b>🆕 What's new in v1.1.0</b></summary>
 
 <br/>

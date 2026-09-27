@@ -1,5 +1,389 @@
 # effGen Release Notes
 
+## v1.2.0 - September 27, 2026
+
+This release is about what a run costs, and whether you can see it: every run now keeps a ledger
+of its calls, tokens, cost and time.
+
+The main things: `response.ledger` says what a run spent and where its time went — waiting on the
+model, on tools, on the caller, on child runs, or inside the framework — and it matches what goes over the wire. A tool result the model writes itself is
+never taken as the answer. A provider's prompt cache is kept warm, and its hits are read and priced
+where the provider reports them. A request carries less of the framework's own text, and
+`reasoning_effort` reaches a blocking run. A model you serve yourself reads as unpriced rather than
+free, and a spent cap no longer refuses it. Many agents in one process no longer queue on the shared
+spend ledger. And `effgen bench` measures an agent on your own tasks, with a noise band beside every
+difference.
+
+Runs that use tools still make more model calls than they need to; reducing that is the main work
+of the next release, and what this one cost against 1.1.0 is set out at the end.
+
+Fourteen changes are visible to existing code, and they are listed first.
+
+The public surface grew from 250 names to 251. Nothing was removed or renamed.
+
+```bash
+pip install --upgrade effgen
+effgen --version
+```
+
+### Read this before upgrading: fourteen changes you will notice
+
+#### 1. A tool result the model writes itself is never taken as the answer
+
+On a model with native tool calling, the default hybrid strategy also reads a tool call the model
+writes out as text (`Action:` / `Action Input:`). A model that does that can carry on and write the
+tool's result itself; taken as the answer, that invented result would end the run with
+`stop_reason="final_answer"`, no tool call recorded and a tool that never ran. Two things stop it.
+
+* A turn that holds tools and whose reply may be read as text is sent one stop sequence,
+  `"\nObservation:"`, so generation ends where the tool's result would begin. 1.1.0 sent four labels
+  (`"\nObservation:"`, `"\nQuestion:"`, `"\nHuman:"`, `"\nUser:"`) on such turns. A tool-free turn,
+  and an agent whose reader reads only native calls, are sent none. A caller's own `stop_sequences`
+  replace it.
+* When a reply holds a written action anyway — a model that ignores the stop, or a provider that
+  cannot take one — the action runs and whatever the model wrote after it is discarded, logged as
+  `[reader] a written action is run and what the model wrote after it is discarded`.
+
+`BaseModel.supports_stop_with_tools()` is new and answers `True`. An adapter for a provider that
+rejects `stop` beside `tools` answers `False`; the framework then sends no stop sequence and cuts the
+returned text itself.
+
+In testing, no run was answered from an invented result, including runs replayed from recordings in
+which the model had written one. A long answer containing a line that begins
+`Question:` is no longer cut there.
+
+*Migration:* none. A caller who relied on `"\nQuestion:"`, `"\nHuman:"` or `"\nUser:"` stopping a
+tool-holding turn passes them in `stop_sequences`.
+
+#### 2. `reasoning_effort` reaches `run()` and `run_async()`
+
+In 1.1.0 it reached a streamed turn and not a blocking one. `run()`, `run_async()` and `stream()` now
+all send it when the caller passes it and the model declares that it reasons; on the wire all three
+paths carry it, and so does the blocking follow-up turn inside a stream. On a reasoning model this
+changes how long the answer is. On any other model nothing changes, because the adapter drops it.
+
+#### 3. The output budget follows what the run declared
+
+When the caller pins no `max_tokens`, a run that declares an `output_schema` asks for a budget sized
+from the schema — a one-integer schema asks for 256 tokens rather than 1,024 — and a model that
+declares it reasons is never sent fewer than 4,096. A published maximum caps either. The native-tool
+and structured-output paths go through the same rule. An explicit `max_tokens`, on the call or on
+`AgentConfig`, still wins on every call the run makes; the calls that repair an answer to fit its
+schema afterwards are sized from the schema, as they took their own budget before.
+
+Where a model would have written more than a schema-sized budget, the answer is now cut at the
+budget with the existing typed truncation message. The budget and the OpenAI adapter's stop decision
+read one declaration of whether a model reasons; where a model is judged from its name instead, that
+is logged, naming the model.
+
+#### 4. A request carries less of the framework's own text
+
+* **The tool contracts no longer ask for text the task did not ask for.** Two clauses went with that:
+  the lookup contract's "if what comes back does not answer the question, say so and name what is
+  missing", and the computation contract's instruction to work the task out step by step and finish
+  by stating the answer. Every run with tools is affected; a run with no tools or with
+  `tool_contract=""` is not.
+* **The tool contract comes before the caller's task** on every frame, so the task is the last thing
+  the model reads, followed only by an answer style when one is set.
+* **Tool rules are stated once.** Where the system prompt in force is the one the framework
+  generated, the text scaffold no longer repeats its five tool rules. The line pointing at earlier
+  conversation appears only when there is earlier conversation.
+* **A repeated tool result is sent once.** A result identical to one the request already carries,
+  from the same tool with the same arguments, is written once and then referred back to. Only the
+  rendering changes: the step keeps the whole result, so nothing stored, checkpointed or read back
+  differs.
+* **How fully a tool is described comes from the adapter**, through the new
+  `BaseModel.prompt_detail()`, rather than from substrings of the model's name.
+
+Replayed over recorded runs, requests are 2% to 22% shorter, with every answer and every call count
+unchanged. Without the lookup clause, a model given a search tool uses it more often: it makes more
+model calls and answers more questions correctly. Restoring the computation clause made no
+measurable difference to accuracy, so it stays out.
+
+*Migration:* none. `AgentConfig(answer_style=...)`, under Added, is the way to ask for a shorter or a
+fuller answer.
+
+#### 5. On a provider with a prompt cache, a run keeps one request shape
+
+* **A run with tools sends its conversation as messages from its first run** when memory is on (the
+  default), `prompt_protocol` is `"auto"` (the default), and the provider's adapter declares a prompt
+  cache and takes messages. In 1.1.0 only a run continuing a session did. The session's next
+  question then extends the cached prefix instead of starting a new one, logged as
+  `[cache] the session keeps one request shape: this first run sends the conversation as messages, so the next question extends its prefix instead of restarting it`.
+  On a self-hosted server with prefix caching it made no measurable difference, because nearly every
+later prompt was already served from the cache.
+* **The turn that asks for the answer keeps its shape.** When the guards stop offering tools, an
+  adapter that can forbid a call gets the same message list and tool definitions with
+  `tool_choice="none"`. The prefix that turn shares with the one before it went from 0.03% to 82%.
+* **`AgentConfig.cache_system_prompt` and `cache_tools` now work on Anthropic.** The tool
+  definitions, the system prompt and the last completed step carry cache breakpoints.
+* **Cached tokens are read** on Groq, Together, Fireworks, Cerebras and Gemini, which reported 0
+  before, and priced at the provider's cached rate where the model catalog carries one. The ledger
+  gains `cache_write_tokens`. Through Fireworks, nearly all of a run's later prompt
+tokens were served from the cache, and the ledger matched the provider's own counts.
+
+*Migration:* none. A reader that sums prompt tokens sees no change: cached tokens are part of
+`prompt_tokens`, not added to it. `AgentConfig(prompt_protocol="flat")` keeps a run's own steps in
+one string.
+
+#### 6. The loop stops fewer runs that are still finding things
+
+* **A tool whose calls keep returning new results is no longer withdrawn after 12 calls** (16 for a
+  data-processing tool). It is withdrawn after that many calls in a row that brought nothing new; a
+  run whose calls keep finding things is bounded by `max_iterations`, so with a high ceiling it can
+  make more calls than before. A scripted run whose every one of 20 calls
+  returned something new was stopped at 12 with `loop_detected`; it now makes all 20 and answers. A
+  run that only repeats itself ends exactly as before.
+* **`run(max_iterations=N)` now moves the loop's own thresholds too.** They used to read the
+  configuration's value, so raising it for one call did not stop a tool being withdrawn early.
+* **`Action: None` is read as "no action"**, not as a call to a tool named `None`, and logged as
+  `[progress] the turn declared no action, which names no tool`.
+
+#### 7. Groq hands a tool call it could not parse back to the loop
+
+When a request carried tools and Groq answers that it could not parse the model's tool call, the
+adapter returns the call as the model wrote it, in the `<tool_call>` form the loop reads, instead of
+failing the run. The loop runs the call if it can read it and otherwise asks for it again. The call's
+usage is estimated and recorded, and logged as
+`Groq rejected a tool call it could not parse; the call is handed back as the model wrote it`.
+
+#### 8. A spent cap refuses only calls that cost money, and says so with a typed error
+
+Once a configured spend cap is spent, a call to a local engine, a free tier or a server reached with
+`base_url=` is no longer refused.
+
+A refused call now raises `BudgetExceededError` from `run()` whatever `raise_on_error` says. In 1.1.0
+it raised `RuntimeError("BudgetExceededError: …")` or came back as a failed response.
+`BudgetExceededError` is not a `RuntimeError`. `stream()` raises it; `run_batch()` raises and stops;
+the server answers HTTP 429 with `budget_exceeded`; `effgen run --json` prints the error document
+instead of the run document. No request reaches the provider.
+
+*Migration:* catch `BudgetExceededError` (from `effgen`) where you caught `RuntimeError`.
+
+#### 9. A model with no published price reads as unknown, not as free
+
+* `CostTracker.total_cost()` returns `None` when every call it covers was unpriced; it returned
+  `0.0`. `CostEvent.cost_usd`, `RunLedger.cost_usd`, `total_cost_usd` in `effgen cost --json`, and
+  `cost_usd` in the run executions and topology can all be `None` for the same reason. A free model
+  still reads `0.0`.
+* A server reached with `base_url=` records as `openai_compatible` — in `response.provider`, the run
+  store, the cost tracker, the ledger file and the Prometheus labels — where 1.1.0 recorded `openai`.
+  An existing ledger file shows the same served model under both names across the upgrade.
+
+Every consumer of those values in the package was run on an unpriced run: none raised, and none
+showed `$0` where 1.1.0 showed it in three places.
+
+*Migration:* treat `None` as "not priced" wherever you add up cost.
+
+#### 10. Every run keeps a ledger, and two totals changed with it
+
+`response.ledger` and `response.metadata["ledger"]` carry the run's `RunLedger`; the flat metadata
+keys are unchanged. Children — sub-agents, workflow nodes, team members, an agent run inside a
+tool — are attached once, and `total()` adds them up.
+
+* `effgen_model_call_latency_seconds` now observes each model call — its count is the number of
+  calls and its value each call's wait. It observed each run's whole wall time once.
+* A decomposed run's `tokens_used` includes its sub-agents' tokens: 48 where it read 16 on a
+  three-call example. `effgen_tokens_used_total` takes only the run's own calls, so nothing is
+  counted twice.
+* A synchronous `@tool` runs in the caller's context, so an agent it starts is a child of the run and
+  its cost is part of the run's total.
+
+A run against a model you serve yourself, and what it spent:
+
+```python
+from effgen import Agent, AgentConfig
+from effgen.tools.builtin import Calculator
+
+agent = Agent(AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+    tools=[Calculator()],
+))
+response = agent.run("What is 17 * 23?")
+ledger = response.ledger
+
+print(response.output)
+print(ledger.llm_calls, ledger.tool_calls, ledger.prompt_tokens, ledger.completion_tokens)
+print(f"model {ledger.model_wait_s:.2f} s, tools {ledger.tool_wait_s:.3f} s, "
+      f"framework {ledger.framework_s * 1000:.1f} ms")
+print(ledger.cost_usd)   # None: a model you serve yourself has no published price
+```
+
+#### 11. A run's reported time includes the work after the model's last answer
+
+`execution_time` now includes `after_run` middleware, the session save and the final checkpoint, and
+equals the ledger's `wall_s`. With that work slowed on purpose, 1.1.0 reported 250 to 558 ms less
+than the caller waited; 1.2.0 reports it to within a millisecond.
+
+#### 12. The spend ledger stops growing at 250,000 rows
+
+At 250,000 rows the ledger file folds its oldest rows into per-model totals, keeping every total
+exact. `EFFGEN_COST_MAX_ROWS` sets the ceiling, and `0` keeps every row. Opening an existing file adds
+two columns, `calls` and `unpriced_calls`, and rows in `effgen cost --json` gain
+`unpriced_requests`. Over 72 simulated hours and 1,036,800 calls the file held at most 242,245 rows
+and 33.5 MB, flat for the last 18 hours, with every total exact; 1.1.0 kept all 1,036,800 rows and
+reached 133.5 MB, still growing. A write that triggers a fold waits for it, about 0.2 to 0.3 s once
+every 50,000 or so calls.
+
+#### 13. A server named with `openai:` gets the id without the prefix, and a streamed call keeps its own arguments
+
+* `AgentConfig(model="openai:<id>", base_url=...)` now sends `<id>`. 1.1.0 sent `openai:<id>`, and
+  the server answered that the model does not exist.
+* Concurrent streamed runs no longer hand a tool another stream's arguments. With 64 streamed agents
+  on one model, 102 of 115 calls carried another agent's argument before; 0 of 64 do now. A streamed
+  argument that arrives broken is now exactly what the server sent.
+* In-process local engines serve concurrent agents: eight agents sharing one in-process vLLM engine
+  finished in 2.07 s where they aborted before, and concurrent GGUF runs no longer crash. A GGUF run
+  reuses its cache across turns, evaluating 609 prompt tokens per run where it evaluated 1,173.
+
+#### 14. An out-of-budget failure says what to do and is not retried
+
+A reply cut off by its token budget, or one that spent the whole budget reasoning, now carries its
+own guidance and is not marked retryable. It used to read "Unexpected provider error" and be retried.
+
+---
+
+### Added
+
+**One new name** — `from effgen import RunLedger`:
+
+- `RunLedger` — what one run spent and where its time went: model and tool calls, prompt,
+  completion and cached tokens, cost, and wall time split into model, tool, caller, child and
+  framework time, per run and per iteration
+
+**A new command, `effgen bench`:**
+
+- `effgen bench init` — writes a starter suite
+- `effgen bench run SUITE` — runs a suite of your own tasks against a model and prints accuracy
+  beside LLM calls, tool calls, tokens, time and cost; saves the run
+- `effgen bench compare A B` — pairs two saved runs task by task and prints a noise band beside
+  every difference
+
+```bash
+effgen bench init
+effgen bench run bench-suite.yaml --model Qwen/Qwen2.5-1.5B-Instruct --base-url http://127.0.0.1:8000/v1 --out runs/a
+```
+
+The command is built on the `effgen.bench` package, which is importable and not part of
+`effgen.__all__`. [`docs/cli/bench.md`](https://github.com/ctrl-gaurav/effGen/blob/main/docs/cli/bench.md)
+documents the suite format.
+
+**How a run is asked to answer:**
+
+- `AgentConfig.answer_style`, and `answer_style=` on `run()`, `stream()` and `run_async()` — one
+  line about the form of the answer, stated last: `"brief"` ("Answer in the form the question asks
+  for, and nothing else."), `"full"` ("Explain your reasoning in the answer."), or your own
+  sentence. The default states nothing: a brief-answer line on every run shortens answers but also
+  makes a model answer from what it knows instead of using the tool it was given.
+- `AgentConfig.max_turns_without_progress`, default `None` — after that many turns in a row that
+  brought no new result, the next turn offers no tools and asks for the answer.
+- `AgentConfig.recover_lost_tool_calls`, default `False` — reads a tool call written with raw line
+  breaks or Python-style quoting, and asks once more, with a call required where the provider
+  enforces one, for a call that could not be read at all.
+
+Both of the last two can be set for one call as `run()` keywords, and a child run inherits them.
+
+```python
+from effgen import AgentConfig
+
+config = AgentConfig(model="openai:gpt-5-nano", answer_style="brief")
+print(config.answer_style)                 # brief: one line, stated last
+print(config.max_turns_without_progress)   # None: off unless you set it
+print(config.recover_lost_tool_calls)      # False: off unless you set it
+```
+
+Also new, on types that already existed: `AgentResponse.ledger`, `Agent.last_stream_ledger`,
+`Checkpoint.ledger`, `BaseModel.prompt_cache_policy()`, `BaseModel.prompt_detail()`,
+`BaseModel.supports_stop_with_tools()`, `SQLiteCostStore.flush()`, `CostEvent.calls` and
+`.unpriced_calls`, `cache_write_tokens` in the ledger, the run-store fields `llm_calls`,
+`tool_calls`, `cached_input_tokens`, `model_wait_s`, `tool_wait_s` and `framework_s`, the Prometheus
+series `effgen_run_framework_seconds`, `effgen_model_cost_usd_total` and
+`effgen_model_unpriced_calls_total`, the run card's "Model calls" and "Framework time", and the
+environment variable `EFFGEN_COST_MAX_ROWS`.
+
+---
+
+### Known issues
+
+These are open. Each is understood well enough to say what it is.
+
+1. **One `Agent` serving concurrent `run(session=...)` calls mixes the conversations.** With many
+   sessions in flight on one agent, 27 to 29 of 48 answers carried another conversation's turn. This
+   was already true in 1.1.0. Use one agent per concurrent session.
+2. **A provider that rejects `stop` beside `tools` answers HTTP 400 through a stock adapter.** Until
+   its adapter declares `supports_stop_with_tools()` as `False`, the run reports the provider's 400;
+   it never returns an invented answer. The framework does not yet retry without the stop sequence.
+3. **Four edges of change 1.** A written action whose argument contains the text `Final Answer:` is
+   cut there (not seen in recorded runs). A tool-holding agent's planning and direct
+   calls, which carry no tools, are sent the observation stop too. The speculative path ignores
+   `supports_stop_with_tools()`. A reply that writes an `Action:` line naming no tool and then an
+   answer is read as a call to that name, so the run is told there is no such tool and takes one
+   more turn to answer (rare in recorded runs). None of these can make an invented result the
+   answer.
+4. **Streamed runs are missing from Prometheus.** The stream path records no Prometheus series, so
+   the new cost and unpriced-call series leave streamed calls out: over three runs and one stream on
+   Groq, the tracker read $1.295e-4 and Prometheus $1.054e-4.
+5. **The run store and Prometheus record a run's time before its post-run work**, so they can read up
+   to 558 ms less than `execution_time`.
+6. **A few surfaces still print `$0` for unpriced work.** The chat and `effgen code` `/cost` commands
+   print `$0.00` for a session of unpriced turns, and the monitor's spend panel shows `$0.000000`
+   beside "1 model(s) excluded from the total". `effgen cost prune` counts rows as events, though
+   after a fold one row can stand for many calls. The post-call budget check logs "spend cap: refused
+   a call" for the call that crossed the cap, which was made and billed, and on the command line the
+   `spend cap:` warnings print above the error panel. Spans and the usage log still name `openai` for
+   an `openai_compatible` call.
+7. **A streamed tool argument the server broke still reaches the tool.** On a served model, a coding
+   task is answered correctly less often when streamed than when blocking: nearly every difference is
+   an argument the server's streaming parser broke, which the blocking path's text reader recovers.
+8. **Cached tokens are priced at the cached rate only where the catalog carries one** — OpenAI and
+   Anthropic today. On Groq, Gemini and Fireworks the hits are counted and billed in effGen's estimate
+   at the full input rate. `pricing_status("fireworks", "gpt-oss-120b")` reads unpriced while the
+   fully-qualified id is priced, and some bundled catalogs carry `0.30000000000000004` for an Anthropic
+   cached rate.
+9. **Prompt caching has gaps.** A session with no tools gains nothing from change 5. Anthropic does
+   not declare that it can forbid a call, so the answer turn's shape repair does not run there, and a
+   `tool_choice` word on the run path reaches the Messages API untranslated. Once any agent in a
+   process meets a provider that answers a forbidden call with a call anyway, every later agent
+   against that model and endpoint drops its tool definitions on the answer turn.
+10. **The turn that asks for the answer on the text-scaffold fallback still narrates the run's own
+    calls.** It is 17.3% shorter than in 1.1.0 (2,651 to 2,193 characters in a recorded example), not
+    gone. It applies to a provider that ignores a request to forbid a call.
+11. **Local engines.** On a host whose driver lists a GPU that torch cannot start,
+    `engine="auto-fast"` now picks vLLM and falls back to Transformers only after that load fails.
+    `load_model(<id>, base_url=...).generate(prompt)` with no configuration asks for the whole
+    context as its completion budget, which vLLM refuses. A fork while threads write the spend ledger
+    hangs the child, as it did in 1.1.0. The Transformers engine answers concurrent agents one at a
+    time and keeps no cache of the shared prompt between turns.
+12. **Reasoning models, in two places.** On Groq's free tier, when a reply is truncated, the
+    framework's escalation asks for 8,192 tokens, which the free tier refuses with HTTP 413; pin
+    `max_tokens` below it. A reasoning model reached with `base_url=` gets the OpenAI-compatible
+    adapter, which does not declare that it reasons, so `reasoning_effort` is not sent there; 1.1.0
+    behaved the same.
+13. **`effgen bench`** has no way to pass `context_length`, so every run against a served model logs
+    the adapter's warning; its compare prints "not every paired task was priced" when none was; and
+    the documentation site has no page for it yet.
+14. **Carried unchanged from 1.1.0, not aimed at by this release:** `ToolCall.arguments` is a string
+    on the ReAct path and a mapping on the native path; a tool-free stream yields the model's own
+    text rather than the sanitized answer; `GuardrailChain.check(position=...)` is not forwarded; and
+    the retrieval and open-ended gaps 1.0.1 recorded.
+
+---
+
+**What it cost.** Measured against 1.1.0 on the same tasks and models, accuracy holds: every task measured again after
+the final fix is within its run-to-run noise. The cost moved both ways. Answers that need no tool
+are far shorter, with 82% to 93% fewer completion tokens on short-answer questions. Arithmetic and
+math tasks that use a calculator write 7% to 15% fewer completion tokens but, on three of the four
+measured, make 16% to 27% more model calls and send 10% to 22% more prompt tokens; a coding task on
+the larger model makes 14% more calls. Question-answering tasks with a search tool search more often
+and answer more questions correctly, at up to half again as many model calls. Savings in model calls
+measured part-way through the release came partly from the defect change 1 fixes, and are not
+claimed. Tool-using runs still make more model calls than they need to, and reducing that is the
+focus of the next release. No cloud model was measured at full size, so nothing here is a claim
+about a cloud provider.
+
+**Full changelog:** [CHANGELOG.md](CHANGELOG.md#120---2026-09-27)
+
 ## v1.1.0 - September 14, 2026
 
 This release changes how a run holds its conversation: as typed steps, instead of one string that
