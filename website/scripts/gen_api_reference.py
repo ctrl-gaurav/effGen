@@ -98,6 +98,7 @@ AREAS: list[dict] = [
             "effgen.models.base",
             "effgen.models.model_loader",
             "effgen.models.registry",
+            "effgen.models.capability_probe",
             "effgen.models.auth",
             "effgen.models.openai_schema",
             "effgen.models.latency_tracker",
