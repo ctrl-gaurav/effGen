@@ -110,6 +110,66 @@ actually run, and nothing else is pushed either way. `tool_use="required"` makes
 any attached tool one the run may not answer without — including on this path's
 `"template"` mechanism, where there is no request parameter to constrain.
 
+## Measured, not assumed: the capability probe
+
+A declaration says how tool definitions reach a model, not whether the model
+uses them. A model served behind a `base_url` is declared an `"api"` caller
+whatever sits behind the URL, and two things can still go wrong: a small model
+may answer from memory while holding a search tool that has the answer, and a
+server may not carry a model's native calls back as structured calls, so the
+same call repeats until a guard ends the run.
+
+At `tool_calling_mode="auto"`, the first agent built for a model served behind a
+URL, or run on a local engine, measures this once: eight questions about
+fictional things, answerable only through a stub search tool, run as ordinary
+agent runs. Each is `resolved` (called, and the answer carries the result),
+`unresolved` (called, and the answer does not) or `skipped` (no call). Two
+defaults follow from the counts, and only when you left them unset:
+
+| measured | what `auto` does for this model |
+|---|---|
+| three or more native runs unresolved, and the text frame resolves at least three more | uses the ReAct text frame |
+| any native run skipped | a run holding an information-retrieval tool that answers without calling it is sent back once and made to call |
+| otherwise | as the declaration says |
+
+Calculator and code tools are never moved by the probe. An explicit
+`tool_calling_mode`, an explicit `tool_use`, `capability_probe=False` or
+`EFFGEN_CAPABILITY_PROBE=0` keep the declared behaviour, and cloud adapters are
+never probed. A probe costs about sixteen requests; it is stored in
+`~/.effgen/capabilities.json` (or `$EFFGEN_HOME`, or `$EFFGEN_CAPABILITY_CACHE`)
+and read by every later agent, across processes. It is measured again when the
+weights, the chat template, the endpoint or the probe itself change, and after
+30 days. A probe that cannot run — a refused request, a failing endpoint, over
+its budget of 48 requests or 120 seconds — stores nothing and leaves `auto` as
+declared, with one warning.
+
+```bash
+effgen doctor                                   # what was probed and learned
+effgen doctor --probe Qwen/Qwen2.5-1.5B-Instruct --base-url http://127.0.0.1:8000/v1 --refresh
+```
+
+```python
+from effgen import probe_tool_calling
+from effgen.models import load_model
+
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", provider="openai_compatible",
+                   base_url="http://127.0.0.1:8000/v1", context_length=8192)
+probe = probe_tool_calling(model)
+print(probe.summary(), probe.strategy, probe.required_categories)
+```
+
+A run reports why it ran as it did in `response.metadata["tool_calling"]`:
+the strategy, whether it came from your configuration, the declaration or a
+probe, and the categories the probe made must-call.
+
+The same store keeps two facts learned from real requests. A provider that
+rejects stop sequences sent beside tool definitions is asked once more with the
+stops applied locally; if that answers, later requests leave them off. A server
+that rejects a pinned `reasoning_effort` is asked once more without it, and the
+field is left off from then on. A small served model asked in words to use a
+calculator may still answer by itself; `tool_use="required"` is the remedy for a
+run that must use it.
+
 ## How It Works
 
 1. Tools are converted to JSON Schema definitions via `tools_to_definitions()`
