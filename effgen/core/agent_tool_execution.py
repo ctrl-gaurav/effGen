@@ -14,6 +14,15 @@ from typing import Any
 
 from . import ledger as _ledger
 from .execution_tracker import EventType, ExecutionEvent
+from .tool_failure import (
+    INPUT_SIDE,
+    TOOL_SIDE,
+    ToolFailure,
+    collecting_failures,
+    error_class_names,
+    failure_side,
+    record_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +119,27 @@ class AgentToolExecutionMixin:
         # Circuit breaker check
         if not self._circuit_breaker.is_available(tool_name):
             logger.info(f"Circuit breaker OPEN for '{tool_name}', skipping execution")
-            return f"Error executing tool '{tool_name}': tool temporarily disabled due to repeated failures"
+            refusal = (
+                f"Error executing tool '{tool_name}': tool temporarily disabled "
+                "due to repeated failures"
+            )
+            record_failure(ToolFailure(
+                tool=tool_name, error_type="CircuitOpen",
+                message="tool temporarily disabled due to repeated failures",
+                side=TOOL_SIDE,
+            ))
+            return refusal
 
-        result_str = self._execute_tool_once(tool_name, tool_input)
+        with collecting_failures() as failures:
+            result_str = self._execute_tool_once(tool_name, tool_input)
 
-        # Update circuit breaker
+        # Update circuit breaker. Only a failure on the tool's own side counts
+        # against it: a model that sends bad input three times has not shown
+        # the tool to be down, and opening the breaker would refuse the tool to
+        # this run and to the agent's later ones for the whole cooldown.
         if result_str.startswith("Error executing tool"):
-            self._circuit_breaker.record_failure(tool_name)
+            if any(f.tool_side for f in failures):
+                self._circuit_breaker.record_failure(tool_name)
         else:
             self._circuit_breaker.record_success(tool_name)
 
@@ -166,6 +189,10 @@ class AgentToolExecutionMixin:
         Returns:
             Tool output as string
         """
+        # The error classes of a failure the tool reported in its own envelope,
+        # so the failure can be classified after it has become text.
+        envelope_classes: list[str] = []
+        envelope_status: int | None = None
         # Track tool call start
         self.execution_tracker.track_event(ExecutionEvent(
             type=EventType.TOOL_CALL_START,
@@ -272,6 +299,16 @@ class AgentToolExecutionMixin:
                 # ToolResult object - extract output
                 if hasattr(result, 'success') and not result.success:
                     error_msg = str(getattr(result, 'error', 'Unknown error'))
+                    envelope = getattr(result, 'metadata', None) or {}
+                    if isinstance(envelope, dict):
+                        envelope_classes = [
+                            str(name) for name in envelope.get("error_classes") or ()
+                        ] or (
+                            [str(envelope["error_type"])]
+                            if envelope.get("error_type") else []
+                        )
+                        status = envelope.get("error_status")
+                        envelope_status = status if isinstance(status, int) else None
                     # A tool that raised already carries this prefix on its
                     # error; adding a second one repeats it in the observation.
                     result_str = (
@@ -363,6 +400,15 @@ class AgentToolExecutionMixin:
         except ValueError as e:
             error_msg = str(e)
             logger.debug(f"Tool '{tool_name}' execution failed: {error_msg}")
+            record_failure(ToolFailure(
+                tool=tool_name,
+                error_type=envelope_classes[0] if envelope_classes else type(e).__name__,
+                message=error_msg,
+                side=(
+                    failure_side(class_names=envelope_classes, status=envelope_status)
+                    if envelope_classes else INPUT_SIDE
+                ),
+            ))
 
             self.execution_tracker.track_event(ExecutionEvent(
                 type=EventType.TOOL_CALL_FAILED,
@@ -376,6 +422,12 @@ class AgentToolExecutionMixin:
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}"
             logger.error(f"Tool '{tool_name}' execution failed: {error_msg}", exc_info=True)
+            record_failure(ToolFailure(
+                tool=tool_name,
+                error_type=error_class_names(e)[0],
+                message=str(e),
+                side=failure_side(e),
+            ))
 
             self.execution_tracker.track_event(ExecutionEvent(
                 type=EventType.TOOL_CALL_FAILED,

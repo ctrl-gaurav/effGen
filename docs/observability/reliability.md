@@ -202,6 +202,18 @@ from effgen.reliability.circuit import get_circuit_breaker
 cb = get_circuit_breaker("cerebras", failure_threshold=3, recovery_timeout=15.0)
 ```
 
+### An agent's tools
+
+Every agent also keeps one breaker per tool it holds (three failures in a row,
+a 60-second cooldown). It counts only failures on the tool's own side — a
+connection or timeout error, an HTTP 5xx or 429, missing credentials —
+recognised from the exception's class. A call whose input the tool could not
+use does not count, so a model that sends bad input a few times does not get
+the tool refused to it for the next minute. While a tool's breaker is open a
+call to it is answered with "tool temporarily disabled due to repeated
+failures", and a run whose every tool is in that state ends with
+`stop_reason="tool_failed"` (see [conventions](../api/conventions.md)).
+
 ---
 
 ## Bulkhead

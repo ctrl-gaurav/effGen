@@ -3,13 +3,13 @@
 effGen — Error Recovery Agent (Intentional Failures)
 
 Deliberately breaks things and tests how the framework handles failures.
-Demonstrates BrokenTool (always crashes), SlowTool (timeout), invalid inputs,
+Demonstrates BrokenTool (its service is unreachable), SlowTool (timeout), invalid inputs,
 circuit breaker transitions, fallback chain exhaustion, partial answer
 extraction, retry backoff, concurrent failures, and control character handling.
 
 Tests:
   T1: Invalid tool input — malformed JSON to Calculator
-  T2: Tool crash — BrokenTool always raises RuntimeError, circuit breaker triggers
+  T2: Tool down — BrokenTool always raises ConnectionError, circuit breaker triggers
   T3: All tools fail — every tool raises, agent gives partial answer
   T4: Max iterations — max_iterations=2, returns partial answer
   T5: Empty model response — retry logic with backoff
@@ -54,7 +54,11 @@ from effgen.utils.circuit_breaker import CircuitState
 # ── Custom Tools ─────────────────────────────────────────────────────────────
 
 class BrokenTool(BaseTool):
-    """A tool that always crashes with RuntimeError."""
+    """A tool whose service is always unreachable.
+
+    It raises ``ConnectionError``: a failure on the tool's own side, which is
+    what the agent's circuit breaker counts. Bad input to a tool does not.
+    """
 
     def __init__(self):
         super().__init__(
@@ -74,7 +78,7 @@ class BrokenTool(BaseTool):
         )
 
     async def _execute(self, input: str = "", **kwargs):
-        raise RuntimeError("BrokenTool: intentional crash for testing!")
+        raise ConnectionError("BrokenTool: service unreachable (intentional, for testing)")
 
 
 class SlowTool(BaseTool):
@@ -307,7 +311,7 @@ def test_p7_t1_invalid_input(model, model_name):
 
 
 def test_p7_t2_tool_crash(model, model_name):
-    """Tool crash — BrokenTool always raises RuntimeError, circuit breaker triggers."""
+    """Tool down — BrokenTool always raises ConnectionError, circuit breaker triggers."""
     from effgen.tools.builtin.calculator import Calculator
 
     broken = BrokenTool()

@@ -36,6 +36,21 @@ def _redact_error(text: str) -> str:
         return text
 
 
+def _http_status_of(exc: BaseException) -> int | None:
+    """The HTTP status an HTTP client's error carries, or ``None``.
+
+    Read from the error's ``response`` (``httpx``, ``requests``) or from the
+    error itself (``urllib``'s ``HTTPError`` carries ``code`` and ``status``).
+    """
+    response = getattr(exc, "response", None)
+    for holder in (response, exc):
+        for name in ("status_code", "status", "code"):
+            value = getattr(holder, name, None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+    return None
+
+
 def _inner_status(output: Any) -> tuple[bool | None, str | None]:
     """Detect a self-reported failure inside a tool's returned value.
 
@@ -691,6 +706,13 @@ class BaseTool(ABC):
                 metadata={
                     "tool_name": self.name,
                     "error_type": type(e).__name__,
+                    # The whole class chain, so a caller can tell a
+                    # connection or timeout failure from bad input without
+                    # importing the library that raised it.
+                    "error_classes": [
+                        cls.__name__ for cls in type(e).__mro__ if cls is not object
+                    ],
+                    "error_status": _http_status_of(e),
                 }
             )
 

@@ -375,9 +375,10 @@ class RunStoppedError(RuntimeError):
 
     Raised by ``Agent.run()`` under the default ``raise_on_error=True`` when a
     run ends with ``outcome == "stopped"`` — the iteration cap, a repeated tool
-    call, a tool that reproduced its own result, or an empty final answer after
-    tools ran. The run made progress but never produced an answer, so there is
-    nothing to return in its place.
+    call, a tool that reproduced its own result, an empty final answer after
+    tools ran, or a tool that failed on its own side (``tool_failed``: a
+    connection or timeout error, a service error, missing credentials). The run
+    never produced an answer, so there is nothing to return in its place.
 
     It subclasses :class:`RuntimeError`, which is what the iteration cap has
     always raised, so ``except RuntimeError`` keeps catching it. What is new is
