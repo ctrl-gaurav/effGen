@@ -1362,6 +1362,77 @@ def attach_error_context(
     return err
 
 
+
+# ---------------------------------------------------------------------------
+# Request fields a provider may refuse
+# ---------------------------------------------------------------------------
+
+#: Statuses that are an invalid-request class answer but say nothing about the
+#: request's fields: an account without credit, and an oversized body.
+_NOT_A_FIELD_REJECTION = (402, 413)
+
+
+def rejects_request(exc: Exception) -> bool:
+    """Whether *exc* is the provider refusing the request as invalid.
+
+    Read from the typed classification (HTTP 400/422 and their SDK classes),
+    never from the provider's message, whose wording differs per provider and
+    changes. An account without credit and an oversized body are excluded:
+    dropping a field does not change either.
+
+    Args:
+        exc: The exception a request raised.
+
+    Returns:
+        bool: True for an invalid-request refusal of the request's shape.
+    """
+    if classify_provider_error(exc).category != "invalid_request":
+        return False
+    status = None
+    for candidate in (exc, getattr(exc, "__cause__", None)):
+        if candidate is None:
+            continue
+        for attr in ("status_code", "status", "http_status"):
+            value = getattr(candidate, attr, None)
+            if isinstance(value, int):
+                status = value
+                break
+        context = getattr(candidate, "error_context", None)
+        if status is None and isinstance(context, dict):
+            value = context.get("status_code")
+            status = value if isinstance(value, int) else None
+        if status is not None:
+            break
+    return status not in _NOT_A_FIELD_REJECTION
+
+
+#: ``(provider, model)`` pairs already told that a pinned effort is dropped.
+_reasoning_effort_warned: set[tuple[str, str]] = set()
+_reasoning_effort_warned_lock = threading.Lock()
+
+
+def warn_reasoning_effort_dropped(provider: str, model: str, effort: Any) -> bool:
+    """Say once per model that a pinned ``reasoning_effort`` is not sent.
+
+    Args:
+        provider: The provider or adapter label.
+        model: The model's name.
+        effort: The value the caller pinned.
+
+    Returns:
+        bool: True when this call logged, False when it was already said.
+    """
+    key = (str(provider), str(model))
+    with _reasoning_effort_warned_lock:
+        if key in _reasoning_effort_warned:
+            return False
+        _reasoning_effort_warned.add(key)
+    logger.warning(
+        "reasoning_effort dropped: %r is set, but %s model '%s' is not sent the field; "
+        "the setting has no effect on this model", effort, provider, model,
+    )
+    return True
+
 __all__ = [
     "TOOL_PROBE_NAME",
     "get_bpe_encoding",
@@ -1390,4 +1461,6 @@ __all__ = [
     "RETRY_WILL_RETRY",
     "RETRY_RATE_LIMITED",
     "RETRY_NON_RETRYABLE",
+    "rejects_request",
+    "warn_reasoning_effort_dropped",
 ]

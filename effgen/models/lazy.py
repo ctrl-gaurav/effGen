@@ -158,6 +158,20 @@ class LazyModel(BaseModel):
         """Delegate to the wrapped model."""
         return self._inner.supports_suppressed_tool_call()
 
+    def supports_stop_with_tools(self) -> bool:
+        """Delegate to the wrapped model."""
+        return self._inner.supports_stop_with_tools()
+
+    def capability_key(self) -> str | None:
+        """Delegate to the wrapped model; ``None`` until it has loaded."""
+        if not self._inner.is_loaded():
+            return None
+        return self._inner.capability_key()
+
+    def forwards_reasoning_effort(self) -> bool:
+        """Delegate to the wrapped model."""
+        return self._inner.forwards_reasoning_effort()
+
     def prompt_cache_policy(self) -> "PromptCachePolicy | None":
         """Delegate to the wrapped model."""
         return self._inner.prompt_cache_policy()

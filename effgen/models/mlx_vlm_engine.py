@@ -475,6 +475,16 @@ class MLXVLMEngine(MLXEngine):
 
         return results
 
+    def capability_key(self) -> str | None:
+        """Weights, their revision and the chat template: the probe's cache key.
+
+        ``None`` until the model is loaded, so a model that has not loaded is
+        not probed.
+        """
+        from .capability_probe import local_capability_key
+
+        return local_capability_key(self)
+
     def supports_tool_calling(self) -> bool:
         """VLMs typically do not support native tool calling."""
         return False

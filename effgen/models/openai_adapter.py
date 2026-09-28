@@ -35,6 +35,7 @@ from effgen.models._adapter_utils import (
     not_loaded_error,
     provider_runtime_error,
     reasoning_delta_text,
+    warn_reasoning_effort_dropped,
     warn_reasoning_only_stream,
 )
 from effgen.models._base_url import (
@@ -543,6 +544,10 @@ class OpenAIAdapter(FunctionCallingModel):
             hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
         )
 
+    def forwards_reasoning_effort(self) -> bool:
+        """True for a model the catalog marks as reasoning: the field is sent."""
+        return bool(self._is_reasoning_model)
+
     def _validate_reasoning_effort(self, effort: str | None) -> None:
         """Raise ValueError for invalid *effort* values."""
         if effort is not None and effort not in VALID_REASONING_EFFORTS:
@@ -601,14 +606,12 @@ class OpenAIAdapter(FunctionCallingModel):
             params["frequency_penalty"] = config.frequency_penalty
 
             if config.reasoning_effort is not None:
-                logger.debug(
-                    f"reasoning_effort={config.reasoning_effort!r} is set but "
-                    f"'{self.model_name}' is not a reasoning model — dropping silently."
+                warn_reasoning_effort_dropped(
+                    self._provider, self.model_name, config.reasoning_effort,
                 )
         elif config.reasoning_effort is not None:
-            logger.debug(
-                f"reasoning_effort={config.reasoning_effort!r} is set but "
-                f"'{self.model_name}' is not a reasoning model — dropping silently."
+            warn_reasoning_effort_dropped(
+                self._provider, self.model_name, config.reasoning_effort,
             )
 
         # A model that reasons does not accept the 'stop' parameter, so it is

@@ -35,10 +35,16 @@ What this adapter changes relative to :class:`~effgen.models.openai_adapter.Open
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
+from effgen.models._adapter_utils import rejects_request, warn_reasoning_effort_dropped
 from effgen.models._base_url import PLACEHOLDER_API_KEY, resolve_base_url
+from effgen.models.base import GenerationConfig, GenerationResult
 from effgen.models.openai_adapter import OpenAIAdapter
 
 logger = logging.getLogger(__name__)
@@ -47,6 +53,11 @@ logger = logging.getLogger(__name__)
 #: models served this way are at least this large, and a server that is asked
 #: for more than it can hold reports the real limit itself.
 DEFAULT_CONTEXT_LENGTH = 32768
+
+#: What each endpoint said about a served id, shared by every adapter in the
+#: process for a few minutes, so building many agents asks the server once.
+_DESCRIBED: dict[tuple[str, str], tuple[float, str]] = {}
+_DESCRIBED_TTL_S = 300.0
 
 
 class OpenAICompatibleAdapter(OpenAIAdapter):
@@ -131,6 +142,165 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         # ``None`` sends the request and reports whatever it says; a caller who
         # knows can say so and get the refusal before the call is billed.
         self._declared_vision = supports_vision
+
+        self._capability_key: str | None = None
+
+    # ------------------------------------------------------------------
+    # What this server's model does
+    # ------------------------------------------------------------------
+
+    def capability_key(self) -> str | None:
+        """The endpoint, the served id and the server's own description of it.
+
+        What the server reports for the id on ``/models`` (the weights it was
+        started from and its window, where it reports them) is part of the key,
+        so different weights served under the same name are probed again. The
+        server's start time is not, so a restart does not re-probe. Asked once
+        per adapter, with a short timeout; a server with no ``/models`` route
+        keys on the endpoint and the id alone.
+        """
+        if self._capability_key is None:
+            endpoint = str(self.base_url or "").rstrip("/").lower()
+            memo_key = (endpoint, self.model_name)
+            memo = _DESCRIBED.get(memo_key)
+            if memo is not None and time.monotonic() - memo[0] < _DESCRIBED_TTL_S:
+                self._capability_key = memo[1]
+                return self._capability_key
+            described: dict[str, Any] = {}
+            try:
+                if self.client is None:
+                    self.load()
+                client = self.client
+                if client is not None:
+                    listing = client.with_options(timeout=5.0, max_retries=0).models.list()
+                    for entry in getattr(listing, "data", []) or []:
+                        if getattr(entry, "id", None) != self.model_name:
+                            continue
+                        extra = getattr(entry, "model_extra", None) or {}
+                        for name in ("root", "max_model_len"):
+                            value = getattr(entry, name, None) or extra.get(name)
+                            if value is not None:
+                                described[name] = value
+            except Exception:  # noqa: BLE001 - a server that describes nothing
+                logger.debug("%s did not describe %s", self.base_url, self.model_name,
+                             exc_info=True)
+            self._capability_key = (
+                f"{type(self).__name__}|{endpoint}|{self.model_name}|"
+                f"{json.dumps(described, sort_keys=True, default=str)}"
+            )
+            _DESCRIBED[memo_key] = (time.monotonic(), self._capability_key)
+        return self._capability_key
+
+    def forwards_reasoning_effort(self) -> bool:
+        """True unless this server has rejected the field before."""
+        from effgen.models.capability_probe import learned_fact
+
+        return learned_fact(self, "reasoning_effort") is not False
+
+    def _build_request_params(
+        self,
+        messages: list[dict[str, Any]],
+        config: GenerationConfig,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """The OpenAI request, plus a caller-pinned ``reasoning_effort``.
+
+        Whether a served model reasons is the caller's to say, not a catalog's,
+        so a pinned ``reasoning_effort`` is sent as the request field for any
+        model, and the sampling parameters stay on the request: servers that
+        implement this protocol accept both together. A server that has
+        rejected the field once (see :meth:`generate`) is not sent it again.
+        """
+        effort = config.reasoning_effort
+        params = super()._build_request_params(
+            messages, replace(config, reasoning_effort=None), stream=stream,
+        )
+        if self._is_reasoning_model:
+            params.setdefault("temperature", config.temperature)
+            params.setdefault("top_p", config.top_p)
+        if effort is not None:
+            self._validate_reasoning_effort(effort)
+            if self.forwards_reasoning_effort():
+                params["reasoning_effort"] = effort
+            else:
+                warn_reasoning_effort_dropped(self._provider, self.model_name, effort)
+        return params
+
+    def _effort_rejected(self, config: GenerationConfig | None, exc: Exception) -> bool:
+        """Whether *exc* is this server refusing a ``reasoning_effort`` it was sent."""
+        if config is None or config.reasoning_effort is None:
+            return False
+        if not self.forwards_reasoning_effort():
+            return False
+        return rejects_request(exc)
+
+    def _note_effort_rejected(self) -> None:
+        from effgen.models.capability_probe import remember_fact
+
+        remember_fact(self, "reasoning_effort", False, detail="invalid request with the field")
+        logger.warning(
+            "[capability] %s at %s rejects reasoning_effort; sending requests "
+            "without it from now on", self.model_name, self.base_url,
+        )
+
+    def generate(
+        self,
+        prompt: str,
+        config: GenerationConfig | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Generate as :class:`OpenAIAdapter` does, retrying once without a rejected field.
+
+        A server that answers an invalid-request error to a request carrying a
+        pinned ``reasoning_effort`` is asked once more without it; if that
+        answers, the rejection is remembered and later requests leave the field
+        off.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Forwarded to :meth:`OpenAIAdapter.generate`, including ``tools``.
+
+        Returns:
+            The generated text with its usage metadata.
+        """
+        try:
+            return super().generate(prompt, config, **dict(kwargs))
+        except Exception as exc:
+            if not self._effort_rejected(config, exc):
+                raise
+            self._note_effort_rejected()
+            return super().generate(prompt, config, **kwargs)
+
+    def generate_stream(
+        self,
+        prompt: str,
+        config: GenerationConfig | None = None,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        """Stream as :class:`OpenAIAdapter` does, with the same one retry.
+
+        The retry applies only when the request fails before its first chunk.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Forwarded to :meth:`OpenAIAdapter.generate_stream`.
+
+        Returns:
+            An iterator over the response's text chunks.
+        """
+        started = False
+        try:
+            for chunk in super().generate_stream(prompt, config, **dict(kwargs)):
+                started = True
+                yield chunk
+            return
+        except Exception as exc:
+            if started or not self._effort_rejected(config, exc):
+                raise
+            self._note_effort_rejected()
+        yield from super().generate_stream(prompt, config, **kwargs)
 
     # ------------------------------------------------------------------
     # Discovery

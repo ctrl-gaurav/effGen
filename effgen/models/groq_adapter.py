@@ -31,6 +31,7 @@ from effgen.models._adapter_utils import (
     not_loaded_error,
     provider_runtime_error,
     reasoning_delta_text,
+    warn_reasoning_effort_dropped,
     warn_reasoning_only_stream,
 )
 from effgen.models._cost import CostTracker
@@ -617,6 +618,7 @@ class GroqAdapter(BaseModel):
             request_params["frequency_penalty"] = config.frequency_penalty
         if self._is_reasoning_model:
             request_params["reasoning_format"] = _REASONING_FORMAT
+        self._apply_reasoning_effort(request_params, config)
 
         info = GROQ_MODELS.get(self.model_name, {})
         apply_tool_request(request_params, tools, info)
@@ -976,6 +978,7 @@ class GroqAdapter(BaseModel):
             request_params["frequency_penalty"] = config.frequency_penalty
         if self._is_reasoning_model:
             request_params["reasoning_format"] = _REASONING_FORMAT
+        self._apply_reasoning_effort(request_params, config)
 
         # The same shaping the non-streaming path applies: the catalog gate and
         # ``tool_choice`` are one decision, so a streamed turn sends the same
@@ -1141,6 +1144,22 @@ class GroqAdapter(BaseModel):
     def supports_native_tools(self) -> bool:
         """True if this model supports OpenAI-format function calling."""
         return GROQ_MODELS.get(self.model_name, {}).get("supports_native_tools", False)
+
+    def forwards_reasoning_effort(self) -> bool:
+        """True for a model the catalog marks as reasoning: the field is sent."""
+        return bool(self._is_reasoning_model)
+
+    def _apply_reasoning_effort(
+        self, request_params: dict[str, Any], config: GenerationConfig,
+    ) -> None:
+        """Send a pinned ``reasoning_effort`` to a reasoning model; say once when not."""
+        effort = config.reasoning_effort
+        if effort is None:
+            return
+        if self._is_reasoning_model:
+            request_params["reasoning_effort"] = effort
+        else:
+            warn_reasoning_effort_dropped("groq", self.model_name, effort)
 
     def supports_tool_calling(self) -> bool:
         """Return True if the loaded model supports native tool-calling."""

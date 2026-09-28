@@ -1172,6 +1172,35 @@ class BaseModel(ABC):
         """
         return False
 
+    def capability_key(self) -> str | None:
+        """A key for what this model does with a tool, or ``None`` if it is known.
+
+        An adapter whose behaviour is fixed by its provider answers ``None`` and
+        is never probed — no request is ever made to find out. An adapter in
+        front of weights the caller chose (a model served behind a URL, a local
+        engine) answers a key that changes whenever the weights, the chat
+        template or the endpoint change, and
+        :func:`~effgen.models.capability_probe.probe_tool_calling` measures the
+        model once per key and keeps the result. Nothing branches on the key's
+        content; it only names a cache entry.
+
+        Returns:
+            str | None: The key, or ``None`` for an adapter that is not probed.
+        """
+        return None
+
+    def forwards_reasoning_effort(self) -> bool:
+        """Whether a ``reasoning_effort`` set on a request reaches the provider.
+
+        The default is ``False``: an adapter that does not send the field says
+        so, and the agent reports a pinned value it cannot deliver once per
+        model instead of dropping it without a word.
+
+        Returns:
+            bool: True if ``GenerationConfig.reasoning_effort`` is sent.
+        """
+        return False
+
     # ------------------------------------------------------------------
     # Multi-turn tool loop
     # ------------------------------------------------------------------
