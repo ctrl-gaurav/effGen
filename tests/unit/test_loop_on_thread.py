@@ -164,8 +164,13 @@ def test_a_stopped_run_carries_its_thread_and_why_it_stopped():
 
 
 def test_a_declined_call_is_marked_as_one():
-    """A call the loop refused to make is answered by the framework, not a tool."""
-    agent = _agent([_calc("2+2"), _calc("2+2"), _calc("2+2")], max_iterations=6)
+    """A call the loop refused to make is answered by the framework, not a tool.
+
+    Pinned to the loop without the answer request, which on this ReAct run asks
+    for the answer before the repeat guard ever declines a call.
+    """
+    agent = _agent([_calc("2+2"), _calc("2+2"), _calc("2+2")], max_iterations=6,
+                   max_turns_without_progress=None)
     response = agent.run("What is 2+2? Explain the steps.")
 
     thread = response.metadata["thread"]

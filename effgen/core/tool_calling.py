@@ -581,11 +581,18 @@ _NO_ACTION_WORDS = (
     r"|none[ \t]+(?:needed|required|necessary))\b[^\n]*"
     r")"
 )
+#: An ``Action:`` value wrapped in parentheses or brackets — ``(continue
+#: reasoning)``, ``(final answer)``, ``[no action]`` — which is a placeholder
+#: for an action rather than the name of one.
+_PLACEHOLDER_WORDS = r"(?:\([^()\[\]\n]{1,80}\)|\[[^()\[\]\n]{1,80}\])\.?"
 #: An ``Action:`` value that says the turn takes no action.
 _NO_ACTION_VALUE_RE = re.compile(r"^" + _NO_ACTION_WORDS + r"$", re.IGNORECASE)
-#: A whole ``Action:`` line that says so.
+#: An ``Action:`` value that is a placeholder.
+_PLACEHOLDER_VALUE_RE = re.compile(r"^" + _PLACEHOLDER_WORDS + r"$")
+#: A whole ``Action:`` line that says so, in words or with a placeholder.
 _NO_ACTION_LINE_RE = re.compile(
-    r"^[ \t]*Action:[ \t]*" + _NO_ACTION_WORDS + r"[ \t]*$",
+    r"^[ \t]*Action:[ \t]*(?:" + _NO_ACTION_WORDS + "|" + _PLACEHOLDER_WORDS
+    + r")[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _ACTION_INPUT_LINE_RE = re.compile(r"^[ \t]*Action Input:.*$", re.IGNORECASE | re.MULTILINE)
@@ -608,10 +615,38 @@ def declares_no_action(action: str, tools: dict[str, Any] | None = None) -> bool
         True when the value declares that no action is taken.
     """
     value = (action or "").strip()
-    if not value or not _NO_ACTION_VALUE_RE.match(value):
+    if not value:
         return False
+    if not _NO_ACTION_VALUE_RE.match(value):
+        return placeholder_action(value, tools) is not None
     held = {str(name).lower() for name in (tools or {})}
     return value.strip("().").strip().lower() not in held
+
+
+def placeholder_action(action: str, tools: dict[str, Any] | None = None) -> str | None:
+    """The placeholder an ``Action:`` value is, or ``None`` when it is not one.
+
+    A value wrapped in parentheses or brackets — ``(continue reasoning)``,
+    ``(final answer)``, ``[none]`` — stands in for an action without naming
+    one. Models copy the shape from a transcript line that uses it, and a turn
+    that writes it has taken no action. A value whose inside is the name of a
+    held tool is still that tool.
+
+    Args:
+        action: The value after ``Action:``, with its argument section removed.
+        tools: The agent's tools by name.
+
+    Returns:
+        The placeholder as written, or ``None``.
+    """
+    value = (action or "").strip()
+    if not value or not _PLACEHOLDER_VALUE_RE.match(value):
+        return None
+    inside = value.rstrip(".").strip()[1:-1].strip().lower()
+    held = {str(name).lower() for name in (tools or {})}
+    if inside in held or value.lower() in held:
+        return None
+    return value
 
 
 def text_after_declaration(text: str) -> str:
@@ -763,6 +798,9 @@ class ToolCallResult:
             none (``Action: None``). No tool is named by it.
         after_declaration: What the turn wrote after that declaration, for the
             loop to read again; empty when nothing followed it.
+        placeholder: The placeholder the declaration was written as —
+            ``(continue reasoning)`` and its like — or ``""`` when it was
+            written in words.
     """
     tool_name: str | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -776,6 +814,7 @@ class ToolCallResult:
     read_how: str = ""
     declared_no_action: bool = False
     after_declaration: str = ""
+    placeholder: str = ""
 
 
 @dataclass
@@ -1029,6 +1068,7 @@ class ReActStrategy(ToolCallingStrategy):
                         if declares_no_action(action, tools):
                             result.declared_no_action = True
                             result.after_declaration = text_after_declaration(text)
+                            result.placeholder = placeholder_action(action, tools) or ""
                             return result
 
                         # "Action: Final Answer" → treat as final answer

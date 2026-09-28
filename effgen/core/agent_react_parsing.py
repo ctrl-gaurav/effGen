@@ -613,6 +613,7 @@ class AgentReActParsingMixin:
             # wrote after saying so, for the loop to read again.
             "declared_no_action": result.declared_no_action,
             "after_declaration": result.after_declaration,
+            "placeholder": getattr(result, "placeholder", ""),
         }
         if result.is_tool_call and result.tool_name:
             parsed["action"] = result.tool_name

@@ -87,6 +87,37 @@ effGen registered tool (see `effgen tools list` and the tool authoring guide).
 
 ---
 
+## 1.2 → 1.3: how a run ends
+
+The tool loop now asks for the answer when a run stops making progress, and
+says how a run ended. Code that reads `success`, `output` and `stop_reason`
+keeps working; these are the differences a caller can see:
+
+- **`AgentConfig.max_turns_without_progress` defaults to `2`** (it was `None`).
+  A run whose turns stop bringing new tool results, or that declares no action
+  after a result, is asked for its answer instead of going round to
+  `max_iterations`. Set it to `None` — in the config or per
+  `run(max_turns_without_progress=None)` — to keep the earlier loop.
+- **One closing request before a stuck ending.** A run that would have stopped
+  on `loop_detected`, `repeated_tool_result`, `max_iterations_*` or
+  `null_final_from_model` while holding tool results is sent its calls and
+  results once more without tools. When that reply is an answer the run
+  succeeds (`metadata["answer_source"] == "closing_request"`), so it no longer
+  raises `RunStoppedError` under the default `raise_on_error=True`.
+- **A new stop reason, `tool_failed`**, in `STOPPED_REASONS`: the tools the run
+  needed failed on their own side (connection, timeout, HTTP 5xx or 429,
+  missing credentials). It raises `RunStoppedError` by default.
+- **The per-tool circuit breaker counts only those failures.** A tool that was
+  given bad input is no longer refused to later calls and runs.
+- **`result.termination`** (`"done"`, `"not_possible"`, `"stuck"`,
+  `"tool_failed"`, `"error"`) is new, and `to_dict()` carries it.
+- **`Action: (continue reasoning)`** and other bracketed placeholders that name
+  no held tool are read as "no action", as `Action: None` already was.
+- **A stopped run's `partial` never carries a tool's error message**; a run
+  whose only observations were errors has `partial=None`.
+
+See [conventions](api/conventions.md) for the full contract.
+
 ## v0.1.x → v0.2.0
 
 ### Breaking Changes

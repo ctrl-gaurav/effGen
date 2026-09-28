@@ -35,6 +35,7 @@ Everything here is private. This module imports nothing from ``agent.py``.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import logging
@@ -61,6 +62,7 @@ from ..observability.tracing import (
     start_model_call,
     start_tool_call,
 )
+from ..prompts.tool_contract import is_execution_tool
 from ..utils.prometheus_metrics import metrics as prom_metrics
 from ..utils.structured_logging import get_structured_logger
 from . import ledger as _ledger
@@ -98,10 +100,13 @@ from .agent_runtime import (
 )
 from .agent_tool_loop import (
     ASK_AFTER_DECLARED,
+    ASK_AFTER_LOOP,
+    ASK_AFTER_REPEATED_RESULT,
     LOST_CALL_ASK,
     LOST_CALL_REPORT,
     LOST_CALL_WARN,
     NativeToolLoop,
+    is_error_result,
 )
 from .execution_tracker import EventType, ExecutionEvent
 from .result_relay import relay_result
@@ -129,6 +134,7 @@ from .thread_budget import (
 from .thread_compaction import resolve_policy
 from .tool_call_record import ToolCallList
 from .tool_calling import opened_call
+from .tool_failure import ToolFailure, collecting_failures
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Generator
@@ -564,6 +570,12 @@ class _RunState:
     budget: Any = None
     #: What the run gives up when it reaches the budget.
     compaction: Any = None
+    #: Whether the run has spent its one closing request.
+    closing_used: bool = False
+    #: Whether the run's latest request went out as a message list. The
+    #: closing request goes out in the same shape, so a run keeps one request
+    #: shape from its first turn to its last.
+    last_request_was_list: bool = False
 
 
 @dataclass(frozen=True)
@@ -578,9 +590,23 @@ class _StepOutcome:
 
     kind: str
     response: AgentResponse | None = None
+    #: For ``kind == "stuck"``: the stop reason the run would end on, and how to
+    #: build that ending. The ending is built only once it is certain, so a run
+    #: whose closing request answers never reports a stop it did not make.
+    reason: str | None = None
+    build: Callable[[], AgentResponse] | None = None
+
+    def settle(self) -> _StepOutcome:
+        """A stuck outcome as the response it ends on; any other unchanged."""
+        if self.kind == "stuck" and self.build is not None:
+            return _StepOutcome("response", self.build())
+        return self
 
 
 CONTINUE = _StepOutcome("continue")
+#: A closing request whose reply was a program: the run carries on as it would
+#: have without the request (see :func:`_closing_request`).
+PROGRAM_REPLY = _StepOutcome("program_reply")
 
 
 # --- The emitters ------------------------------------------------------------
@@ -1108,16 +1134,63 @@ def build_response(
 
 
 def _stopped(
-    agent: Any, state: _RunState, text: str, *,
+    agent: Any, state: _RunState, text: str | None, *,
     action: str | None, reason: str, answer: str | None = None,
+    asked: bool = False,
 ) -> _StepOutcome:
-    """End the run with progress and no answer, from the run's own counters."""
-    return _StepOutcome("response", agent._stopped_outcome_response(
-        text, action=action, reason=reason, thread=state.thread,
+    """End the run with progress and no answer, from the run's own counters.
+
+    What travels as progress is a result, never a failure: when *text* is a
+    tool's error, the run's other results are read instead, and a run that has
+    none carries no partial. A run whose every dispatched call failed on the
+    tool's own side is reported as that, not as the loop's stop.
+    """
+    guards = state.guards
+
+    def build() -> AgentResponse:
+        if guards.every_call_failed_tool_side():
+            return _tool_failed_response(agent, state)
+        progress = text
+        if progress is not None and is_error_result(progress):
+            progress = agent._extract_partial_answer(state.thread)
+            if progress:
+                progress = sanitize_final_answer(progress) or progress
+        stopped: AgentResponse = agent._stopped_outcome_response(
+            progress, action=action, reason=reason, thread=state.thread,
+            iterations=state.iterations, tool_calls=state.tool_calls,
+            tokens_used=state.tokens_used, calls=guards.calls,
+            debug_trace=state.debug_trace, answer=answer, asked=asked,
+        )
+        return stopped
+
+    return _StepOutcome("stuck", reason=reason, build=build)
+
+
+def _tool_failed_response(agent: Any, state: _RunState) -> AgentResponse:
+    """End the run on tools that failed on their own side.
+
+    Names the last tool-side failure and how many calls the run made to that
+    tool. Whatever usable result the run had is carried as progress.
+    """
+    guards = state.guards
+    failure: ToolFailure | None = guards.last_tool_failure
+    if guards.unavailable_tools:
+        failure = list(guards.unavailable_tools.values())[-1]
+    tool = failure.tool if failure is not None else None
+    attempts = guards.dispatches_by_tool.get(tool or "", 0)
+    text = None
+    if guards.usable_results:
+        text = agent._extract_partial_answer(state.thread)
+        if text:
+            text = sanitize_final_answer(text) or text
+    stopped: AgentResponse = agent._stopped_outcome_response(
+        text, action=tool, reason="tool_failed", thread=state.thread,
         iterations=state.iterations, tool_calls=state.tool_calls,
-        tokens_used=state.tokens_used, calls=state.guards.calls,
-        debug_trace=state.debug_trace, answer=answer,
-    ))
+        tokens_used=state.tokens_used, calls=guards.calls,
+        debug_trace=state.debug_trace, failure=(failure, attempts),
+        extra_meta={"unavailable_tools": sorted(guards.unavailable_tools)},
+    )
+    return stopped
 
 
 def _written_call(
@@ -1284,11 +1357,422 @@ def step(
     Returns:
         Whether the run goes round again, or the response it ended with.
     """
-    state.guards.begin_turn()
+    guards = state.guards
+    closing_on = policy.max_turns_without_progress is not None
+    # The last turn the budget allows is the closing request, for a run that
+    # has made calls and has no answer: the turn buys more as a request for the
+    # answer than as one more step the run cannot finish.
+    if (
+        closing_on
+        and not state.closing_used
+        and state.iterations == policy.max_iterations - 1
+        and guards.attempted_calls()
+    ):
+        closed = yield from _closing_request(
+            agent, task, policy, state, emitter,
+            why="the last turn of the budget",
+            fallback=lambda: _cap_or_tool_failed(agent, policy, state),
+        )
+        if closed is not PROGRAM_REPLY:
+            return closed
+    asked_turn = guards.force_text_answer
+    guards.begin_turn()
     outcome = yield from _take_turn(agent, task, policy, state, emitter)
+    has_room = state.iterations < policy.max_iterations
     if outcome.kind == "continue":
         _ask_for_the_answer_when_stalled(policy, state)
-    return outcome
+        if guards.all_tools_unavailable():
+            if not guards.usable_results:
+                return _StepOutcome("response", _tool_failed_response(agent, state))
+            if closing_on and has_room and not state.closing_used:
+                closed = yield from _closing_request(
+                    agent, task, policy, state, emitter,
+                    why="every tool is unavailable",
+                    fallback=lambda: _tool_failed_response(agent, state),
+                )
+                if closed is not PROGRAM_REPLY:
+                    return closed
+            return _StepOutcome("response", _tool_failed_response(agent, state))
+        # On the text scaffold the in-frame answer request still carries the
+        # tool section and the Action format, and a model that needs to be
+        # asked writes another Action; the closing request is the ask there.
+        # So is a run whose turn wrote a placeholder action — a model copying
+        # the scaffold's format answers an in-frame ask with another one.
+        newly_asked = guards.force_text_answer and not asked_turn
+        scaffold_ask = policy.frame != "native" or guards.last_turn_placeholder
+        if (
+            closing_on and newly_asked and scaffold_ask and has_room
+            and not state.closing_used and guards.attempted_calls()
+        ):
+            closed = yield from _closing_request(
+                agent, task, policy, state, emitter,
+                why=(
+                    "the answer request, on the text scaffold"
+                    if policy.frame != "native"
+                    else "the answer request, after a placeholder action"
+                ),
+                fallback=lambda: _asked_and_stuck(agent, state),
+            )
+            # A reply that was a program leaves the run asked in its own frame.
+            return outcome if closed is PROGRAM_REPLY else closed
+        if (
+            closing_on and asked_turn and has_room and not state.closing_used
+            and guards.attempted_calls()
+        ):
+            closed = yield from _closing_request(
+                agent, task, policy, state, emitter,
+                why="the answer request brought no answer",
+                fallback=lambda: _asked_and_stuck(agent, state),
+            )
+            return outcome if closed is PROGRAM_REPLY else closed
+        return outcome
+    if (
+        outcome.kind == "stuck" and outcome.build is not None
+        and closing_on and has_room and not state.closing_used
+        and guards.calls
+    ):
+        closed = yield from _closing_request(
+            agent, task, policy, state, emitter,
+            why=str(outcome.reason), fallback=outcome.build,
+        )
+        if closed is not PROGRAM_REPLY:
+            return closed
+    return outcome.settle()
+
+
+def _asked_and_stuck(agent: Any, state: _RunState) -> AgentResponse:
+    """The stop for a run that was asked for its answer and wrote none."""
+    guards = state.guards
+    reason = (
+        "repeated_tool_result"
+        if guards.ask_reason == ASK_AFTER_REPEATED_RESULT else "loop_detected"
+    )
+    partial = agent._extract_partial_answer(state.thread)
+    if partial:
+        partial = sanitize_final_answer(partial) or partial
+    action = guards.calls[-1].name if guards.calls else None
+    outcome = _stopped(
+        agent, state, partial, action=action, reason=reason,
+        asked=guards.ask_reason not in (ASK_AFTER_LOOP, ASK_AFTER_REPEATED_RESULT),
+    ).settle()
+    assert outcome.response is not None
+    return outcome.response
+
+
+def _cap_or_tool_failed(
+    agent: Any, policy: _LoopPolicy, state: _RunState,
+) -> AgentResponse:
+    """The iteration-cap stop, or the tool failure it really was."""
+    if state.guards.every_call_failed_tool_side():
+        return _tool_failed_response(agent, state)
+    return _iteration_cap_response(agent, policy, state)
+
+
+#: Why a closing request's reply is not an answer, as its log line says it.
+_CLOSING_WROTE_A_CALL = "the reply is a tool call"
+_CLOSING_EMPTY = "the reply is empty"
+_CLOSING_PROGRAM = "the reply is a program for '{tool}', not what it printed"
+
+#: Statement kinds that make a line source code rather than a stated result.
+_PROGRAM_NODES = (
+    ast.Import, ast.ImportFrom, ast.Assign, ast.AugAssign, ast.AnnAssign,
+)
+_FENCE_RE = re.compile(r"^\s*```")
+
+
+def _states_a_value(node: ast.AST) -> bool:
+    """Whether an assignment line only states a value: ``x = 5``, ``a, b = 3, 4``.
+
+    That is how a result is written as often as how a program starts, and it
+    asks nothing to be run.
+    """
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+        return False
+    try:
+        ast.literal_eval(node.value)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return True
+
+
+def _program_for_executor(agent: Any, text: str) -> str | None:
+    """The tool a reply is a program or a written call for, or ``None``.
+
+    A run holding a tool that executes code has its answer in what the code
+    printed. A reply that opens with source code — a fenced block, or a first
+    line that is an import, an assignment of a computed value or a
+    ``print(...)`` call — is work the model wants run, not its result: returning it would put a program where the
+    run's own executed output was. A first line that calls a held tool by name,
+    ``tool({...})``, is a call written out, whatever the tool. Read from the
+    reply's syntax and the tools' declared categories only.
+    """
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    try:
+        head = ast.parse(first.strip()).body
+    except SyntaxError:
+        head = []
+    for node in head:
+        if (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id in (agent.tools or {})
+        ):
+            return str(node.value.func.id)
+    executors: list[str] = [
+        str(name) for name, tool in (agent.tools or {}).items() if is_execution_tool(tool)
+    ]
+    if not executors:
+        return None
+    if _FENCE_RE.match(first):
+        return executors[0]
+    for node in head:
+        if isinstance(node, _PROGRAM_NODES) and not _states_a_value(node):
+            return executors[0]
+        if (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name) and node.value.func.id == "print"
+        ):
+            return executors[0]
+    return None
+_CLOSING_FAILED = "the request failed"
+#: Replies that say nothing: an answer of "none" is not an answer.
+_NULL_ANSWERS = frozenset({"none", "null", "n/a", "na"})
+
+
+def _closing_messages(agent: Any, state: _RunState) -> list[Any]:
+    """The run's own work as a conversation, with every tool taken away.
+
+    The caller's persona, the session's earlier turns, the task, and each
+    dispatched call with its result, as the assistant call and tool reply they
+    were. No tool definitions, no framework contract and no added sentence: the
+    conversation ends on the last result, and the reply is the answer.
+    """
+    from .messages import Message, Role, TextPart, ToolCallPart, ToolResultPart
+    from .thread import TurnStep
+
+    thread = state.thread
+    persona = thread.persona_text() or DEFAULT_SYSTEM_PROMPT
+    messages: list[Any] = []
+    if persona:
+        messages.append(Message(role=Role.SYSTEM, content=[TextPart(text=persona)]))
+    for step in thread.steps:
+        if isinstance(step, TurnStep):
+            messages.extend(step.to_messages())
+    task_step = thread.task()
+    if task_step is not None:
+        messages.extend(task_step.to_messages())
+    for index, call in enumerate(state.guards.calls):
+        arguments = call.arguments
+        if isinstance(arguments, str):
+            try:
+                decoded = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                decoded = None
+            arguments = decoded if isinstance(decoded, dict) else {"input": arguments}
+        elif not isinstance(arguments, dict):
+            arguments = {} if arguments is None else {"input": arguments}
+        call_id = f"call_{index}"
+        messages.append(Message(role=Role.ASSISTANT, content=[
+            ToolCallPart(tool_call_id=call_id, name=call.name, arguments=dict(arguments)),
+        ]))
+        result = call.result if call.error is None else call.error
+        messages.append(Message(role=Role.TOOL, content=[
+            ToolResultPart(
+                tool_call_id=call_id, result=str(result if result is not None else ""),
+                is_error=call.error is not None,
+            ),
+        ]))
+    return messages
+
+
+#: How a closing request on the one-string protocol lists the run's results,
+#: and the one sentence it closes with. A string carries no turns, so the
+#: request says what it holds and what it wants; the message protocol needs
+#: neither and sends neither.
+CLOSING_RESULTS_HEADER = "Tool results so far:"
+CLOSING_ASK = "Give the final answer."
+
+
+def _closing_body(state: _RunState) -> str:
+    """The task, each dispatched call and what it returned, and the request."""
+    task_step = state.thread.task()
+    lines = []
+    for call in state.guards.calls:
+        arguments = call.arguments
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, default=str)
+        result = call.result if call.error is None else call.error
+        lines.append(f"{call.name}({arguments}) -> {result}")
+    body = task_step.text if task_step else ""
+    if lines:
+        body += f"\n\n{CLOSING_RESULTS_HEADER}\n" + "\n".join(lines)
+    body += f"\n\n{CLOSING_ASK}"
+    return body.strip()
+
+
+def _closing_flat(agent: Any, state: _RunState) -> str:
+    """The run's work as one string, for a run whose requests are one string.
+
+    The persona, the session's earlier turns, then :func:`_closing_body`. No
+    tool section and no scaffold.
+    """
+    thread = state.thread
+    persona = thread.persona_text() or DEFAULT_SYSTEM_PROMPT
+    parts = [persona, thread.history_text(), _closing_body(state)]
+    return "\n\n".join(part for part in parts if part)
+
+
+def _closing_framed(agent: Any, state: _RunState) -> list[Any]:
+    """The run's work as one user message inside the frame's own roles.
+
+    For a run whose persona and earlier turns travel as their own messages
+    while its own steps travel as one string: the closing request keeps that
+    shape.
+    """
+    from .messages import Message, Role, TextPart
+    from .thread import TurnStep
+
+    thread = state.thread
+    messages: list[Any] = []
+    persona = thread.persona_text()
+    if persona:
+        messages.append(Message(role=Role.SYSTEM, content=[TextPart(text=persona)]))
+    for step in thread.steps:
+        if isinstance(step, TurnStep):
+            messages.extend(step.to_messages())
+    task_step = thread.task()
+    parts = list(task_step.parts) if task_step is not None else []
+    messages.append(Message(
+        role=Role.USER, content=[TextPart(text=_closing_body(state)), *parts],
+    ))
+    return messages
+
+
+def _closing_request(
+    agent: Any,
+    task: str,
+    policy: _LoopPolicy,
+    state: _RunState,
+    emitter: Any,
+    *,
+    why: str,
+    fallback: Callable[[], AgentResponse],
+) -> Generator[Any, None, _StepOutcome]:
+    """Ask for the answer once more, with the run's tools taken away.
+
+    The run's own calls and results go back to the model as the conversation
+    they were, with no tool definitions and no framework sentence, and the run
+    ends on the reply: an answer when it wrote one, *fallback* otherwise. It is
+    a model turn inside ``max_iterations`` and is spent once per run.
+
+    Args:
+        agent: The agent the run belongs to.
+        task: The task, as the caller wrote it.
+        policy: The run's policy.
+        state: The run's conversation, guards and counters.
+        emitter: How the turn reaches the caller.
+        why: What led here, for the log line.
+        fallback: Builds the run's ending when the reply is not an answer.
+
+    Returns:
+        The run's terminal outcome.
+    """
+    state.closing_used = True
+    state.iterations += 1
+    iterations = state.iterations
+    _ledger.mark_iteration(iterations)
+    state.iter_start = time.time()
+    logger.info("[closing] asking for the answer without tools (%s)", why)
+    kwargs = policy.call_kwargs
+    gen_kwargs = {
+        key: value for key, value in kwargs.items()
+        if key not in ("tools", "tool_choice")
+    }
+    caller_stops = "stop_sequences" in kwargs
+    gen_kwargs[RESOLVED_CONFIG_KWARG] = (
+        policy.gen_config if caller_stops
+        else replace(policy.gen_config, stop_sequences=None)
+    )
+    gen_kwargs[RESOLVED_STOPS_KWARG] = tuple(
+        normalize_stop_sequences(kwargs["stop_sequences"]) or ()
+    ) if caller_stops else ()
+    flat = _closing_flat(agent, state)
+    # The same shape as every earlier request of the run: a conversation that
+    # went out as messages is closed as messages, one whose frame travelled as
+    # roles around one string keeps those roles, and one string stays one.
+    prompt: Any
+    if state.resolved_to_messages:
+        prompt = _closing_messages(agent, state)
+    elif state.last_request_was_list:
+        prompt = _closing_framed(agent, state)
+    else:
+        prompt = flat
+    state.prompt = prompt
+    model_name = getattr(agent, "model_name", None) or "unknown"
+    provider = _infer_provider_from_model(agent.model, model_name)
+    with start_agent_iteration(preset=agent.name, iteration=iterations):
+        with start_model_call(provider=provider, model=model_name):
+            response = yield from emitter.model_turn(
+                agent, prompt, policy, dict(gen_kwargs), streamable=False,
+            )
+            if not isinstance(prompt, str) and _is_request_shape_refusal(response):
+                logger.info(
+                    "[closing] the provider refused the conversation; sending "
+                    "it as one string"
+                )
+                state.tokens_used += response.get("tokens_used", 0) or 0
+                response = yield from emitter.model_turn(
+                    agent, flat, policy, dict(gen_kwargs), streamable=False,
+                )
+    state.tokens_used += response.get("tokens_used", 0) or 0
+    text = str(response.get("text") or "")
+    thread = state.thread
+    if response.get("finish_reason") == "error":
+        logger.info("[closing] no answer (%s)", _CLOSING_FAILED)
+        return _StepOutcome("response", fallback())
+    answer: str | None = text
+    if response.get("tool_calls") or opened_call(text) is not None:
+        answer = None
+    else:
+        parsed = _read_turn(
+            agent._text_parse_strategy(False), text, agent.tools, lenient=False,
+        )
+        if parsed.is_tool_call and parsed.tool_name in (agent.tools or {}):
+            answer = None
+        elif (parsed.final_answer or "").strip():
+            answer = parsed.final_answer
+        elif find_written_tool_call(text, agent.tools):
+            answer = None
+    if answer is None:
+        logger.info("[closing] no answer (%s)", _CLOSING_WROTE_A_CALL)
+        return _StepOutcome("response", fallback())
+    cleaned = (sanitize_final_answer(answer) or "").strip()
+    if not cleaned or cleaned.lower() in _NULL_ANSWERS:
+        logger.info("[closing] no answer (%s)", _CLOSING_EMPTY)
+        return _StepOutcome("response", fallback())
+    executor = _program_for_executor(agent, answer)
+    if executor is not None:
+        # The reply is not the answer, but the run may still reach one the way
+        # it would have without the request, so the request gives back the
+        # turn it took and the run goes on from where it was.
+        logger.info(
+            "[closing] no answer (%s); the run goes on as it would have without it",
+            _CLOSING_PROGRAM.format(tool=executor),
+        )
+        state.iterations -= 1
+        return PROGRAM_REPLY
+    logger.info("[closing] answered")
+    snapshot = _TurnSnapshot(
+        tokens_used=state.tokens_used,
+        iterations=iterations,
+        tool_calls=state.tool_calls,
+        iter_start=state.iter_start,
+        thread=AgentThread(steps=list(thread.steps)),
+    )
+    _note_debug_turn(state, response, final_answer=answer)
+    return _StepOutcome("response", build_response(
+        agent, policy, state, snapshot, answer, answer_source="closing_request",
+    ))
 
 
 def _ask_for_the_answer_when_stalled(policy: _LoopPolicy, state: _RunState) -> None:
@@ -1747,6 +2231,7 @@ def _take_turn(
             len(prompt),
         )
     state.prompt = prompt
+    state.last_request_was_list = isinstance(prompt, list)
 
     # A turn that answered while holding a tool doing work the model cannot do
     # in its head was sent back once (see the acceptance check below); this is
@@ -1994,11 +2479,16 @@ def _take_turn(
             _call_id = _tc.get("id") or None
             _declined: str | None = None
             yield from emitter.tool_call(_tname, json.dumps(_targs, default=str))
-            if _tname in agent.tools:
+            if _tname in agent.tools and guards.is_unavailable(_tname):
+                _declined = "tool_unavailable"
+                guards.note_declined()
+                _obs = unavailable_tool_observation(_tname)
+                batch_observations.append(f"[{_tname}] → {_obs}")
+            elif _tname in agent.tools:
                 _batch_start = time.time()
                 with start_tool_call(
                     tool_name=_tname, tool_input=str(_targs)[:500]
-                ) as _btspan:
+                ) as _btspan, collecting_failures() as _bfailures:
                     _obs = agent._execute_tool(_tname, json.dumps(_targs))
                     try:
                         _btspan.set_attribute(ToolAttrs.STATUS, "ok")
@@ -2019,7 +2509,10 @@ def _take_turn(
                     duration=_batch_elapsed,
                     iteration=iterations,
                 )
-                guards.observe_result(_tname, _obs)
+                _bfailed = guards.note_dispatch(_tname, _bfailures)
+                guards.observe_result(
+                    _tname, _obs, failed_tool_side=_bfailed is not None,
+                )
                 batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
             else:
                 # A call naming a tool this agent does not hold is still a call
@@ -2103,6 +2596,12 @@ def _take_turn(
         # call, not a declaration.
         if parsed.get("declared_no_action"):
             logger.info("[progress] the turn declared no action, which names no tool")
+            if parsed.get("placeholder"):
+                guards.last_turn_placeholder = True
+                logger.info(
+                    "[progress] the turn named a placeholder action (%s)",
+                    parsed["placeholder"],
+                )
         if parsed.get("declared_no_action") and opened_call(response["text"]) is None:
             remainder = str(parsed.get("after_declaration") or "")
             answer_after = None
@@ -2398,7 +2897,7 @@ def _take_turn(
                     "answer stated from the observations so far",
                     action,
                 )
-                guards.force_text_answer = True
+                guards.ask_for_answer(ASK_AFTER_LOOP)
                 _decline_call(
                     thread, action, action_input,
                     call_id=call_id, reasoning=reasoning,
@@ -2431,7 +2930,7 @@ def _take_turn(
             # failed or was denied, so simply nudging and re-offering the same
             # tool just repeats the loop until max_iterations. Stop offering
             # tools for the rest of this run so the model must respond in prose.
-            guards.force_text_answer = True
+            guards.ask_for_answer(ASK_AFTER_LOOP)
             _decline_call(
                 thread, action, action_input,
                 call_id=call_id, reasoning=reasoning,
@@ -2474,12 +2973,23 @@ def _take_turn(
             ))
             guards.note_declined()
             yield from emitter.observation(action, str(observation))
+        elif guards.is_unavailable(action):
+            # The tool failed on its own side as often as the run allows. The
+            # call is answered in the breaker's words rather than dispatched.
+            guards.note_declined()
+            observation = unavailable_tool_observation(action)
+            _decline_call(
+                thread, action, action_input,
+                call_id=call_id, reasoning=reasoning,
+                reason="tool_unavailable", text=observation,
+            )
+            yield from emitter.observation(action, observation)
         else:
             # Execute tool inside tracing span
             tool_start = time.time()
             with start_tool_call(
                 tool_name=action, tool_input=str(action_input)
-            ) as _tspan:
+            ) as _tspan, collecting_failures() as _failures:
                 tool_result = agent._execute_tool(action, action_input)
                 try:
                     _tspan.set_attribute(ToolAttrs.STATUS, "ok")
@@ -2497,7 +3007,10 @@ def _take_turn(
             # Keep the result against the exact call that produced it, so
             # proposing that call again is answered from the record.
             guards.record_pair_result(check, tool_result)
-            guards.observe_result(action, tool_result)
+            _failed = guards.note_dispatch(action, _failures, check.pair)
+            guards.observe_result(
+                action, tool_result, failed_tool_side=_failed is not None,
+            )
             cur_observation = tool_result
 
             labels = {"tool_name": action, "agent_name": agent.name}
@@ -2557,7 +3070,7 @@ def _take_turn(
                         "asking for an answer stated from it",
                         action,
                     )
-                    guards.force_text_answer = True
+                    guards.ask_for_answer(ASK_AFTER_REPEATED_RESULT)
                     thread.append(
                         NudgeStep(
                             text=NUDGE_HAVE_RESULTS,
@@ -2766,9 +3279,31 @@ def drive(
         outcome = yield from step(agent, task, policy, state, emitter)
         if outcome.kind == "response":
             assert outcome.response is not None
-            return outcome.response
+            return _stamp_results(outcome.response, state)
 
-    return _iteration_cap_response(agent, policy, state)
+    return _stamp_results(_cap_or_tool_failed(agent, policy, state), state)
+
+
+def _stamp_results(response: AgentResponse, state: _RunState) -> AgentResponse:
+    """Put what the run's calls brought on the response, and say how it ended.
+
+    ``metadata["tool_results"]`` is what
+    :attr:`~effgen.core.agent_response.AgentResponse.termination` reads to tell
+    an answer from a statement that the tools could not serve the task.
+    """
+    guards = state.guards
+    if isinstance(response.metadata, dict):
+        response.metadata["tool_results"] = guards.result_counts()
+        if guards.unavailable_tools:
+            response.metadata.setdefault(
+                "unavailable_tools", sorted(guards.unavailable_tools),
+            )
+    if response.termination == "not_possible":
+        logger.info(
+            "[termination] not_possible: %d call(s) tried, none returned a "
+            "usable result", guards.attempted_calls(),
+        )
+    return response
 
 
 def run_to_completion(driver: Generator[Any, None, AgentResponse]) -> AgentResponse:
@@ -2988,6 +3523,14 @@ def _write_periodic_checkpoint(
         agent._last_checkpoint_id = state.checkpoints.save(cp)
     except Exception as _e:
         logger.warning("Periodic checkpoint failed: %s", _e)
+
+
+def unavailable_tool_observation(tool: str) -> str:
+    """The reply to a call for a tool this run stopped calling."""
+    return (
+        f"Error executing tool '{tool}': tool temporarily disabled due to "
+        "repeated failures"
+    )
 
 
 def _decline_call(

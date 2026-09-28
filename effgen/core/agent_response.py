@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 __all__ = [
     "STOPPED_REASONS",
     "STOP_REASONS",
+    "TERMINATIONS",
     "AgentResponse",
     "PartialResult",
     "StreamEvent",
@@ -46,6 +47,7 @@ STOP_REASONS = (
     "loop_detected",
     "repeated_tool_result",
     "null_final_from_model",
+    "tool_failed",
     # failed — the run could not be carried out
     "written_tool_call",
     "generation_failed",
@@ -60,6 +62,23 @@ STOP_REASONS = (
 #: was otherwise proceeding. These are the responses whose
 #: :attr:`AgentResponse.outcome` is ``"stopped"``.
 STOPPED_REASONS = frozenset({
+    "max_iterations_partial",
+    "max_iterations_exhausted",
+    "loop_detected",
+    "repeated_tool_result",
+    "null_final_from_model",
+    "tool_failed",
+})
+
+#: Every value :attr:`AgentResponse.termination` can take, in the order a
+#: caller usually branches on them. ``"done"`` and ``"not_possible"`` are
+#: answered runs; ``"stuck"`` and ``"tool_failed"`` are runs the loop stopped;
+#: ``"error"`` is a run that could not be carried out.
+TERMINATIONS = ("done", "not_possible", "stuck", "tool_failed", "error")
+
+#: The stopped reasons that mean the run kept proposing work that brought
+#: nothing new and never wrote an answer.
+STUCK_REASONS = frozenset({
     "max_iterations_partial",
     "max_iterations_exhausted",
     "loop_detected",
@@ -263,6 +282,16 @@ class AgentResponse:
             - ``"null_final_from_model"`` — the model answered with nothing
               usable ("N/A", "none") after using tools (``success=False``),
               carrying the same payload.
+            - ``"tool_failed"`` — the tools the run needed failed on their own
+              side (a connection or timeout error, a service error, missing
+              credentials, a circuit breaker that is open) and the run has no
+              answer (``success=False``). ``output`` names the tool, the error
+              class and message and how many attempts were made;
+              ``metadata["error"]`` has ``type="ToolFailed"``,
+              ``category="tool_failed"``, ``tool``, ``error_type`` and
+              ``kind="tool"``; ``metadata["unavailable_tools"]`` lists every
+              tool the run stopped calling. Any result the run had is carried
+              under :attr:`partial`.
 
             Success rule: ``success`` is ``True`` only when a run finished with a
             real answer (``final_answer``); a run the loop stopped — at the
@@ -338,6 +367,55 @@ class AgentResponse:
         if self.success:
             return "answered"
         return "stopped" if self.stop_reason in STOPPED_REASONS else "failed"
+
+    @property
+    def termination(self) -> str:
+        """How the run ended, one of :data:`TERMINATIONS`.
+
+        - ``"done"`` — the model wrote an answer (:attr:`success` is True).
+        - ``"not_possible"`` — the model wrote an answer, but the run's tools
+          could not be used: every call was declined (a tool the agent does not
+          hold, or one given up on), failed on the tool's own side, or returned
+          nothing. A run whose calls reached a tool that rejected their input
+          used the tool, and its answer is ``"done"``. :attr:`output` is what the
+          model said, which is usually that the task cannot be done with these
+          tools. ``success`` stays True — a statement that something cannot be
+          found or done is an answer.
+        - ``"stuck"`` — the run kept proposing work that brought nothing new,
+          was asked for its answer, and wrote none (``loop_detected``,
+          ``repeated_tool_result``, ``max_iterations_*``,
+          ``null_final_from_model``). What it reached is under :attr:`partial`.
+        - ``"tool_failed"`` — the tools the run needed failed on their own side
+          and the run has no answer. Retrying later, or checking the tool's
+          service or credentials, is what changes the outcome.
+        - ``"error"`` — the run could not be carried out (a provider failure,
+          an empty task, a blocked run, a written-out call, a schema failure).
+
+        Derived from :attr:`success`, :attr:`stop_reason` and the metadata the
+        loop records (``metadata["tool_results"]``), so it cannot drift from
+        them and a saved run read back reports the same value.
+        """
+        if self.success:
+            results = (
+                self.metadata.get("tool_results")
+                if isinstance(self.metadata, dict) else None
+            )
+            # A tool that ran and rejected the call's input could be used — the
+            # model answered after using it wrongly, which is an answer like any
+            # other. Only a run whose tools could not be used at all is one.
+            if (
+                isinstance(results, dict)
+                and int(results.get("attempted") or 0) > 0
+                and int(results.get("usable") or 0) == 0
+                and int(results.get("input_errors") or 0) == 0
+            ):
+                return "not_possible"
+            return "done"
+        if self.stop_reason == "tool_failed":
+            return "tool_failed"
+        if self.stop_reason in STUCK_REASONS:
+            return "stuck"
+        return "error"
 
     def mark_failed(self, reason: str, error: dict[str, Any] | None = None) -> None:
         """Turn an assembled response into a failure with *reason*.
@@ -535,6 +613,7 @@ class AgentResponse:
             "success": self.success,
             "stop_reason": self.stop_reason,
             "outcome": self.outcome,
+            "termination": self.termination,
             "partial": self.partial.to_dict() if self.partial else None,
             "mode": self.mode.value,
             "iterations": self.iterations,

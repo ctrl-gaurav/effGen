@@ -31,9 +31,9 @@ class AgentMode(Enum):
 
 
 #: How many turns in a row may bring no new result before a run is asked for its
-#: answer, when the caller says nothing: ``None``, never. See
+#: answer, when the caller says nothing. See
 #: :attr:`AgentConfig.max_turns_without_progress`.
-DEFAULT_MAX_TURNS_WITHOUT_PROGRESS: int | None = None
+DEFAULT_MAX_TURNS_WITHOUT_PROGRESS: int | None = 2
 
 
 #: Whether a run reads a tool call its model wrote in a shape the strict reader
@@ -208,10 +208,15 @@ class AgentConfig:
             where the provider enforces it. ``False`` by default.
             ``run(recover_lost_tool_calls=...)`` sets it for one call.
         max_turns_without_progress: How many turns in a row may bring no new
-            tool result before the run is asked for its answer. ``None`` (the
-            default) never asks; ``2`` is a reasonable setting. The count
-            starts after the run's first new result; the next turn offers no
-            tools and asks for the answer, and nothing ends the run early.
+            tool result before the run is asked for its answer; ``2`` by
+            default. The count starts after the run's first new result (before
+            it, only turns whose every call was declined or failed on the
+            tool's side count); the next turn offers no tools and asks for the
+            answer. A run whose asked turn still writes no answer, or that is
+            about to stop without one, gets one closing request: its own calls
+            and results sent back with no tools, in the run's own request
+            shape, and its reply is the answer.
+            ``None`` turns all three off and restores the earlier loop.
             ``run(max_turns_without_progress=...)`` sets it for one call.
     """
     name: str = field(default="", kw_only=True)
@@ -365,8 +370,12 @@ class AgentConfig:
     # reasoned did not. The count starts after the run's first new result, and
     # the turn that follows it offers no tools and asks for the answer — the
     # run is not ended. A turn that says it takes no action after a new result
-    # is asked for the answer at once. ``None``, the default, turns both off;
-    # the run is then bounded by ``max_iterations`` and the repeat guards alone.
+    # is asked for the answer at once. Before the first new result, a turn
+    # whose every call was declined or failed on the tool's side counts as a
+    # stall. A run that is asked and still writes no answer, or that is about
+    # to stop without one, gets one closing request without tools. ``None``
+    # turns all of this off; the run is then bounded by ``max_iterations`` and
+    # the repeat guards alone.
     max_turns_without_progress: int | None = DEFAULT_MAX_TURNS_WITHOUT_PROGRESS
     # Whether the loop recovers a tool call the model wrote but the runtime
     # could not run: a call whose arguments are JSON with raw line breaks or

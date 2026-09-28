@@ -270,7 +270,7 @@ class AgentReActMixin(
 
     def _stopped_outcome_response(
         self,
-        text: str,
+        text: str | None,
         *,
         action: str | None,
         reason: str,
@@ -281,6 +281,9 @@ class AgentReActMixin(
         calls: Any,
         debug_trace: Any = None,
         answer: str | None = None,
+        failure: Any = None,
+        asked: bool = False,
+        extra_meta: dict[str, Any] | None = None,
     ) -> AgentResponse:
         """Report a run the loop stopped before the model wrote an answer.
 
@@ -300,11 +303,17 @@ class AgentReActMixin(
         reached under :attr:`~effgen.core.agent_response.AgentResponse.partial`
         and ``metadata["partial_output"]``.
 
+        The progress is what the tools returned, never a failure: a stopped
+        run whose only observations are errors carries no :attr:`partial` at
+        all, and one that had a real result before its errors carries that
+        result.
+
         Args:
-            text: The flattened progress — the tool output or recovered text.
+            text: The flattened progress — the tool output or recovered text —
+                or ``None`` when the run reached nothing but errors.
             action: The tool involved, or ``None`` when unnamed.
-            reason: ``"loop_detected"``, ``"repeated_tool_result"`` or
-                ``"null_final_from_model"``.
+            reason: ``"loop_detected"``, ``"repeated_tool_result"``,
+                ``"null_final_from_model"`` or ``"tool_failed"``.
             thread: The run's conversation, read for the last thought.
             iterations: Iterations run.
             tool_calls: Tool calls made.
@@ -312,40 +321,56 @@ class AgentReActMixin(
             calls: The recorded tool calls.
             debug_trace: The debug trace, when one is being collected.
             answer: The unusable final answer, for ``null_final_from_model``.
+            failure: For ``tool_failed``, the
+                :class:`~effgen.core.tool_failure.ToolFailure` that ended the
+                run, with ``attempts`` (the calls made to that tool) beside it
+                as ``(failure, attempts)``.
+            asked: The run was asked for its answer, with and without its
+                tools, and wrote none — the statement says so rather than
+                naming a repeated call.
+            extra_meta: Extra keys for the response's metadata.
 
         Returns:
             The stopped response, carrying the progress.
         """
         retrieval = self._is_context_retrieval_tool(action) if action else False
         detail = self._repeated_tool_detail(
-            action, reason, retrieval=retrieval, answer=answer
+            action, reason, retrieval=retrieval, answer=answer,
+            failure=failure, asked=asked,
         )
-        partial = self._partial_result(
-            thread,
-            text=text,
-            calls=calls,
-            iterations=iterations,
-            tool_calls=tool_calls,
+        progress = text if text and text.strip() else None
+        partial = (
+            self._partial_result(
+                thread,
+                text=progress,
+                calls=calls,
+                iterations=iterations,
+                tool_calls=tool_calls,
+            )
+            if progress is not None else None
         )
-        thread.append(AnswerStep(text=text, stop_reason=reason))
+        thread.append(AnswerStep(text=progress or "", stop_reason=reason))
         meta: dict[str, Any] = {
             "reason": reason,
             "error": detail,
             "answer_source": reason,
             "repeated_action": action,
-            "partial": True,
-            "partial_output": text,
             "tool_calling_strategy": self._tool_calling_strategy.name,
             "thread": thread,
             "prompt_protocol": _protocol_of(thread),
             "context_budget": _budget_of(thread),
         }
+        if progress is not None:
+            meta["partial"] = True
+            meta["partial_output"] = progress
+        if extra_meta:
+            meta.update(extra_meta)
         logger.info(
             "outcome stopped: stop_reason=%s tool=%s category=%s observations=%d",
             reason,
             action or "-",
             "INFORMATION_RETRIEVAL" if retrieval else "COMPUTATION",
-            len(partial.observations),
+            len(partial.observations) if partial is not None else 0,
         )
         if debug_trace is not None:
             debug_trace.total_tokens = tokens_used
@@ -379,6 +404,8 @@ class AgentReActMixin(
         *,
         retrieval: bool = True,
         answer: str | None = None,
+        failure: Any = None,
+        asked: bool = False,
     ) -> dict[str, Any]:
         """Return the typed outcome for a run that stopped without an answer.
 
@@ -392,7 +419,27 @@ class AgentReActMixin(
         model_id = (
             getattr(self.model, "model_name", None) or self.model_name or "the model"
         )
+        provider = self._model_provider(self.model)
+        if reason == "tool_failed":
+            return self._tool_failed_detail(model_id, provider, action, failure)
         action = action or "the tool"
+        if asked and reason == "loop_detected":
+            message = (
+                f"'{model_id}' did not write an answer: its last turns brought "
+                f"nothing new from '{action}', and it wrote none when it was asked "
+                "for one, with its tools and without them. The results it had are "
+                "reported as partial progress — tool output, not an answer. "
+                f"{self._STOPPED_NEXT_STEP}"
+            )
+            return {
+                "type": "UnsynthesizedToolResult",
+                "category": reason,
+                "provider": provider,
+                "model": model_id,
+                "repeated_tool": action,
+                "message": message,
+                "retryable": False,
+            }
         if reason == "null_final_from_model":
             quoted = " ".join((answer or "").split())[:80]
             message = (
@@ -431,11 +478,51 @@ class AgentReActMixin(
         return {
             "type": "UnsynthesizedToolResult",
             "category": reason,
-            "provider": self._model_provider(self.model),
+            "provider": provider,
             "model": model_id,
             "repeated_tool": action,
             "message": message,
             "retryable": False,
+        }
+
+    def _tool_failed_detail(
+        self, model_id: str, provider: Any, action: str | None, failure: Any,
+    ) -> dict[str, Any]:
+        """The typed outcome for a run whose tools failed on their own side.
+
+        Names the tool, the error class and message, and how many calls the run
+        made to it, and says what changes the outcome: the tool's service or its
+        configuration, not the model or the budget.
+        """
+        detail_failure, attempts = (
+            failure if isinstance(failure, tuple) else (failure, 0)
+        )
+        tool = getattr(detail_failure, "tool", None) or action or "the tool"
+        error_type = getattr(detail_failure, "error_type", None) or "Error"
+        error_message = " ".join(
+            str(getattr(detail_failure, "message", "") or "").split()
+        )[:300]
+        tried = (
+            f" after {attempts} attempt{'s' if attempts != 1 else ''}"
+            if attempts else ""
+        )
+        message = (
+            f"The '{tool}' tool failed on its own side{tried} "
+            f"({error_type}: {error_message or 'no message'}), so the run has no "
+            "answer. Retry later, or check the tool's service, network access "
+            "or credentials."
+        )
+        return {
+            "type": "ToolFailed",
+            "category": "tool_failed",
+            "kind": "tool",
+            "provider": provider,
+            "model": model_id,
+            "tool": tool,
+            "error_type": error_type,
+            "attempts": attempts,
+            "message": message,
+            "retryable": True,
         }
 
     def _iteration_cap_detail(self, cap: int, progress: str | None) -> dict[str, Any]:

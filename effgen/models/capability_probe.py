@@ -121,6 +121,7 @@ _ITEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
 _GUARD_STOPS = frozenset({
     "max_iterations_partial", "max_iterations_exhausted", "loop_detected",
     "repeated_tool_result", "null_final_from_model", "written_tool_call",
+    "tool_failed",
 })
 
 #: Stop reasons that mean the run could not be carried out at all.
@@ -538,6 +539,10 @@ def _run_frame(model: Any, mode: str, frame: str, run: _Run) -> dict[str, int]:
             max_tokens=_MAX_TOKENS, max_iterations=_MAX_ITERATIONS,
             capability_probe=False, raise_on_error=False, enable_memory=False,
             enable_sub_agents=False,
+            # The thresholds were calibrated against the loop without the
+            # answer request or the closing request; a probe that measured
+            # with them would read a different model.
+            max_turns_without_progress=None,
         ))
         try:
             response = agent.run(question)

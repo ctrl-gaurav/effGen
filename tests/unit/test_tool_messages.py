@@ -130,12 +130,14 @@ def _call(call_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _agent(model: BaseModel, protocol: str = "flat", *, tools: bool = True) -> Agent:
+def _agent(
+    model: BaseModel, protocol: str = "flat", *, tools: bool = True, **config: Any,
+) -> Agent:
     return Agent(AgentConfig(
         name="tool-messages", model=model,
         tools=[Calculator()] if tools else [],
         max_iterations=4, raise_on_error=False, enable_memory=False,
-        tool_calling_mode="native", prompt_protocol=protocol,
+        tool_calling_mode="native", prompt_protocol=protocol, **config,
     ))
 
 
@@ -269,10 +271,15 @@ def test_a_repeat_is_answered_from_the_record_with_the_tools_own_result() -> Non
 
 
 def test_a_run_the_loop_breaker_stopped_still_answered_its_last_call() -> None:
-    """The call that tripped the breaker is in the run, with the reply it got."""
-    thread = _run(
-        [{"text": "same", "finish_reason": "tool_calls", "calls": [REPEAT]}]
-    ).metadata["thread"]
+    """The call that tripped the breaker is in the run, with the reply it got.
+
+    Pinned to the loop without the answer request: at four iterations that
+    request, not the breaker, is what ends a run repeating one call.
+    """
+    thread = _agent(
+        Scripted([{"text": "same", "finish_reason": "tool_calls", "calls": [REPEAT]}]),
+        max_turns_without_progress=None,
+    ).run("Check the ledger total.").metadata["thread"]
     assert thread.unanswered_call_ids() == []
     assert any(s.declined == "loop_detected" for s in thread.observations())
 

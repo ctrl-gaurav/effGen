@@ -337,11 +337,9 @@ class CodeRunResult:
         """
         if self.success:
             return "answered"
-        stopped = {
-            "max_iterations_partial", "max_iterations_exhausted", "loop_detected",
-            "repeated_tool_result", "null_final_from_model",
-        }
-        return "stopped" if (self.stop_reason or self.reason) in stopped else "failed"
+        from effgen.core.agent_response import STOPPED_REASONS
+
+        return "stopped" if (self.stop_reason or self.reason) in STOPPED_REASONS else "failed"
 
     @property
     def recovered_answer(self) -> bool:

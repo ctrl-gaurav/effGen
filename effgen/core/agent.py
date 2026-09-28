@@ -68,6 +68,7 @@ from .agent_config import (  # noqa: E402,F401  re-exported for import/patch par
 from .agent_response import (  # noqa: E402,F401
     STOP_REASONS,
     STOPPED_REASONS,
+    TERMINATIONS,
     AgentResponse,
     PartialResult,
     StreamEvent,

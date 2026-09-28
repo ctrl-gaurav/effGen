@@ -128,6 +128,28 @@ def _agent(model: BaseModel, protocol: str, **extra: Any) -> Agent:
     return Agent(AgentConfig(**settings))
 
 
+def _answer_turn(model: Recorder) -> int:
+    """The index of the run's turn that asked for the answer in its own frame.
+
+    A run that still writes no answer after it gets one closing request as its
+    last turn — its calls and results with no tools — so the turn asked in the
+    run's frame is the last tool-free request before that one.
+    """
+    tool_free = [i for i, k in enumerate(model.kwargs) if not k.get("tools")]
+    assert tool_free, "no turn was asked for the answer"
+    closing = [
+        i for i in tool_free
+        if isinstance(model.requests[i], list) and model.requests[i][-1].role is Role.TOOL
+        or "Give the final answer." in str(
+            model.requests[i][-1].text if isinstance(model.requests[i], list)
+            else model.requests[i]
+        )
+    ]
+    asked = [i for i in tool_free if i not in closing]
+    assert asked, "every tool-free turn was the closing request"
+    return asked[-1]
+
+
 def _kinds(model: Recorder) -> list[str]:
     return [
         "messages" if isinstance(r, list) else "flat" for r in model.requests
@@ -173,10 +195,11 @@ def test_the_suppressed_turn_is_the_one_that_used_to_change_protocol() -> None:
     agent = _agent(model, "auto")
     kinds = _second_turn(agent, model)
 
-    # The last request of the run is the one the guards pushed towards an
-    # answer: it asked for text and got it.
-    assert kinds[-1] == "messages", kinds
-    assert model.requests[-1][-1].role is Role.USER
+    # The turn the guards pushed towards an answer asked for text; the run's
+    # closing request after it keeps the same protocol.
+    i = _answer_turn(model)
+    assert kinds[i] == "messages" and kinds[-1] == "messages", kinds
+    assert model.requests[i][-1].role is Role.USER
 
 
 def test_no_tool_definitions_travel_with_a_suppressed_turn() -> None:
@@ -195,11 +218,12 @@ def test_a_suppressed_turn_asks_for_the_answer_without_offering_a_call() -> None
     agent = _agent(model, "auto")
     _second_turn(agent, model)
 
-    last = model.requests[-1]
+    i = _answer_turn(model)
+    last = model.requests[i]
     assert isinstance(last, list), type(last)
     assert last[-1].role is Role.USER
     assert "Final Answer" in last[-1].text
-    assert not model.kwargs[-1].get("tools"), model.kwargs[-1]
+    assert not model.kwargs[i].get("tools"), model.kwargs[i]
 
 
 def test_a_suppressed_turn_states_the_persona_and_earlier_turns_once() -> None:
@@ -461,14 +485,16 @@ def test_the_answer_turn_at_flat_states_the_persona_and_earlier_turns_once() -> 
     agent = _agent(model, "flat", system_prompt=PERSONA)
     _second_turn(agent, model)
 
-    last = model.requests[-1]
-    assert isinstance(last, list), type(last)
-    assert last[0].role is Role.SYSTEM
-    text = "\n".join(m.text for m in last)
-    assert text.count("Ledgerly") == 1, text
-    assert "Earlier in this conversation" not in text, text
-    assert "Final Answer" in last[-1].text
-    assert "tools" not in model.kwargs[-1], model.kwargs[-1]
+    i = _answer_turn(model)
+    for last, kwargs in ((model.requests[i], model.kwargs[i]),
+                         (model.requests[-1], model.kwargs[-1])):
+        assert isinstance(last, list), type(last)
+        assert last[0].role is Role.SYSTEM
+        text = "\n".join(m.text for m in last)
+        assert text.count("Ledgerly") == 1, text
+        assert "Earlier in this conversation" not in text, text
+        assert "tools" not in kwargs, kwargs
+    assert "Final Answer" in model.requests[i][-1].text
 
 
 def test_carrying_the_frame_is_not_the_message_protocol() -> None:

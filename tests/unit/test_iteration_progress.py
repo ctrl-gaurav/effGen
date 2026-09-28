@@ -325,13 +325,17 @@ def test_turns_a_guard_sent_back_forced_or_lost_are_neither() -> None:
     assert loop.turns_without_progress == 0
 
 
-def test_nothing_is_counted_before_the_first_new_result() -> None:
+def test_before_the_first_new_result_only_a_declined_turn_counts() -> None:
     loop = _stalling_loop(limit=1)
-    for marks in ({"seen": 1}, {"declined": True}, {"reasoned": True},
-                  {"reasoned": True}, {"declared": True}):
+    for marks in ({"seen": 1}, {"reasoned": True}, {"reasoned": True},
+                  {"declared": True}):
         assert _turn(loop, **marks) is None
     assert loop.turns_without_progress == 0
     assert loop.force_text_answer is False
+    # A turn whose every call was declined — a tool the agent does not hold —
+    # is a stall even before any result: nothing else would ever ask it.
+    assert _turn(loop, declined=True) == "stalled"
+    assert loop.force_text_answer is True
 
 
 def test_a_declared_no_action_after_progress_asks_at_once() -> None:
@@ -431,11 +435,11 @@ def test_an_invalid_per_call_setting_is_refused_before_any_turn() -> None:
     assert model.index == 0
 
 
-def test_the_default_never_asks_and_a_number_is_accepted() -> None:
-    assert AgentConfig(model=_Script([])).max_turns_without_progress is None
+def test_the_default_asks_after_two_and_none_turns_it_off() -> None:
+    assert AgentConfig(model=_Script([])).max_turns_without_progress == 2
     assert AgentConfig(
-        model=_Script([]), max_turns_without_progress=2
-    ).max_turns_without_progress == 2
+        model=_Script([]), max_turns_without_progress=None
+    ).max_turns_without_progress is None
 
 
 def test_the_shipped_default_does_not_recover_a_lost_call(caplog) -> None:
@@ -544,8 +548,24 @@ def test_a_readers_own_strategy_is_never_handed_an_argument_it_lacks(
     assert response.output == "read by the caller's own strategy"
 
 
-def test_an_agent_left_at_the_default_keeps_its_tools(caplog) -> None:
-    """Stalled turns ask for nothing unless the caller opts in."""
+def test_an_agent_with_the_policy_off_keeps_its_tools(caplog) -> None:
+    """With ``max_turns_without_progress=None`` stalled turns ask for nothing."""
+    caplog.set_level(logging.INFO, logger="effgen")
+    error = RuntimeError("the input file is missing")
+    model = _Script([_code_turn(1), _code_turn(2), _code_turn(3), "Final Answer: missing"])
+    agent = Agent(AgentConfig(
+        name="probe", model=model, tools=[_executor([error])], max_iterations=10,
+        raise_on_error=False, enable_memory=False, tool_calling_mode="hybrid",
+        max_turns_without_progress=None,
+    ))
+    agent.run(TASK)
+
+    assert not _lines(caplog, "[progress]")
+    assert _withdrawn(model) == [False] * 4
+
+
+def test_an_agent_left_at_the_default_asks_after_two_stalled_turns(caplog) -> None:
+    """The same run at the shipped default is asked once the error repeats twice."""
     caplog.set_level(logging.INFO, logger="effgen")
     error = RuntimeError("the input file is missing")
     model = _Script([_code_turn(1), _code_turn(2), _code_turn(3), "Final Answer: missing"])
@@ -555,8 +575,8 @@ def test_an_agent_left_at_the_default_keeps_its_tools(caplog) -> None:
     ))
     agent.run(TASK)
 
-    assert not _lines(caplog, "[progress]")
-    assert _withdrawn(model) == [False] * 4
+    assert _lines(caplog, "[progress] 2 turns in a row brought no new result")
+    assert _withdrawn(model) == [False, False, False, True]
 
 
 def test_a_delegated_child_is_built_with_the_parents_setting() -> None:

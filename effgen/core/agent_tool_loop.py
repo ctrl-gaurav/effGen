@@ -40,6 +40,7 @@ from .agent_runtime import (
 )
 from .retrieval_requery import MAX_RETRIEVAL_REQUERIES
 from .tool_call_record import ToolCall, truncate_result
+from .tool_failure import ToolFailure
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,37 @@ MAX_BATCH_TOOL_RUNS = 6
 #: Calls to one tool before the loop reminds the model it already has results.
 #: See :meth:`NativeToolLoop.post_tool_nudge` for why this is not 1.
 NUDGE_AFTER_CALLS = 6
+
+#: Tool-side failures in a row after which a tool is not called again in the
+#: run. The same number the agent's circuit breaker opens at, so the two agree:
+#: a transient error gets its retries, a service that is down does not get ten.
+TOOL_FAILURES_BEFORE_UNAVAILABLE = 3
+
+#: What a result that carries nothing reads as once it reached the loop. A tool
+#: that returned ``None`` is reported as the first of these by the dispatch
+#: layer; the others are an empty string, list or mapping written out.
+_EMPTY_RESULTS = frozenset({"", "no result returned", "none", "[]", "{}", "()"})
+
+
+def is_error_result(text: Any) -> bool:
+    """Whether a tool observation reports a failure rather than a result.
+
+    The dispatch layer's own prefix, a tool's failure envelope, and a tool that
+    reports its failure as text beginning with ``Error`` all read as one.
+    """
+    value = str(text if text is not None else "").strip().lower()
+    return value.startswith(("error", "tool execution failed"))
+
+
+def is_usable_result(text: Any) -> bool:
+    """Whether a tool observation carries something the run can use.
+
+    Not a failure, and not structurally empty. Nothing here reads what a
+    result says — "No results found." is a result.
+    """
+    if is_error_result(text):
+        return False
+    return str(text if text is not None else "").strip().lower() not in _EMPTY_RESULTS
 
 
 @dataclass
@@ -140,6 +172,8 @@ class _TurnMarks:
     seen: int = 0
     #: Calls answered from the record or declined.
     declined: int = 0
+    #: Calls that failed on the tool's own side.
+    tool_failed: int = 0
     #: The turn is neither progress nor a stall: its answer was sent back by a
     #: guard, or it opened a call that could not be run.
     neutral: bool = False
@@ -155,6 +189,10 @@ class _TurnMarks:
 ASK_AFTER_DECLARED = "declared"
 #: :meth:`NativeToolLoop.end_turn` found too many stalled turns in a row.
 ASK_AFTER_STALL = "stalled"
+#: A repeated call was answered by asking for the answer.
+ASK_AFTER_LOOP = "loop_detected"
+#: A tool that reproduced its own result was answered by asking for the answer.
+ASK_AFTER_REPEATED_RESULT = "repeated_tool_result"
 
 
 @dataclass
@@ -239,6 +277,31 @@ class NativeToolLoop:
     progress_seen: bool = False
     #: Stalled turns in a row since the last new result.
     turns_without_progress: int = 0
+    #: Why the run was last asked for its answer — one of the ``ASK_AFTER_*``
+    #: values — or ``None`` when it has not been asked.
+    ask_reason: str | None = None
+    #: Dispatched calls whose result was new, not a failure and not empty.
+    usable_results: int = 0
+    #: Calls the loop declined to dispatch: unknown or unavailable tools,
+    #: repeats answered from the record, calls on a turn that forbade one.
+    declined_calls: int = 0
+    #: Dispatched calls that failed on the tool's own side.
+    tool_side_failures: int = 0
+    #: Dispatched calls whose result reported a failure of the call's input:
+    #: the tool ran and could be used, the call itself was wrong.
+    input_errors: int = 0
+    #: Tool-side failures in a row, per tool.
+    consecutive_tool_failures: dict[str, int] = field(default_factory=dict)
+    #: The tools this run stopped calling, with the failure that ended them.
+    unavailable_tools: dict[str, ToolFailure] = field(default_factory=dict)
+    #: Dispatches per tool, for the count a failure report states.
+    dispatches_by_tool: dict[str, int] = field(default_factory=dict)
+    #: The most recent tool-side failure of the run.
+    last_tool_failure: ToolFailure | None = None
+    #: Calls whose most recent attempt failed on the tool's own side.
+    failed_pairs: set[tuple[str, str]] = field(default_factory=set)
+    #: The turn that just ended wrote a placeholder action.
+    last_turn_placeholder: bool = False
     _turn: _TurnMarks = field(default_factory=_TurnMarks, repr=False)
     _previous_turn_only_reasoned: bool = field(default=False, repr=False)
 
@@ -431,10 +494,13 @@ class NativeToolLoop:
         action_call_count = sum(1 for a, _ in self.previous_actions if a == action)
         exact_count = sum(1 for seen in self.previous_actions if seen == pair)
         stalled = self.stalled_calls.get(action, 0)
+        # A call whose last attempt failed on the tool's own side is a retry,
+        # not a repeat: the unavailability count, not the loop guard, bounds it.
+        retry = pair in self.failed_pairs
         return LoopCheck(
             pair=pair,
             action_call_count=action_call_count,
-            is_exact_loop=exact_count >= 1 and known,
+            is_exact_loop=exact_count >= 1 and known and not retry,
             is_fuzzy_loop=stalled >= self.fuzzy_threshold(action) and known,
             stalled_call_count=stalled,
         )
@@ -556,17 +622,21 @@ class NativeToolLoop:
     # ------------------------------------------------------------------
     # Progress
     # ------------------------------------------------------------------
-    def observe_result(self, action: str, tool_result: Any) -> bool:
+    def observe_result(
+        self, action: str, tool_result: Any, *, failed_tool_side: bool = False,
+    ) -> bool:
         """Judge one dispatched call's result and remember it.
 
         A result is new when no observation the conversation still shows in
         full carries the same text from the same tool. A failed dispatch is
         judged the same way, so a new error is progress and the same error
-        again is not.
+        again is not — except a failure on the tool's own side, which is
+        neither progress nor a repeat.
 
         Args:
             action: The tool that ran.
             tool_result: What it returned.
+            failed_tool_side: The call failed on the tool's own side.
 
         Returns:
             Whether the result was new.
@@ -574,11 +644,20 @@ class NativeToolLoop:
         key = self._result_key(action, str(tool_result))
         new = key not in self.shown_results
         self.shown_results[key] = self.shown_results.get(key, 0) + 1
-        if new:
+        if not new:
+            self.stalled_calls[action] = self.stalled_calls.get(action, 0) + 1
+        if not failed_tool_side and is_error_result(tool_result):
+            self.input_errors += 1
+        if failed_tool_side:
+            # The tool could not run. That is neither a result nor the model
+            # going round: it is what the unavailability count is for.
+            self._turn.tool_failed += 1
+        elif new:
             self._turn.new += 1
+            if is_usable_result(tool_result):
+                self.usable_results += 1
         else:
             self._turn.seen += 1
-            self.stalled_calls[action] = self.stalled_calls.get(action, 0) + 1
         return new
 
     def refresh_shown_results(self, steps: Any) -> None:
@@ -610,10 +689,12 @@ class NativeToolLoop:
     def begin_turn(self) -> None:
         """Start judging a new turn."""
         self._turn = _TurnMarks()
+        self.last_turn_placeholder = False
 
     def note_declined(self) -> None:
         """A call this turn made was answered from the record or declined."""
         self._turn.declined += 1
+        self.declined_calls += 1
 
     def note_neutral(self) -> None:
         """This turn is neither progress nor a stall.
@@ -662,17 +743,27 @@ class NativeToolLoop:
             return None
         if turn.neutral or turn.forced:
             return None
+        limit = self.max_turns_without_progress
         if not self.progress_seen:
             self._previous_turn_only_reasoned = turn.reasoned_only
-            return None
-        if turn.reasoned_only:
+            # Before the first result the refusal guard owns a run that has not
+            # called what it must call, so only a turn that did call and had
+            # every call declined counts. A call that failed on the tool's side
+            # is left to the unavailability count, which gives the tool its
+            # retries before the run gives up on it.
+            if limit is None or turn.seen or not turn.declined:
+                return None
+            logger.info(
+                "[progress] a turn with only declined or failed calls before "
+                "any result"
+            )
+        elif turn.reasoned_only:
             self._previous_turn_only_reasoned = True
             if not only_reasoned_before:
                 return None
         elif not (turn.seen or turn.declined or turn.declared):
             return None
         self.turns_without_progress += 1
-        limit = self.max_turns_without_progress
         if limit is None or self.force_text_answer:
             return None
         if turn.declared:
@@ -681,8 +772,96 @@ class NativeToolLoop:
             decision = ASK_AFTER_STALL
         else:
             return None
-        self.force_text_answer = True
+        self.ask_for_answer(decision)
         return decision
+
+    def ask_for_answer(self, reason: str) -> None:
+        """Withdraw the tools so the next turn is asked for the answer.
+
+        Args:
+            reason: Why, one of the ``ASK_AFTER_*`` values; kept as
+                :attr:`ask_reason` so a run that still writes no answer can
+                report what it was stuck on.
+        """
+        self.force_text_answer = True
+        self.ask_reason = reason
+
+    # ------------------------------------------------------------------
+    # Tools that fail on their own side
+    # ------------------------------------------------------------------
+    def note_dispatch(
+        self, action: str, failures: list[ToolFailure],
+        pair: tuple[str, str] | None = None,
+    ) -> ToolFailure | None:
+        """Record how one dispatched call went, as the dispatch layer saw it.
+
+        A call that failed on the tool's side adds to that tool's count of
+        failures in a row; anything else resets it. At
+        :data:`TOOL_FAILURES_BEFORE_UNAVAILABLE` in a row, or when the agent's
+        circuit breaker refused the call, the tool is not called again in this
+        run.
+
+        Args:
+            action: The tool that was dispatched.
+            failures: The failures reported while it ran.
+            pair: The call's ``(action, normalized_input)``, so the same call
+                can be retried after a tool-side failure without reading as a
+                repeat.
+
+        Returns:
+            The tool-side failure, when the call ended in one.
+        """
+        self.dispatches_by_tool[action] = self.dispatches_by_tool.get(action, 0) + 1
+        failure = next(
+            (f for f in reversed(failures) if f.tool_side and f.tool == action), None,
+        )
+        if failure is None:
+            self.consecutive_tool_failures[action] = 0
+            if pair is not None:
+                self.failed_pairs.discard(pair)
+            return None
+        if pair is not None:
+            self.failed_pairs.add(pair)
+        self.tool_side_failures += 1
+        self.last_tool_failure = failure
+        count = self.consecutive_tool_failures.get(action, 0) + 1
+        self.consecutive_tool_failures[action] = count
+        if action not in self.unavailable_tools and (
+            count >= TOOL_FAILURES_BEFORE_UNAVAILABLE
+            or failure.error_type == "CircuitOpen"
+        ):
+            self.unavailable_tools[action] = failure
+            logger.info(
+                "[tool] '%s' is unavailable for this run (%s)",
+                action, failure.error_type,
+            )
+        return failure
+
+    def is_unavailable(self, action: str) -> bool:
+        """Whether *action* is a tool this run stopped calling."""
+        return action in self.unavailable_tools
+
+    def all_tools_unavailable(self) -> bool:
+        """Whether every tool the agent holds has been given up on."""
+        return bool(self.tools) and all(name in self.unavailable_tools for name in self.tools)
+
+    def every_call_failed_tool_side(self) -> bool:
+        """Whether the run dispatched calls and every one failed tool-side."""
+        return bool(self.calls) and self.tool_side_failures >= len(self.calls)
+
+    def attempted_calls(self) -> int:
+        """Calls the run made: the dispatched ones and the declined ones."""
+        return len(self.calls) + self.declined_calls
+
+    def result_counts(self) -> dict[str, int]:
+        """What the run's calls brought, as the response reports it."""
+        return {
+            "attempted": self.attempted_calls(),
+            "dispatched": len(self.calls),
+            "usable": self.usable_results,
+            "tool_side_failures": self.tool_side_failures,
+            "input_errors": self.input_errors,
+        }
 
     # ------------------------------------------------------------------
     # Nudges

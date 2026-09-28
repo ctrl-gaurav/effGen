@@ -61,6 +61,7 @@ result.text              # read-only alias of .output
 result.content           # read-only alias of .output
 result.success           # bool — never True with an empty answer
 result.outcome           # "answered" | "stopped" | "failed"
+result.termination       # "done" | "not_possible" | "stuck" | "tool_failed" | "error"
 result.stop_reason       # what ended the run; never None
 result.partial           # what a stopped run had reached, or None
 result.tokens_used       # int
@@ -87,21 +88,74 @@ having to read `output`:
 `stop_reason` says which exit it took, and is present on **every** response — an
 answered run reports `"final_answer"`. It is always equal to
 `metadata["reason"]`, which earlier releases already carried. The vocabulary is
-closed and published as `effgen.core.agent_response.STOP_REASONS`; the five
+closed and published as `effgen.core.agent_response.STOP_REASONS`; the six
 reasons that mean *stopped* are in `STOPPED_REASONS`:
 `max_iterations_partial`, `max_iterations_exhausted`, `loop_detected`,
-`repeated_tool_result`, `null_final_from_model`.
+`repeated_tool_result`, `null_final_from_model`, `tool_failed`.
 
 A tool whose calls keep returning new results is bounded by `max_iterations`,
 not by how often it was called. A turn that writes a tool call out instead of
 making it is reported as `written_tool_call`; with
 `AgentConfig.recover_lost_tool_calls` set (off by default) such a call is read
-where it can be read, and asked for once more where it cannot. A caller can also ask the loop to request an
-answer early: with `AgentConfig.max_turns_without_progress` set (it is `None`
-by default), a run whose turns stop bringing new tool results for that many
-turns in a row gets one turn with its tools withdrawn that asks for the answer.
-That request adds no stop reason, and a run that still does not answer ends
-through the exits above.
+where it can be read, and asked for once more where it cannot.
+
+### Done, not possible, stuck, tool failed
+
+`result.termination` says how the run ended in the four situations a tool loop
+can end in, plus the runs that could not be carried out. It is derived from
+`success`, `stop_reason` and `metadata["tool_results"]`, so it never disagrees
+with them, and `to_dict()` carries it.
+
+| `termination` | what it means | `success` | `stop_reason` |
+|---|---|---|---|
+| `done` | the model wrote an answer | `True` | `final_answer` |
+| `not_possible` | the model wrote an answer, but the run's tools could not be used — every call was declined, failed on the tool's own side, or returned nothing — so `output` is what the model said, usually that the task cannot be done with these tools. A run whose calls reached a tool that rejected their input used that tool, and is `done` | `True` | `final_answer` |
+| `stuck` | the run kept proposing work that brought nothing new, was asked for its answer, and wrote none | `False` | `loop_detected`, `repeated_tool_result`, `max_iterations_*`, `null_final_from_model` |
+| `tool_failed` | the tools the run needed failed on their own side and the run has no answer | `False` | `tool_failed` |
+| `error` | the run could not be carried out | `False` | the other failed reasons |
+
+What the loop does before each ending:
+
+- **Asking for the answer.** A run whose turns stop bringing new tool results
+  for `AgentConfig.max_turns_without_progress` turns in a row (2 by default) is
+  asked for its answer: the next turn offers no tools. A turn that declares no
+  action after a result — `Action: None`, or a placeholder such as
+  `Action: (continue reasoning)` — is asked at once. Before the run's first
+  result, a turn whose every call was declined (a tool the agent does not hold)
+  counts too, which is how a task the tools cannot serve ends quickly as
+  `not_possible`.
+- **The closing request.** A run that was asked and still wrote no answer, or
+  that is about to stop on one of the `stuck` reasons, gets one more request:
+  its own calls and results sent back with no tool definitions, in the same
+  request shape as the rest of the run: as the conversation they were when the
+  run travels as messages (nothing added), or listed after the task with one
+  line asking for the answer when it travels as one string. The reply is the
+  run's answer
+  (`metadata["answer_source"] == "closing_request"`); a reply that is another
+  tool call — written out, or a program for a code-executing tool the agent
+  holds — or empty, is not the answer. A call or an empty reply ends the run
+  on the stop it was going to end on; a program gives the turn back and the run
+  goes on from where it was, as it would have without the request. The
+  request is one turn inside `max_iterations`, spent at most once per run, and
+  on a run that has made calls the last turn of the budget is that request. On
+  a run whose tools are described in the prompt text rather than passed as a
+  request parameter (the ReAct scaffold), and after a turn that wrote a
+  placeholder action, the closing request is the answer request itself: asking
+  inside the scaffold keeps its Action format in front of the model.
+- **A tool that fails on its own side.** A call that raises a connection or
+  timeout error, gets a server error (HTTP 5xx or 429) back, or lacks
+  credentials is a tool-side failure, recognised from the exception's class.
+  After three in a row a tool is not called again in the run (a call to it is
+  declined with the circuit breaker's message), and when every tool the agent
+  holds is in that state the run ends `tool_failed` without another model call.
+  `output` names the tool, the error and the attempts;
+  `metadata["unavailable_tools"]` lists the tools given up on. Input the tool
+  could not use is not a tool failure and never counts against the tool.
+
+`max_turns_without_progress=None` turns the answer request, the pre-result
+count and the closing request off, which is the loop earlier releases ran. A
+placeholder action is read as a declaration, a tool-side failure is typed, and
+a stopped run's progress never carries an error string whatever the setting.
 
 A **stopped** run has tool results and reasoning but no answer, so those never
 go where the answer goes. They travel in `result.partial`, a `PartialResult`:
@@ -116,6 +170,8 @@ result.partial.iterations, result.partial.tool_calls
 
 `result.metadata["partial_output"]` carries `partial.text` under the key earlier
 releases used, and `metadata["partial"]` is `True` whenever there is progress.
+Progress is what the tools returned, never an error: a stopped run whose only
+observations are failures carries `partial=None`.
 
 ```python
 if result.outcome == "answered":
