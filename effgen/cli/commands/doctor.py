@@ -49,6 +49,10 @@ def _handle_doctor_command(args) -> int:
     except Exception:
         pass
 
+    probe_model = getattr(args, 'probe_model', None)
+    if probe_model:
+        return _doctor_run_probe(args, probe_model)
+
     provider_filter = getattr(args, 'doctor_provider', None)
     providers_to_check = [provider_filter] if provider_filter else None
 
@@ -83,12 +87,18 @@ def _handle_doctor_command(args) -> int:
     # Computed once so every output format (JSON and human) agrees.
     exit_code = _main._doctor_exit_code(results, live)
 
+    # What models behind a URL or on a local engine were measured to do with a
+    # tool, and what the framework learned from providers' refusals. Read from
+    # the store; no request is made.
+    capabilities_report = _doctor_capabilities_report()
+
     if getattr(args, 'output_json', False):
         print(_json.dumps({
             "providers": results,
             "system": system_report,
             "reliability": reliability_report,
             "code": code_report,
+            "capabilities": capabilities_report,
         }, indent=2))
         return exit_code
 
@@ -194,6 +204,21 @@ def _handle_doctor_command(args) -> int:
         if code_report.get("ready"):
             console.print("  Try it: [bold]effgen code \"write fib.py and run it\"[/bold]", highlight=False)
 
+        # Model capabilities — probed and learned.
+        console.print("\n[bold cyan]Model capabilities (probed and learned)[/bold cyan]",
+                      highlight=False)
+        console.print(f"  store: {capabilities_report['store']}", highlight=False)
+        if capabilities_report["probes"] or capabilities_report["learned"]:
+            cap_table = _main.Table(show_header=True)
+            for column in ("Model", "Endpoint", "Native r/u/s", "Text r", "Strategy",
+                           "Required", "Learned", "Age"):
+                cap_table.add_column(column, style="white", overflow="fold")
+            for row in _capability_rows(capabilities_report):
+                cap_table.add_row(*row)
+            console.print(cap_table)
+        else:
+            console.print("  nothing probed or learned yet", highlight=False)
+
         # Print hints for missing keys
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
@@ -241,6 +266,13 @@ def _handle_doctor_command(args) -> int:
                 print(f"    Fix: {check['fix']}")
         if code_report.get("ready"):
             print("  Try it: effgen code \"write fib.py and run it\"")
+        print("\nModel capabilities (probed and learned):")
+        print(f"  store: {capabilities_report['store']}")
+        rows = _capability_rows(capabilities_report)
+        if not rows:
+            print("  nothing probed or learned yet")
+        for row in rows:
+            print("  " + "  ".join(row))
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             print("\nMissing keys — set in ~/.effgen/.env or export:")
@@ -451,3 +483,125 @@ def _doctor_live_probe(providers: list[str], *, timeout: float = 30.0) -> dict[s
             except Exception as e:  # noqa: BLE001
                 results[prov] = {"ok": False, "model": "—", "status": "timeout", "detail": str(e)[:120]}
     return results
+
+
+def _age(seconds: float) -> str:
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h"
+    return f"{int(seconds // 86400)}d"
+
+
+def _doctor_capabilities_report() -> dict[str, Any]:
+    """The capability store as the report shows it. Reads a file; no request."""
+    import time
+
+    from effgen.models.capability_probe import capability_store_path, read_store
+
+    path = capability_store_path()
+    try:
+        data = read_store()
+    except Exception as exc:  # noqa: BLE001 - the report shows what it can
+        return {"store": str(path) if path else "off (in memory)", "probes": [],
+                "learned": [], "error": str(exc)}
+    now = time.time()
+    probes = []
+    for key, entry in sorted((data.get("probes") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        probes.append({
+            "key": key,
+            "model": entry.get("model"),
+            "endpoint": entry.get("endpoint"),
+            "backend": entry.get("backend"),
+            "native": entry.get("native"),
+            "text": entry.get("text"),
+            "strategy": entry.get("strategy"),
+            "required_categories": entry.get("required_categories") or [],
+            "requests": entry.get("requests"),
+            "probed_at": entry.get("probed_at"),
+            "age_s": round(now - float(entry.get("probed_at") or now), 1),
+            "probe_version": entry.get("probe_version"),
+            "effgen_version": entry.get("effgen_version"),
+        })
+    learned = []
+    for identity, facts in sorted((data.get("learned") or {}).items()):
+        if not isinstance(facts, dict):
+            continue
+        for name, fact in sorted(facts.items()):
+            if not isinstance(fact, dict):
+                continue
+            learned.append({
+                "model": identity, "capability": name, "value": fact.get("value"),
+                "detail": fact.get("detail", ""),
+                "age_s": round(now - float(fact.get("at") or now), 1),
+            })
+    return {"store": str(path) if path else "off (in memory)", "probes": probes,
+            "learned": learned}
+
+
+def _capability_rows(report: dict[str, Any]) -> list[list[str]]:
+    """One row per probe and per learned fact, for the table and plain output."""
+    rows: list[list[str]] = []
+    for p in report.get("probes", []):
+        n = p.get("native") or {}
+        t = p.get("text")
+        rows.append([
+            str(p.get("model")), str(p.get("endpoint") or p.get("backend") or "local"),
+            f"{n.get('resolved', 0)}/{n.get('unresolved', 0)}/{n.get('skipped', 0)}",
+            "—" if t is None else str(t.get("resolved", 0)),
+            str(p.get("strategy")), ",".join(p.get("required_categories") or []) or "—",
+            "—", _age(float(p.get("age_s") or 0)),
+        ])
+    for f in report.get("learned", []):
+        model, _, name = str(f.get("model")).rpartition("|")
+        rows.append([
+            name or model, model or "—", "—", "—", "—", "—",
+            f"{f.get('capability')}={f.get('value')}", _age(float(f.get("age_s") or 0)),
+        ])
+    return rows
+
+
+def _doctor_run_probe(args, model_name: str) -> int:
+    """``effgen doctor --probe MODEL``: run one capability probe and print it."""
+    import json as _json
+    import os
+
+    from effgen.models import load_model
+    from effgen.models.capability_probe import probe_tool_calling
+
+    base_url = getattr(args, 'probe_base_url', None)
+    key_env = getattr(args, 'probe_api_key_env', None)
+    api_key = os.environ.get(key_env) if key_env else None
+    try:
+        if base_url:
+            model = load_model(model_name, provider="openai_compatible", base_url=base_url,
+                               api_key=api_key, context_length=8192)
+        else:
+            model = load_model(model_name)
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        print(f"Could not load {model_name}: {exc}", file=sys.stderr)
+        return 1
+    probe = probe_tool_calling(model, refresh=bool(getattr(args, 'probe_refresh', False)))
+    if probe is None:
+        message = (f"{model_name} was not probed: its adapter is not one that is probed, "
+                   "or the probe could not run (see the warning above).")
+        if getattr(args, 'output_json', False):
+            print(_json.dumps({"probe": None, "detail": message}, indent=2))
+        else:
+            print(message)
+        return 1
+    if getattr(args, 'output_json', False):
+        print(_json.dumps({"probe": {**probe.to_dict(), "source": probe.source}}, indent=2))
+        return 0
+    print(f"Capability probe of {probe.model} ({probe.source})")
+    print(f"  endpoint : {probe.endpoint or probe.backend}")
+    print(f"  counts   : {probe.summary()}")
+    print(f"  strategy : {probe.strategy}")
+    print(f"  required : {', '.join(probe.required_categories) or 'none'}")
+    print(f"  cost     : {probe.requests} requests, {probe.prompt_tokens} prompt tokens, "
+          f"{probe.completion_tokens} completion tokens, {probe.wall_s} s")
+    for frame, shape, outcome in probe.items:
+        print(f"    {frame:6s} {shape:9s} {outcome}")
+    return 0

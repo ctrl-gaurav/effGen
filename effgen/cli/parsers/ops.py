@@ -168,6 +168,18 @@ def add_doctor_parser(subparsers: argparse._SubParsersAction) -> None:
                                     'default model is actually usable (not just that a key exists)')
     doctor_parser.add_argument('--cheap', action='store_true',
                                help='With --live, use the cheapest/default model and minimal tokens')
+    doctor_parser.add_argument('--probe', dest='probe_model', metavar='MODEL',
+                               help='Measure what MODEL does when handed a tool (a model '
+                                    'served at --base-url, or a local model) and print it; '
+                                    'the result is stored and reused by agents at '
+                                    'tool_calling_mode="auto"')
+    doctor_parser.add_argument('--base-url', dest='probe_base_url', metavar='URL',
+                               help='With --probe, the OpenAI-compatible endpoint serving MODEL')
+    doctor_parser.add_argument('--api-key-env', dest='probe_api_key_env', metavar='VAR',
+                               help='With --probe, the environment variable holding the '
+                                    "endpoint's key")
+    doctor_parser.add_argument('--refresh', dest='probe_refresh', action='store_true',
+                               help='With --probe, measure again and replace the stored result')
 
 def add_plugin_parser(subparsers: argparse._SubParsersAction) -> None:
     """Declare ``effgen create-plugin`` — generate a plugin project scaffold."""
