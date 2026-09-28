@@ -147,10 +147,11 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: tokens it may send, and the three policies that decide what it gives up
 #: first, and then to 245 with the record a run keeps of work it handed to
 #: another agent and the five ways of choosing what that agent is shown, and
-#: to 251 with the ledger of what a run spent and where its time went.
-#: Growing it is a deliberate act — move the number in the same commit that
+#: to 251 with the ledger of what a run spent and where its time went, and to
+#: 253 with the record of what a model does when handed a tool and the call
+#: that measures it. Growing it is a deliberate act — move the number in the same commit that
 #: widens the surface.
-TOP_LEVEL_API_SIZE = 251
+TOP_LEVEL_API_SIZE = 253
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.

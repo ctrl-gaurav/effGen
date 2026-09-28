@@ -82,6 +82,8 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "Agent": ("effgen.core.agent", "Agent"),
     "PartialResult": ("effgen.core.agent_response", "PartialResult"),
     "RunLedger": ("effgen.core.ledger", "RunLedger"),
+    "ToolCallingProbe": ("effgen.models.capability_probe", "ToolCallingProbe"),
+    "probe_tool_calling": ("effgen.models.capability_probe", "probe_tool_calling"),
     "RunStoppedError": ("effgen.errors", "RunStoppedError"),
     "AgentConfig": ("effgen.core.agent", "AgentConfig"),
     "AgentMiddleware": ("effgen.core.middleware", "AgentMiddleware"),
@@ -386,6 +388,9 @@ __all__ = [
     "PartialResult",
     "RunLedger",
     "RunStoppedError",
+    # What a model does when handed a tool, measured once and kept
+    "ToolCallingProbe",
+    "probe_tool_calling",
     "CompactionStrategy",
     "SummarizeOldest",
     "DropOldest",

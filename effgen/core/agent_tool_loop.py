@@ -176,12 +176,18 @@ class NativeToolLoop:
         max_turns_without_progress: How many stalled turns in a row, after the
             run's first new result, ask the run for its answer; ``None`` never
             asks. See :meth:`end_turn`.
+        required_categories: Tool categories (``ToolCategory`` values) whose
+            tools this run may not answer without calling, beyond the ones the
+            tools declare themselves — what a capability probe found the model
+            skips. Ignored when *tool_use* is set: a caller's stated policy
+            decides for the whole run.
     """
 
     tools: dict[str, Any]
     nudge_cap: int = 10
     tool_use: ToolUsePolicy | None = None
     max_turns_without_progress: int | None = None
+    required_categories: frozenset[str] = frozenset()
 
     #: ``(action, normalized_input)`` for every call dispatched so far.
     previous_actions: list[tuple[str, str]] = field(default_factory=list)
@@ -280,8 +286,19 @@ class NativeToolLoop:
         if self.tool_use is not None:
             return []
         return [
-            name for name, tool in self.tools.items() if is_execution_tool(tool)
+            name for name, tool in self.tools.items()
+            if is_execution_tool(tool) or self._probe_requires(tool)
         ]
+
+    def _probe_requires(self, tool: Any) -> bool:
+        """Whether *tool*'s category is one the model was measured to skip."""
+        if not self.required_categories:
+            return False
+        category = getattr(getattr(tool, "metadata", None), "category", None)
+        if category is None:
+            category = getattr(tool, "category", None)
+        value = getattr(category, "value", category)
+        return isinstance(value, str) and value in self.required_categories
 
     def note_execution_refusal(self) -> str | None:
         """Answer without running the executor: refuse it once, name the tool.
@@ -316,6 +333,14 @@ class NativeToolLoop:
             "requiring a call on the next turn",
             names[0],
         )
+        if self.tool_use is None and not any(
+            is_execution_tool(self.tools[name]) for name in names
+        ):
+            # Only a capability probe put these tools in the must-call set.
+            logger.info(
+                "capability probe policy: refusal fired for '%s' (%s)",
+                names[0], ",".join(sorted(self.required_categories)),
+            )
         return names[0]
 
     def take_retrieval_requery(self) -> bool:

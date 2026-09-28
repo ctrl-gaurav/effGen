@@ -189,7 +189,8 @@ def model_can_forbid_tool_call(model: Any) -> bool:
 def model_takes_stop_with_tools(model: Any) -> bool:
     """Whether *model* accepts stop sequences on a request that carries tools.
 
-    Asks the adapter (``supports_stop_with_tools()``). An adapter that does not
+    A rejection learned from a real request comes first; then the adapter is
+    asked (``supports_stop_with_tools()``). An adapter that does not
     answer — an older one, a duck-typed stand-in, a probe that raises — reads as
     "yes": that is what every request sent before the question existed assumed,
     and a stop list beside tools is what the providers this framework ships
@@ -204,6 +205,12 @@ def model_takes_stop_with_tools(model: Any) -> bool:
     """
     if model is None:
         return True
+    # A rejection this framework has seen from the provider outranks the
+    # adapter's declaration (see the stop retry in ``_generate_instrumented``).
+    from ..models.capability_probe import learned_fact
+
+    if learned_fact(model, "stop_with_tools") is False:
+        return False
     probe = getattr(model, "supports_stop_with_tools", None)
     if probe is None:
         return True

@@ -747,6 +747,9 @@ class SubAgentManager:
                 parent_cfg, "recover_lost_tool_calls",
                 DEFAULT_RECOVER_LOST_TOOL_CALLS,
             ),
+            # Whether the model may be measured is the caller's choice for the
+            # job; a child on the same model reads the parent's stored result.
+            capability_probe=getattr(parent_cfg, "capability_probe", True),
         )
         child = Agent(child_cfg)
         parent_name = str(getattr(parent, "name", "") or "") or None

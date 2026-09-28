@@ -2707,6 +2707,7 @@ def drive(
             nudge_cap=policy.max_iterations,
             tool_use=agent._declared_tool_use(),
             max_turns_without_progress=policy.max_turns_without_progress,
+            required_categories=getattr(agent, "_probe_required_categories", frozenset()),
         ),
     )
     # Which protocol the run's turns went out on. Stamped here so every response
@@ -3030,6 +3031,16 @@ def _terminal_meta(agent: Any, thread: AgentThread, reason: str) -> dict[str, An
     return {
         "reason": reason,
         "tool_calling_strategy": agent._tool_calling_strategy.name,
+        # Why the run was on that strategy and policy: the caller's
+        # configuration, the model's declaration, or a capability probe.
+        "tool_calling": {
+            "strategy": agent._tool_calling_strategy.name,
+            "source": getattr(agent, "_tool_calling_source", "declared"),
+            "required_categories": sorted(
+                getattr(agent, "_probe_required_categories", ()) or ()
+            ),
+            "probe_key": getattr(agent, "_capability_probe_key", None),
+        },
         "thread": thread,
         "prompt_protocol": _protocol_of(thread),
         # Always present, the way the protocol is: a reader should not have to

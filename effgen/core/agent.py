@@ -357,11 +357,33 @@ class Agent(
         # Validate OpenAI native tool compatibility at init time
         self._validate_native_tool_compatibility(config.tools)
 
-        # Tool calling strategy
+        # Tool calling strategy. At "auto", a model that is probed (one served
+        # behind a URL, or a local engine) resolves against what it was
+        # measured to do with a tool; everything else from its declaration.
+        probe = self._capability_probe_for(config)
         self._tool_calling_strategy = get_strategy(
             mode=config.tool_calling_mode,
             model=self.model,
+            probe=probe,
         )
+        # Categories the probe says this model must be made to call. A policy
+        # the caller stated (``tool_use``) wins over the probe's.
+        self._probe_required_categories: frozenset[str] = frozenset(
+            probe.required_categories
+            if probe is not None and config.tool_use is None else ()
+        )
+        self._tool_calling_source = (
+            "config" if config.tool_calling_mode != "auto"
+            else ("probe" if probe is not None else "declared")
+        )
+        self._capability_probe_key = probe.key if probe is not None else None
+        if probe is not None:
+            logger.info(
+                "capability probe: %s %s %s -> strategy=%s required_categories=%s",
+                probe.source, probe.model, probe.summary(),
+                self._tool_calling_strategy.name,
+                ",".join(sorted(self._probe_required_categories)) or "none",
+            )
         logger.info(f"Tool calling strategy: {self._tool_calling_strategy.name}")
 
         # Tool prompt generator for enhanced ReAct prompts
@@ -691,6 +713,28 @@ class Agent(
             if tracker_token is not None:
                 _tracker_override_var.reset(tracker_token)
             _call_state_var.reset(state_token)
+
+    def _capability_probe_for(self, config: AgentConfig) -> Any:
+        """The capability probe this agent resolves ``auto`` against, or ``None``.
+
+        Asked only at ``tool_calling_mode="auto"``, for an agent holding tools,
+        with ``capability_probe`` on and ``EFFGEN_CAPABILITY_PROBE`` not ``0``.
+        The model decides the rest: an adapter that answers no
+        ``capability_key()`` (every first-party cloud adapter, and a local
+        model that has not loaded) is never probed, and a model already
+        measured is read from the store without a request.
+        """
+        if config.tool_calling_mode != "auto" or not self.tools or self.model is None:
+            return None
+        if not getattr(config, "capability_probe", True):
+            return None
+        import os
+
+        if os.environ.get("EFFGEN_CAPABILITY_PROBE", "").strip() in ("0", "false", "off"):
+            return None
+        from ..models.capability_probe import probe_for_agent
+
+        return probe_for_agent(self.model)
 
     def _validate_native_tool_compatibility(self, tools: list) -> None:
         """Raise ToolIncompatibleError for provider-specific tools used with the wrong model."""

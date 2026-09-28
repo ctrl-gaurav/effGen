@@ -1511,16 +1511,29 @@ class HybridStrategy(ToolCallingStrategy):
 def get_strategy(
     mode: str = "auto",
     model: Any | None = None,
+    probe: Any | None = None,
 ) -> ToolCallingStrategy:
     """Create the appropriate tool calling strategy.
 
     Args:
         mode: One of "auto", "native", "react", "hybrid".
         model: The model instance (checked for supports_tool_calling).
+        probe: What a capability probe measured for *model*
+            (:class:`~effgen.models.capability_probe.ToolCallingProbe`), or
+            ``None``. Read only for ``"auto"``: a model whose native tool calls
+            the probe saw go unresolved, while the text frame resolved them,
+            gets the ReAct strategy. Without a probe the result is what the
+            model's declaration alone gives.
 
     Returns:
         ToolCallingStrategy instance.
     """
+    if mode == "auto" and getattr(probe, "strategy", None) == "react":
+        logger.info(
+            "Capability probe: native tool calls did not resolve and the text "
+            "frame did; using ReAct strategy"
+        )
+        return ReActStrategy()
     if mode == "react":
         return ReActStrategy()
     elif mode == "native":

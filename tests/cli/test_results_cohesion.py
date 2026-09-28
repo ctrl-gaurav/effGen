@@ -169,7 +169,8 @@ def test_public_surface_anchor_unchanged():
     # the compaction strategies, and the workflow checkpoint stores. 1.1.0
     # added 9 more: AgentThread, the Step protocol, and the seven kinds of
     # step a run's conversation is made of. 1.2.0 added RunLedger, what a run
-    # spent and where its time went. Growing this number is a
+    # spent and where its time went; 1.3.0 added ToolCallingProbe and
+    # probe_tool_calling, what a model does when handed a tool. Growing this number is a
     # deliberate act — update it in the same commit that widens the surface,
     # and say why.
-    assert len(effgen.__all__) == 251
+    assert len(effgen.__all__) == 253

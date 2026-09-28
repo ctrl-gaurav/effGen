@@ -159,6 +159,16 @@ if "EFFGEN_COST_DB" not in os.environ:
     # budget configured", which is the state a clean CI runner sees.
     os.environ["EFFGEN_BUDGET_CONFIG"] = str(Path(_TEST_COST_DB_DIR) / "budget.json")
 
+# The capability store is durable too, and a probe spends model requests: a
+# scripted endpoint answers them from the replies a test scripted for its own
+# run. Tests start with the probe off and the store in a temporary file; the
+# tests of the probe turn it on themselves.
+if "EFFGEN_CAPABILITY_CACHE" not in os.environ:
+    if _TEST_COST_DB_DIR is None:
+        _TEST_COST_DB_DIR = tempfile.mkdtemp(prefix="effgen_test_costs_")
+    os.environ["EFFGEN_CAPABILITY_CACHE"] = str(Path(_TEST_COST_DB_DIR) / "capabilities.json")
+os.environ.setdefault("EFFGEN_CAPABILITY_PROBE", "0")
+
 # Run history is durable too: keep test runs out of the user's real
 # ~/.effgen/runs, and keep the user's stored runs out of test assertions.
 if "EFFGEN_RUN_HISTORY_DIR" not in os.environ:
@@ -257,6 +267,8 @@ _WARN_ONCE_RECORDS = (
     ("effgen.gpu.cuda_compat", "_warned"),
     ("effgen.security.sandbox", "_subprocess_fallback_warned"),
     ("effgen.security.sandbox", "_confinement_degraded_warned"),
+    ("effgen.models.capability_probe", "_CORRUPT_WARNED"),
+    ("effgen.models._adapter_utils", "_reasoning_effort_warned"),
 )
 
 # Records of something the process learned once and reuses, cleared for the same
@@ -266,6 +278,9 @@ _LEARNED_ONCE_RECORDS = (
     ("effgen.core.agent_generation", "_reasoning_stream_models"),
     ("effgen.core.agent_runtime", "_MESSAGE_PROTOCOL_PROBE"),
     ("effgen.core.agent_runtime", "_SUPPRESSED_TOOL_CALL_IGNORED"),
+    ("effgen.models.capability_probe", "_FAILED"),
+    ("effgen.models.capability_probe", "_MEMO"),
+    ("effgen.models.openai_compatible_adapter", "_DESCRIBED"),
 )
 
 

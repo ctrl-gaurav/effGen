@@ -21,6 +21,8 @@ from ..models._adapter_utils import (
     default_max_output_tokens,
     needs_reasoning_headroom,
     normalize_stop_sequences,
+    rejects_request,
+    warn_reasoning_effort_dropped,
 )
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
@@ -549,10 +551,20 @@ class AgentGenerationMixin:
                 else None
             )
 
-            for attempt in range(max_retries):
+            # A provider that refuses stop sequences beside tool definitions is
+            # asked once more with the stops applied locally instead. The first
+            # refusal is kept so that, if the retry fails too, the error the
+            # caller sees is the provider's original answer.
+            stop_retry_used = False
+            stop_retry_error: Exception | None = None
+            for attempt in range(max_retries + 1):
+                if attempt >= max_retries and not stop_retry_used:
+                    break
                 try:
                     # Slightly increase temperature on retries to get different output
-                    retry_temperature = min(base_temperature + (attempt * 0.1), 1.0)
+                    retry_temperature = min(
+                        base_temperature + ((attempt - int(stop_retry_used)) * 0.1), 1.0,
+                    )
 
                     attempt_stops = (
                         None if local_stop_sequences else requested_stop_sequences
@@ -581,6 +593,9 @@ class AgentGenerationMixin:
                             reasoning_effort=kwargs.get('reasoning_effort'),
                             stop_sequences=attempt_stops,
                         )
+
+                    if gen_config.reasoning_effort is not None:
+                        self._note_reasoning_effort(current_model, gen_config.reasoning_effort)
 
                     # Generation parameters that travel beside GenerationConfig
                     # (the tool definitions, and whether a call is required).
@@ -624,6 +639,12 @@ class AgentGenerationMixin:
                     # Return the call to the agent loop instead of treating it as an empty
                     # response that needs retrying.
                     native_tool_calls = (result_metadata or {}).get("tool_calls") or []
+
+                    if stop_retry_error is not None:
+                        # The same request without the stops answered: the
+                        # provider refuses the pair, not the request.
+                        self._remember_stop_rejection(current_model, stop_retry_error)
+                        stop_retry_error = None
 
                     # If we got non-empty text OR a native tool call, return it
                     if response_text.strip() or native_tool_calls:
@@ -701,6 +722,26 @@ class AgentGenerationMixin:
                 except Exception as e:
                     last_error = e
                     err_class = classify_provider_error(e)
+                    if (
+                        not stop_retry_used
+                        and attempt_stops
+                        and kwargs.get("tools")
+                        and rejects_request(e)
+                    ):
+                        stop_retry_used = True
+                        stop_retry_error = e
+                        local_stop_sequences = list(requested_stop_sequences or [])
+                        logger.info(
+                            "[capability] '%s' refused a request carrying tools and "
+                            "stop sequences; retrying once with the stops applied locally",
+                            getattr(current_model, "model_name", "?"),
+                        )
+                        continue
+                    if stop_retry_error is not None:
+                        # The retry failed as well: the refusal was not about
+                        # the pair, so the caller gets the provider's first answer.
+                        last_error = stop_retry_error
+                        stop_retry_error = None
                     # Only retry errors that could plausibly succeed on retry
                     # (transient/timeout/rate-limited/unknown). Auth, not-found,
                     # refusal and invalid-request errors fail fast — no retry
@@ -786,6 +827,39 @@ class AgentGenerationMixin:
             "finish_reason": "error",
             "metadata": {"error": detail["message"], "error_detail": detail},
         }
+
+    def _note_reasoning_effort(self, model: Any, effort: Any) -> None:
+        """Say once per model when a pinned ``reasoning_effort`` is not sent.
+
+        Asked of the adapter (``forwards_reasoning_effort()``); an object that
+        does not answer says nothing, as before the question existed.
+        """
+        forwards = getattr(model, "forwards_reasoning_effort", None)
+        if forwards is None:
+            return
+        try:
+            if forwards():
+                return
+        except Exception:  # noqa: BLE001 - an adapter that cannot say is not reported
+            logger.debug("forwards_reasoning_effort failed", exc_info=True)
+            return
+        provider = getattr(model, "_provider", None) or self._model_provider(model)
+        warn_reasoning_effort_dropped(
+            str(provider), str(getattr(model, "model_name", "") or "?"), effort,
+        )
+
+    def _remember_stop_rejection(self, model: Any, error: Exception) -> None:
+        """Record that *model*'s provider refuses stop sequences beside tools."""
+        from ..models.capability_probe import remember_fact
+
+        remember_fact(
+            model, "stop_with_tools", False,
+            detail=f"{type(error).__name__} on a request carrying tools and stop sequences",
+        )
+        logger.warning(
+            "[capability] %s rejects stop sequences beside tools; applying them "
+            "locally from now on", getattr(model, "model_name", "?"),
+        )
 
     def _model_provider(self, model: Any) -> str:
         """Best-effort provider name for a model object.

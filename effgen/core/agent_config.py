@@ -333,6 +333,13 @@ class AgentConfig:
     # A ``ToolUsePolicy`` member or its name; independent of ``tool_contract``,
     # which chooses the words rather than the policy.
     tool_use: ToolUsePolicy | str | None = None
+    # Whether ``tool_calling_mode="auto"`` may measure, once per model, what the
+    # model does when handed a tool, and resolve against that. Only a model
+    # served behind a URL or run on a local engine is ever probed; the result is
+    # kept (``effgen doctor`` shows it), so later agents read it instead of
+    # measuring again. ``False`` — or ``EFFGEN_CAPABILITY_PROBE=0`` — resolves
+    # ``auto`` from the model's declaration alone, as before the probe existed.
+    capability_probe: bool = True
     # What the framework tells the model about the *form* of the answer, stated
     # once as the last line of the request. ``"brief"`` asks for the answer the
     # question asked for and nothing besides it; ``"full"`` asks for the
@@ -402,6 +409,13 @@ class AgentConfig:
                 f"recover_lost_tool_calls. Pass True to read and ask again for a "
                 f"tool call the runtime could not run, or False to leave such a "
                 f"turn to the written-call report."
+            )
+        # A string such as "false" is truthy and would turn the probe on.
+        if not isinstance(self.capability_probe, bool):
+            raise ValueError(
+                f"{self.capability_probe!r} is not a valid capability_probe. Pass "
+                f"True to let tool_calling_mode='auto' measure the model once, or "
+                f"False to resolve it from the model's declaration alone."
             )
         if self.compaction is not None:
             from .thread_compaction import resolve_policy
