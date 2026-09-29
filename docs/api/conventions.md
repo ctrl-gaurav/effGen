@@ -122,7 +122,7 @@ with them, and `to_dict()` carries it.
 | `done` | the model wrote an answer | `True` | `final_answer` |
 | `not_possible` | the model wrote an answer, but the run's tools could not be used — every call was declined, failed on the tool's own side, or returned nothing — so `output` is what the model said, usually that the task cannot be done with these tools. A run whose calls reached a tool that rejected their input used that tool, and is `done` | `True` | `final_answer` |
 | `stuck` | the run kept proposing work that brought nothing new, was asked for its answer, and wrote none | `False` | `loop_detected`, `repeated_tool_result`, `max_iterations_*`, `null_final_from_model` |
-| `tool_failed` | the tools the run needed failed on their own side and the run has no answer | `False` | `tool_failed` |
+| `tool_failed` | the tools the run needed failed — on their own side, or on every input the model gave them — and the run has no answer | `False` | `tool_failed` |
 | `error` | the run could not be carried out | `False` | the other failed reasons |
 
 What the loop does before each ending:
@@ -162,11 +162,25 @@ What the loop does before each ending:
   `output` names the tool, the error and the attempts;
   `metadata["unavailable_tools"]` lists the tools given up on. Input the tool
   could not use is not a tool failure and never counts against the tool.
+- **A call that fails on its input.** A result that reports a failure — a tool
+  that raised, or one that answered with text starting `Error` — is an attempt
+  to correct, never a result: two calls whose different inputs the tool rejects
+  in the same words are not a repeated result, and the run keeps its tools.
+  After four such failures in a row a tool is not offered again in the
+  run (a call to it is declined); when that leaves the run no tool, the run is
+  asked for its answer, and if it writes none it ends `tool_failed` with
+  `metadata["error"]["kind"] == "input"`, naming the tool and the last error. A
+  failure on the tool's own side gets `kind == "tool"`.
+- **An error is never an answer.** A final answer that is a tool's error
+  message is sent back once, saying so; given again, the run stops with
+  `null_final_from_model` and `success=False`. A failed call is never answered
+  with "you have the answer from the tool".
 
 `max_turns_without_progress=None` turns the answer request, the pre-result
 count and the closing request off, which is the loop earlier releases ran. A
-placeholder action is read as a declaration, a tool-side failure is typed, and
-a stopped run's progress never carries an error string whatever the setting.
+placeholder action is read as a declaration, a tool-side failure is typed, a
+tool that fails on its input four times in a row is withdrawn, and a stopped
+run's progress never carries an error string whatever the setting.
 
 A **stopped** run has tool results and reasoning but no answer, so those never
 go where the answer goes. They travel in `result.partial`, a `PartialResult`:

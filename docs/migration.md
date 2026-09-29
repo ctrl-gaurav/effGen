@@ -118,6 +118,20 @@ keeps working; these are the differences a caller can see:
 
 See [conventions](api/conventions.md) for the full contract.
 
+## 1.2 → 1.3: what a failed tool call leads to
+
+- **A failure is never a repeated result.** Two calls whose different inputs a
+  tool rejects in the same words no longer stop the run's tool use; the next
+  call runs. Some runs make one more tool call than before.
+- **Four failures in a row on a tool's input withdraw it for the run.** A run
+  left with no tool is asked for its answer, and ends `tool_failed` with
+  `metadata["error"]["kind"] == "input"` when it writes none — where it used
+  to go round to `max_iterations`.
+- **An answer that is a tool's error message is not a success.** It is sent
+  back once; given again the run stops with `null_final_from_model`. The
+  direct calculator result is never a failure, and a failed call no longer
+  earns "you have the answer from the tool" near the iteration cap.
+
 ## 1.2 → 1.3: how a tool call is read
 
 - **`AgentConfig.recover_lost_tool_calls` defaults to `True`** (it was

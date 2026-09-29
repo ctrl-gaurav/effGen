@@ -40,6 +40,7 @@ from .agent_loop import (
 from .agent_native_tools import AgentNativeToolsMixin
 from .agent_react_parsing import AgentReActParsingMixin
 from .agent_tool_execution import AgentToolExecutionMixin
+from .agent_tool_loop import INPUT_ERRORS_BEFORE_WITHDRAWN, is_error_result
 from .execution_tracker import EventType, ExecutionEvent
 from .router import RoutingDecision, RoutingStrategy
 from .thread import (
@@ -48,6 +49,7 @@ from .thread import (
     TaskStep,
 )
 from .tool_call_record import ToolCallList
+from .tool_failure import TOOL_SIDE
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
@@ -440,7 +442,20 @@ class AgentReActMixin(
                 "message": message,
                 "retryable": False,
             }
-        if reason == "null_final_from_model":
+        if reason == "null_final_from_model" and is_error_result(
+            sanitize_final_answer(answer or "") or answer
+        ):
+            quoted = " ".join(
+                (sanitize_final_answer(answer or "") or answer or "").split()
+            )[:80]
+            message = (
+                f"'{model_id}' answered with an error from '{action}' "
+                f"('{quoted}'), again after being told it is not an answer, "
+                "so the run has no answer to report. What the tools "
+                "returned is reported as partial progress — tool output, not an "
+                f"answer. {self._STOPPED_NEXT_STEP}"
+            )
+        elif reason == "null_final_from_model":
             quoted = " ".join((answer or "").split())[:80]
             message = (
                 f"'{model_id}' returned an empty final answer ('{quoted}') after "
@@ -488,11 +503,14 @@ class AgentReActMixin(
     def _tool_failed_detail(
         self, model_id: str, provider: Any, action: str | None, failure: Any,
     ) -> dict[str, Any]:
-        """The typed outcome for a run whose tools failed on their own side.
+        """The typed outcome for a run whose tools failed.
 
         Names the tool, the error class and message, and how many calls the run
-        made to it, and says what changes the outcome: the tool's service or its
-        configuration, not the model or the budget.
+        made to it, and says what changes the outcome. For a failure on the
+        tool's own side (``kind="tool"``) that is the tool's service or its
+        configuration, not the model or the budget; for calls that kept
+        failing on their input (``kind="input"``) it is the input the model
+        writes.
         """
         detail_failure, attempts = (
             failure if isinstance(failure, tuple) else (failure, 0)
@@ -506,6 +524,32 @@ class AgentReActMixin(
             f" after {attempts} attempt{'s' if attempts != 1 else ''}"
             if attempts else ""
         )
+        if getattr(detail_failure, "side", TOOL_SIDE) != TOOL_SIDE:
+            error_type = getattr(detail_failure, "error_type", None) or ""
+            last = (
+                f"{error_type}: {error_message}" if error_type
+                else error_message or "no message"
+            )
+            message = (
+                f"The '{tool}' tool rejected the input of "
+                f"{INPUT_ERRORS_BEFORE_WITHDRAWN} calls in a row (last: {last}), "
+                "and the "
+                "model wrote no answer without it. Check that the tool's "
+                "description states the input it accepts, or use a model that "
+                "writes valid calls for it."
+            )
+            return {
+                "type": "ToolFailed",
+                "category": "tool_failed",
+                "kind": "input",
+                "provider": provider,
+                "model": model_id,
+                "tool": tool,
+                "error_type": error_type,
+                "attempts": attempts,
+                "message": message,
+                "retryable": False,
+            }
         message = (
             f"The '{tool}' tool failed on its own side{tried} "
             f"({error_type}: {error_message or 'no message'}), so the run has no "

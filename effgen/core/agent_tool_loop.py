@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,7 +41,7 @@ from .agent_runtime import (
 )
 from .retrieval_requery import MAX_RETRIEVAL_REQUERIES
 from .tool_call_record import ToolCall, truncate_result
-from .tool_failure import ToolFailure
+from .tool_failure import INPUT_SIDE, ToolFailure
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,30 @@ NUDGE_AFTER_CALLS = 6
 #: run. The same number the agent's circuit breaker opens at, so the two agree:
 #: a transient error gets its retries, a service that is down does not get ten.
 TOOL_FAILURES_BEFORE_UNAVAILABLE = 3
+
+#: Calls in a row to one tool that failed on their input after which the tool
+#: is not offered again in the run: a call and three corrections. One more than
+#: :data:`TOOL_FAILURES_BEFORE_UNAVAILABLE`, because a corrected input can
+#: succeed where a retry against a service that is down cannot: in recorded
+#: runs of small and mid-size models, a tool that had failed three times in a
+#: row on its input still returned a result afterwards in 5 runs of 7,562, and
+#: one that had failed four times in 1.
+INPUT_ERRORS_BEFORE_WITHDRAWN = 4
+
+#: The phrase every tool-error path of the loop logs, so its firings can be
+#: counted.
+TOOL_ERROR_LOG = "[tool error]"
+
+#: What the model reads when its answer is a tool's failure.
+TOOL_ERROR_NOT_AN_ANSWER = (
+    "[That reports the {tool} failure; it is not an answer. Correct the call "
+    "and try again, or write the answer to the question in your own words.]"
+)
+
+#: How an answer that restates a failure in the model's own words opens: the
+#: ``Error:`` form tools report failures in. An answer that merely begins with
+#: the word ("Error rate is 3 %", "Errors found: …") is not one.
+_RESTATED_FAILURE = re.compile(r"error\s*:", re.IGNORECASE)
 
 #: What a result that carries nothing reads as once it reached the loop. A tool
 #: that returned ``None`` is reported as the first of these by the dispatch
@@ -193,6 +218,8 @@ ASK_AFTER_STALL = "stalled"
 ASK_AFTER_LOOP = "loop_detected"
 #: A tool that reproduced its own result was answered by asking for the answer.
 ASK_AFTER_REPEATED_RESULT = "repeated_tool_result"
+#: Every tool the run holds failed on its input as often as the run allows.
+ASK_AFTER_INPUT_ERRORS = "input_errors"
 
 
 @dataclass
@@ -301,6 +328,13 @@ class NativeToolLoop:
     dispatches_by_tool: dict[str, int] = field(default_factory=dict)
     #: The most recent tool-side failure of the run.
     last_tool_failure: ToolFailure | None = None
+    #: Calls in a row, per tool, whose result reported a failure of the input.
+    consecutive_input_errors: dict[str, int] = field(default_factory=dict)
+    #: The input-side failure the dispatch layer reported for the call just
+    #: made, when it reported one; read by :meth:`observe_result`.
+    _input_failure: ToolFailure | None = field(default=None, repr=False)
+    #: Answers sent back because they were a tool's error message.
+    error_answers: int = 0
     #: Calls whose most recent attempt failed on the tool's own side.
     failed_pairs: set[tuple[str, str]] = field(default_factory=set)
     #: The turn that just ended wrote a placeholder action.
@@ -617,16 +651,17 @@ class NativeToolLoop:
         """True when *action* has already returned this result in this run.
 
         A tool that reproduces its own output means the answer is settled: the
-        model is re-deriving something it already has. A failed dispatch is
-        never a repeat.
+        model is re-deriving something it already has. A failure is never a
+        repeat, whoever reported it: two calls with different inputs that the
+        tool rejects in the same words are two attempts, not a settled answer.
         """
-        if tool_result.startswith(TOOL_ERROR_PREFIX):
+        if is_error_result(tool_result):
             return False
         return self._result_key(action, tool_result) in self.previous_results
 
     def record_result(self, action: str, tool_result: str) -> None:
-        """Remember what *action* returned, unless the dispatch failed."""
-        if tool_result.startswith(TOOL_ERROR_PREFIX):
+        """Remember what *action* returned, unless it reported a failure."""
+        if is_error_result(tool_result):
             return
         self.previous_results.append(self._result_key(action, tool_result))
 
@@ -659,6 +694,9 @@ class NativeToolLoop:
             self.stalled_calls[action] = self.stalled_calls.get(action, 0) + 1
         if not failed_tool_side and is_error_result(tool_result):
             self.input_errors += 1
+        input_failure, self._input_failure = self._input_failure, None
+        if not failed_tool_side:
+            self._count_input_error(action, tool_result, input_failure)
         if failed_tool_side:
             # The tool could not run. That is neither a result nor the model
             # going round: it is what the unavailability count is for.
@@ -670,6 +708,86 @@ class NativeToolLoop:
         else:
             self._turn.seen += 1
         return new
+
+    def _count_input_error(
+        self, action: str, tool_result: Any, failure: ToolFailure | None,
+    ) -> None:
+        """Count a call that failed on its input; withdraw the tool at the limit.
+
+        A result that is not a failure resets the count. At
+        :data:`INPUT_ERRORS_BEFORE_WITHDRAWN` failures in a row the tool is not
+        called again in this run; when it was the last tool the run could
+        call, the loop asks the run for its answer.
+        """
+        if not is_error_result(tool_result):
+            self.consecutive_input_errors[action] = 0
+            return
+        count = self.consecutive_input_errors.get(action, 0) + 1
+        self.consecutive_input_errors[action] = count
+        logger.info(
+            "%s '%s' failed on its input (%d of %d in a row)",
+            TOOL_ERROR_LOG, action, count, INPUT_ERRORS_BEFORE_WITHDRAWN,
+        )
+        if count < INPUT_ERRORS_BEFORE_WITHDRAWN or action in self.unavailable_tools:
+            return
+        # A failure the dispatch layer caught carries its class and message;
+        # one the tool reported as text is that text.
+        message = " ".join(
+            str(failure.message if failure is not None else tool_result).split()
+        )[:300]
+        self.unavailable_tools[action] = ToolFailure(
+            tool=action,
+            error_type=failure.error_type if failure is not None else "",
+            message=message,
+            side=INPUT_SIDE,
+        )
+        logger.info(
+            "%s '%s' failed on its input %d times in a row; it is not offered "
+            "again in this run",
+            TOOL_ERROR_LOG, action, count,
+        )
+
+    def withdrawn_on_input(self) -> bool:
+        """Whether a tool this run stopped calling failed on its input."""
+        return any(not f.tool_side for f in self.unavailable_tools.values())
+
+    def error_answered(self, text: Any) -> str | None:
+        """The tool whose failure *text* reports, or ``None``.
+
+        An answer is a tool's error when it is a copy of the message a call of
+        the run failed with, or, when the run's last call failed, the model's
+        own restatement of that failure in the ``Error:`` form ("Error: the
+        code timed out, please try again"). The tool named is the one whose
+        error text the answer opens with, else the one that failed last. A
+        sentence that mentions an error is not one; neither is an answer that
+        opens with the word "Error" but not a failure's form ("Error rate is
+        21 percent"), nor one written after the failed call was corrected, nor
+        one in a run where no call failed.
+
+        Args:
+            text: The answer, as the model wrote it.
+
+        Returns:
+            The name of the tool whose failure the answer reports, or ``None``.
+        """
+        answer = " ".join(str(text or "").split())
+        if len(answer) < 5 or not is_error_result(answer):
+            return None
+        head = answer[:60].lower()
+        failed = [
+            (call.name, " ".join(str(call.result or "").split()).lower())
+            for call in self.calls if is_error_result(call.result)
+        ]
+        for name, result in reversed(failed):
+            if result.startswith(head) or head.startswith(result[:60]):
+                return name
+        last = self.calls[-1] if self.calls else None
+        if (
+            last is not None and is_error_result(last.result)
+            and _RESTATED_FAILURE.match(answer)
+        ):
+            return last.name
+        return None
 
     def refresh_shown_results(self, steps: Any) -> None:
         """Re-read which results the conversation still shows in full.
@@ -823,6 +941,9 @@ class NativeToolLoop:
             The tool-side failure, when the call ended in one.
         """
         self.dispatches_by_tool[action] = self.dispatches_by_tool.get(action, 0) + 1
+        self._input_failure = next(
+            (f for f in reversed(failures) if not f.tool_side and f.tool == action), None,
+        )
         failure = next(
             (f for f in reversed(failures) if f.tool_side and f.tool == action), None,
         )
@@ -896,17 +1017,18 @@ class NativeToolLoop:
             iteration: The turn number that just ran, counted from one.
             action_call_count: How many times this tool had already been called
                 before this turn.
-            tool_result: What the dispatch returned, so a failed one earns no
-                "you already have the answer" nudge.
+            tool_result: What the dispatch returned. A failure earns no nudge
+                here: it does not hand the model an answer.
 
         Returns:
             The line to append to the scratchpad, or ``None``.
         """
+        if is_error_result(tool_result):
+            # A failure is not an answer from the tool.
+            return None
         if iteration >= self.nudge_cap - 2:
             return NUDGE_HAVE_ANSWER
-        if action_call_count >= NUDGE_AFTER_CALLS and not tool_result.startswith(
-            TOOL_ERROR_PREFIX
-        ):
+        if action_call_count >= NUDGE_AFTER_CALLS:
             return NUDGE_HAVE_RESULTS
         return None
 

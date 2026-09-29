@@ -377,7 +377,8 @@ class RunStoppedError(RuntimeError):
     run ends with ``outcome == "stopped"`` — the iteration cap, a repeated tool
     call, a tool that reproduced its own result, an empty final answer after
     tools ran, or a tool that failed on its own side (``tool_failed``: a
-    connection or timeout error, a service error, missing credentials). The run
+    connection or timeout error, a service error, missing credentials) or on
+    every input the model gave it (``tool_failed`` with ``kind="input"``). The run
     never produced an answer, so there is nothing to return in its place.
 
     It subclasses :class:`RuntimeError`, which is what the iteration cap has

@@ -213,6 +213,8 @@ the tool refused to it for the next minute. While a tool's breaker is open a
 call to it is answered with "tool temporarily disabled due to repeated
 failures", and a run whose every tool is in that state ends with
 `stop_reason="tool_failed"` (see [conventions](../api/conventions.md)).
+Failures on the call's input are bounded per run instead: after four in a row
+the tool is not offered again in that run, and later runs are not affected.
 
 ---
 

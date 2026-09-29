@@ -101,12 +101,15 @@ from .agent_runtime import (
 )
 from .agent_tool_loop import (
     ASK_AFTER_DECLARED,
+    ASK_AFTER_INPUT_ERRORS,
     ASK_AFTER_LOOP,
     ASK_AFTER_REPEATED_RESULT,
     LOST_CALL_ASK,
     LOST_CALL_CONTINUE,
     LOST_CALL_REPORT,
     LOST_CALL_WARN,
+    TOOL_ERROR_LOG,
+    TOOL_ERROR_NOT_AN_ANSWER,
     NativeToolLoop,
     is_error_result,
 )
@@ -1154,12 +1157,15 @@ def _stopped(
     What travels as progress is a result, never a failure: when *text* is a
     tool's error, the run's other results are read instead, and a run that has
     none carries no partial. A run whose every dispatched call failed on the
-    tool's own side is reported as that, not as the loop's stop.
+    tool's own side, or whose every tool was withdrawn after failing on its
+    input, is reported as that, not as the loop's stop.
     """
     guards = state.guards
 
     def build() -> AgentResponse:
-        if guards.every_call_failed_tool_side():
+        if guards.every_call_failed_tool_side() or (
+            guards.all_tools_unavailable() and guards.withdrawn_on_input()
+        ):
             return _tool_failed_response(agent, state)
         progress = text
         if progress is not None and is_error_result(progress):
@@ -1392,7 +1398,13 @@ def step(
     has_room = state.iterations < policy.max_iterations
     if outcome.kind == "continue":
         _ask_for_the_answer_when_stalled(policy, state)
-        if guards.all_tools_unavailable():
+        if guards.all_tools_unavailable() and guards.withdrawn_on_input():
+            # A tool withdrawn for its input still leaves the model able to
+            # answer from what it knows: the run is asked for its answer like
+            # any other, below, and ends typed if it writes none.
+            if not guards.force_text_answer:
+                guards.ask_for_answer(ASK_AFTER_INPUT_ERRORS)
+        elif guards.all_tools_unavailable():
             if not guards.usable_results:
                 return _StepOutcome("response", _tool_failed_response(agent, state))
             if closing_on and has_room and not state.closing_used:
@@ -1454,6 +1466,8 @@ def step(
 def _asked_and_stuck(agent: Any, state: _RunState) -> AgentResponse:
     """The stop for a run that was asked for its answer and wrote none."""
     guards = state.guards
+    if guards.all_tools_unavailable() and guards.withdrawn_on_input():
+        return _tool_failed_response(agent, state)
     reason = (
         "repeated_tool_result"
         if guards.ask_reason == ASK_AFTER_REPEATED_RESULT else "loop_detected"
@@ -1474,7 +1488,10 @@ def _cap_or_tool_failed(
     agent: Any, policy: _LoopPolicy, state: _RunState,
 ) -> AgentResponse:
     """The iteration-cap stop, or the tool failure it really was."""
-    if state.guards.every_call_failed_tool_side():
+    guards = state.guards
+    if guards.every_call_failed_tool_side() or (
+        guards.all_tools_unavailable() and guards.withdrawn_on_input()
+    ):
         return _tool_failed_response(agent, state)
     return _iteration_cap_response(agent, policy, state)
 
@@ -1482,6 +1499,7 @@ def _cap_or_tool_failed(
 #: Why a closing request's reply is not an answer, as its log line says it.
 _CLOSING_WROTE_A_CALL = "the reply is a tool call"
 _CLOSING_EMPTY = "the reply is empty"
+_CLOSING_TOOL_ERROR = "the reply is a tool's error message"
 _CLOSING_PROGRAM = "the reply is a program for '{tool}', not what it printed"
 
 #: Statement kinds that make a line source code rather than a stated result.
@@ -1760,6 +1778,9 @@ def _closing_request(
     cleaned = (sanitize_final_answer(answer) or "").strip()
     if not cleaned or cleaned.lower() in _NULL_ANSWERS:
         logger.info("[closing] no answer (%s)", _CLOSING_EMPTY)
+        return _StepOutcome("response", fallback())
+    if state.guards.error_answered(cleaned) is not None:
+        logger.info("[closing] no answer (%s)", _CLOSING_TOOL_ERROR)
         return _StepOutcome("response", fallback())
     executor = _program_for_executor(agent, answer)
     if executor is not None:
@@ -2751,6 +2772,38 @@ def _take_turn(
                 reason="null_final_from_model", answer=final_answer,
             )
 
+    # A final answer that is a tool's error message is not an answer: the
+    # model copied the observation. It is sent back once, saying so; a model
+    # that gives it again ends the run with its progress and no answer.
+    if final_answer:
+        errored = guards.error_answered(
+            sanitize_final_answer(final_answer) or final_answer
+        )
+        if errored is not None:
+            guards.error_answers += 1
+            logger.info(
+                "%s the answer is the error '%s' returned (%d); %s",
+                TOOL_ERROR_LOG, errored, guards.error_answers,
+                "sent back" if guards.error_answers == 1 else "the run stops",
+            )
+            if guards.error_answers > 1:
+                progress = agent._extract_partial_answer(thread)
+                return _stopped(
+                    agent, state,
+                    (sanitize_final_answer(progress) or progress) if progress else None,
+                    action=errored, reason="null_final_from_model",
+                    answer=final_answer,
+                )
+            thread.append(NudgeStep(
+                text=TOOL_ERROR_NOT_AN_ANSWER.format(tool=errored),
+                render_as="observation", nudge_id="error_not_an_answer",
+            ))
+            guards.note_neutral()
+            if emitter.emits_deltas:
+                emitter.reset_answer()
+            _note_debug_turn(state, response, thought=parsed.get("thought", ""))
+            return CONTINUE
+
     # A "final answer" that is purely leaked tool-call syntax / scaffolding
     # (sanitizes to nothing) is not a real answer — keep looping so the tool
     # actually runs or a partial is extracted. When what leaked is a call for a
@@ -2855,7 +2908,7 @@ def _take_turn(
             for phrase in [
                 "the answer is", "the result is", "the sum is", "equals", "=",
             ]
-        ):
+        ) and guards.error_answered(response_text) is None:
             if _requery(agent, state, policy, response_text):
                 if emitter.emits_deltas:
                     emitter.reset_answer()
@@ -3146,8 +3199,10 @@ def _take_turn(
                 f"Tool result added to the thread: {tool_result[:100]}..."
             )
 
-            if agent._should_return_direct_calculator_result(
-                task, action, action_input
+            if not is_error_result(tool_result) and (
+                agent._should_return_direct_calculator_result(
+                    task, action, action_input
+                )
             ):
                 logger.info(
                     "Returning direct calculator result for simple arithmetic task"

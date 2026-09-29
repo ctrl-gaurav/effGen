@@ -284,12 +284,15 @@ class AgentResponse:
               carrying the same payload.
             - ``"tool_failed"`` — the tools the run needed failed on their own
               side (a connection or timeout error, a service error, missing
-              credentials, a circuit breaker that is open) and the run has no
-              answer (``success=False``). ``output`` names the tool, the error
-              class and message and how many attempts were made;
+              credentials, a circuit breaker that is open), or rejected the
+              input of four calls in a row, and the run has no answer
+              (``success=False``). ``output`` names the tool, the error class
+              and message and how many attempts were made;
               ``metadata["error"]`` has ``type="ToolFailed"``,
               ``category="tool_failed"``, ``tool``, ``error_type`` and
-              ``kind="tool"``; ``metadata["unavailable_tools"]`` lists every
+              ``kind`` — ``"tool"`` for a failure on the tool's side,
+              ``"input"`` for one on the calls' input;
+              ``metadata["unavailable_tools"]`` lists every
               tool the run stopped calling. Any result the run had is carried
               under :attr:`partial`.
 
@@ -385,9 +388,11 @@ class AgentResponse:
           was asked for its answer, and wrote none (``loop_detected``,
           ``repeated_tool_result``, ``max_iterations_*``,
           ``null_final_from_model``). What it reached is under :attr:`partial`.
-        - ``"tool_failed"`` — the tools the run needed failed on their own side
-          and the run has no answer. Retrying later, or checking the tool's
-          service or credentials, is what changes the outcome.
+        - ``"tool_failed"`` — the tools the run needed failed and the run has
+          no answer. On the tool's own side (``metadata["error"]["kind"] ==
+          "tool"``) retrying later, or checking the tool's service or
+          credentials, is what changes the outcome; on every input the model
+          gave it (``kind == "input"``) the calls the model writes are.
         - ``"error"`` — the run could not be carried out (a provider failure,
           an empty task, a blocked run, a written-out call, a schema failure).
 
