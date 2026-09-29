@@ -96,8 +96,19 @@ reasons that mean *stopped* are in `STOPPED_REASONS`:
 A tool whose calls keep returning new results is bounded by `max_iterations`,
 not by how often it was called. A turn that writes a tool call out instead of
 making it is reported as `written_tool_call`; with
-`AgentConfig.recover_lost_tool_calls` set (off by default) such a call is read
-where it can be read, and asked for once more where it cannot.
+`AgentConfig.recover_lost_tool_calls` on (the default) such a call is read
+where it can be read, and asked for once more where it cannot, before it is
+reported.
+
+A call is read or refused, never half-read. Arguments a provider returns as a
+string rather than an object are the call's arguments: keyword syntax
+(`code='…'`) is read as those keywords, an object's JSON text as that object,
+and anything else is bound to the tool's parameter the way an `Action Input:`
+line is. A call that leaves a parameter the tool declares required without a
+value is not dispatched; the first one is asked for again (with a call
+required where the provider supports it), later ones are answered with what
+the tool requires. Positional values are given the tool's parameter names in
+order; when there are more values than parameters, the call carries none.
 
 ### Done, not possible, stuck, tool failed
 

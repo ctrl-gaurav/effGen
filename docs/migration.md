@@ -118,6 +118,34 @@ keeps working; these are the differences a caller can see:
 
 See [conventions](api/conventions.md) for the full contract.
 
+## 1.2 → 1.3: how a tool call is read
+
+- **`AgentConfig.recover_lost_tool_calls` defaults to `True`** (it was
+  `False`). A tool call written as a Python literal, with raw line breaks
+  inside its JSON, with unescaped double quotes inside a string, with its last
+  string closed one bracket early, or as a whole
+  object followed by text inside its tag, runs instead of being reported; a
+  call nothing can read is sent back once, with a call required where the
+  provider supports it, before the run reports `written_tool_call`. Some runs
+  make more tool calls: the calls the model meant to make now run. When the
+  agent holds exactly one code-execution tool, a program in a fenced block
+  before an empty call tag runs as that call. `False` — in the config or per
+  `run(recover_lost_tool_calls=False)` — restores the 1.2 reader; delegated
+  sub-agents inherit the setting.
+- **Arguments sent as a string are read.** A provider that returns
+  `"arguments": "\"code='…'\""` or `"\"56*3+35\""` gets the call run with
+  those values instead of with no arguments; `tool_calls` records carry the
+  decoded arguments.
+- **A call missing a required argument is not dispatched.** Tool code never
+  sees an empty call for parameters it declared required; the model is asked
+  for the call again.
+- **Positional values** are named in the tool's parameter order; a call with
+  more values than the tool has parameters (`calculator(2, 3, 4, 6)`) carries no
+  arguments and is asked for again, instead of running with its first value or
+  ending the run with an error.
+- The capability probe keeps the 1.2 reader, so its stored results keep their
+  meaning.
+
 ## v0.1.x → v0.2.0
 
 ### Breaking Changes
