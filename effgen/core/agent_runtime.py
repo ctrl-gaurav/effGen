@@ -455,6 +455,7 @@ NUDGE_CALL_NOT_READ = (
 CALL_NOT_READ_EMPTY = "nothing followed the call tag"
 CALL_NOT_READ_UNREAD = "its arguments could not be read"
 CALL_NOT_READ_WRITTEN = "it was written out as text instead of being made"
+CALL_NOT_READ_MISSING = "it did not carry the required argument(s) {names}"
 # Sent back to a run whose search came back without what the question asked
 # for. It offers the move the retrieval close does not: search again, with
 # different words, before concluding. Bounded at one use per run, so a run that

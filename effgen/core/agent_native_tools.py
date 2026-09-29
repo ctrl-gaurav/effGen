@@ -9,7 +9,6 @@ back from one call. Mixed into :class:`Agent` through
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -27,6 +26,7 @@ from .agent_runtime import (
     written_call_only,
 )
 from .tool_call_record import ToolCall, ToolCallList, truncate_result
+from .tool_calling import call_input, missing_required_arguments, read_call_arguments
 
 # The native paths log to the ReAct stream they stand in for.
 logger = logging.getLogger("effgen.core.agent_react")
@@ -135,15 +135,14 @@ class AgentNativeToolsMixin:
             for call in local_calls:
                 fn = call.get("function", call)
                 fn_name = call.get("name") or fn.get("name", "")
-                fn_args_raw = call.get("arguments", fn.get("arguments", "{}"))
-                try:
-                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
-                except (json.JSONDecodeError, TypeError):
-                    fn_args = {}
+                fn_args = read_call_arguments(
+                    call.get("arguments", fn.get("arguments", "{}")),
+                    (getattr(self, "tools", None) or {}).get(fn_name),
+                )
 
                 if fn_name in self.tools:
                     call_start = time.time()
-                    obs = self._execute_tool(fn_name, json.dumps(fn_args))
+                    obs = self._execute_tool(fn_name, call_input(fn_args))
                     tool_calls_made += 1
                     executed_tools.add(fn_name)
                     calls.append(ToolCall(
@@ -345,15 +344,28 @@ class AgentNativeToolsMixin:
             # an adapter that also carries top-level keys is read the same way.
             fn = tc.get("function", tc)
             fn_name = tc.get("name") or fn.get("name", "")
-            fn_args = tc.get("arguments", fn.get("arguments", {}))
-            if isinstance(fn_args, str):
-                try:
-                    fn_args = json.loads(fn_args)
-                except (json.JSONDecodeError, TypeError):
-                    fn_args = {"__raw_input__": fn_args}
+            fn_args = read_call_arguments(
+                tc.get("arguments", fn.get("arguments", {})), (getattr(self, "tools", None) or {}).get(fn_name),
+            )
             if fn_name in self.tools and not isinstance(self.tools[fn_name], GeminiNativeTool):
+                missing = missing_required_arguments(
+                    (getattr(self, "tools", None) or {}).get(fn_name), fn_args,
+                )
+                if missing:
+                    # Not dispatched: the tool would only refuse a call that
+                    # leaves a required parameter empty.
+                    logger.info(
+                        "[call] not dispatched: '%s' is missing its required "
+                        "argument(s) %s; answered with what it requires",
+                        fn_name, ", ".join(missing),
+                    )
+                    observations.append(
+                        f"[{fn_name}({fn_args})] → Tool '{fn_name}' was not run: "
+                        f"parameter '{missing[0]}' is required."
+                    )
+                    continue
                 call_start = time.time()
-                obs = self._execute_tool(fn_name, json.dumps(fn_args) if isinstance(fn_args, dict) else fn_args)
+                obs = self._execute_tool(fn_name, call_input(fn_args))
                 executed_tools.add(fn_name)
                 calls.append(ToolCall(
                     name=fn_name, arguments=fn_args,

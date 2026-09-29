@@ -23,6 +23,7 @@ from .tool_calling import (
     action_name,
     name_positional_arguments,
     parse_call_syntax,
+    read_call_arguments,
 )
 
 if TYPE_CHECKING:
@@ -537,6 +538,7 @@ class AgentReActParsingMixin:
     @staticmethod
     def _parse_native_tool_calls(
         native_tool_calls: list[dict[str, Any]], text: str = "",
+        tools: dict[str, Any] | None = None,
     ) -> ToolCallResult:
         """Convert an adapter's reported tool_calls into a ToolCallResult.
 
@@ -554,9 +556,15 @@ class AgentReActParsingMixin:
         with the id the provider gave the call, so a result can answer the call
         it belongs to instead of one the framework numbered itself.
 
+        Arguments that arrive as a string rather than an object are read by
+        :func:`~effgen.core.tool_calling.read_call_arguments`: the string is
+        the call's argument, never an empty call.
+
         Args:
             native_tool_calls: The calls as the adapter reported them.
             text: The response text that arrived with them, if any.
+            tools: The agent's tools by name, so keyword syntax in a string
+                argument is only read for parameters the tool declares.
 
         Returns:
             The call, its arguments, its id and the reasoning beside it.
@@ -567,14 +575,9 @@ class AgentReActParsingMixin:
         tc = native_tool_calls[0]
         fn = tc.get("function", tc)
         tool_name = fn.get("name")
-        arguments = fn.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (json.JSONDecodeError, TypeError):
-                arguments = {"__raw_input__": arguments}
-        if not isinstance(arguments, dict):
-            arguments = {}
+        arguments = read_call_arguments(
+            fn.get("arguments", {}), (tools or {}).get(str(tool_name)),
+        )
         if tool_name:
             result.tool_name = tool_name
             result.arguments = arguments
@@ -620,8 +623,9 @@ class AgentReActParsingMixin:
             # Convert arguments dict back to the string form the loop expects
             if result.arguments:
                 raw = result.arguments.get("__raw_input__")
-                if raw:
-                    parsed["action_input"] = raw
+                if raw is not None and raw != "":
+                    # The loop compares and binds a raw value as text.
+                    parsed["action_input"] = raw if isinstance(raw, str) else str(raw)
                 else:
                     parsed["action_input"] = json.dumps(result.arguments)
             else:

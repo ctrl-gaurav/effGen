@@ -172,6 +172,119 @@ def _is_truncated_json_call(text: str) -> bool:
     return False
 
 
+#: Logged each time a call's arguments arrived as a string rather than as an
+#: object, with what the string was read as.
+ARGUMENTS_AS_STRING_LOG = "[call] read arguments sent as a string (%s)"
+
+#: The key a value the tool's parameters must still be matched to travels
+#: under. The agent's input mapper binds it the way it binds a plain
+#: ``Action Input:`` line.
+RAW_INPUT_KEY = "__raw_input__"
+
+
+def _keyword_arguments(text: str) -> dict[str, Any] | None:
+    """Read ``code='…'`` / ``a=1, b="x"`` as keyword arguments, or ``None``.
+
+    The text is parsed as the argument list of a call; every value must be a
+    literal, so nothing in it is ever run. Positional values, ``**`` unpacking
+    or a value that is not a literal make it not keyword syntax.
+    """
+    try:
+        node = ast.parse(f"_({text})", mode="eval").body
+    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+        return None
+    if not isinstance(node, ast.Call) or node.args or not node.keywords:
+        return None
+    keywords: dict[str, Any] = {}
+    for kw in node.keywords:
+        if kw.arg is None:
+            return None
+        value = _literal_value(kw.value)
+        if value is _NOT_LITERAL:
+            return None
+        keywords[kw.arg] = value
+    return keywords
+
+
+def _declared_parameters(tool: Any) -> set[str] | None:
+    """The parameter names *tool* declares, or ``None`` when it declares none."""
+    parameters = getattr(getattr(tool, "metadata", None), "parameters", None)
+    if not parameters:
+        return None
+    return {str(getattr(p, "name", "")) for p in parameters}
+
+
+def read_call_arguments(raw: Any, tool: Any = None) -> dict[str, Any]:
+    """Decode a tool call's arguments into a mapping, whatever shape they came in.
+
+    Providers return a call's arguments as a JSON object text, and most of the
+    time that text decodes to an object. Some serving stacks pass through what
+    the model wrote instead — ``"arguments": "code='print(1)'"`` or
+    ``"arguments": "56*3+35"`` — and the decoded value is then a string. That
+    string is the call's argument, not an absence of one:
+
+    * a ``dict`` is returned as it is;
+    * a string is decoded as JSON; an object is returned;
+    * a string that decodes to a string, or is not JSON at all, is read again as
+      text: an object's JSON text is that object, keyword syntax
+      (``code='…'``, ``a=1, b="x"``; values read as literals, nothing is run)
+      gives those keywords — when *tool* is given, only if it declares every
+      one of them — and anything else is handed on under ``__raw_input__`` for
+      the agent's mapper to bind to the tool's parameter;
+    * ``None`` or an empty string is no arguments, ``{}``;
+    * any other decoded value (a number, a list) is handed on as its JSON text
+      under ``__raw_input__``.
+
+    Args:
+        raw: The arguments as the provider or the reader produced them.
+        tool: The tool the call names, when known; keyword syntax is only read
+            as keywords for the parameters it declares.
+
+    Returns:
+        The arguments as a mapping. A value under ``__raw_input__`` is always a
+        string.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    if not isinstance(raw, str):
+        return {RAW_INPUT_KEY: json.dumps(raw, default=str)}
+    text = raw.strip()
+    if not text:
+        return {}
+    try:
+        decoded: Any = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        decoded = text
+    else:
+        if isinstance(decoded, dict):
+            return decoded
+        if decoded is None:
+            return {}
+        if not isinstance(decoded, str):
+            logger.info(ARGUMENTS_AS_STRING_LOG, "raw value")
+            return {RAW_INPUT_KEY: json.dumps(decoded)}
+    value = decoded.strip()
+    if not value:
+        return {}
+    if value.startswith("{"):
+        try:
+            obj = json.loads(value)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            obj = None
+        if isinstance(obj, dict):
+            logger.info(ARGUMENTS_AS_STRING_LOG, "object text")
+            return obj
+    keywords = _keyword_arguments(value)
+    declared = _declared_parameters(tool) if tool is not None else None
+    if keywords and (declared is None or set(keywords) <= declared):
+        logger.info(ARGUMENTS_AS_STRING_LOG, "keywords")
+        return keywords
+    logger.info(ARGUMENTS_AS_STRING_LOG, "raw value")
+    return {RAW_INPUT_KEY: value}
+
+
 def _as_tool_call(
     blob: str, tools: dict[str, Any] | None
 ) -> tuple[str, dict[str, Any]] | None:
@@ -196,10 +309,17 @@ def _as_tool_call(
     if args is None:
         args = call.get("parameters")
     if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except (json.JSONDecodeError, TypeError):
-            args = None
+        # A string argument is read when it names a held tool (the string is
+        # then that tool's argument); otherwise only an object's JSON text is
+        # a call, so a JSON answer that merely has these keys stays an answer.
+        held = tools.get(name) if tools and name in tools else None
+        if held is not None:
+            args = read_call_arguments(args, held)
+        else:
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, TypeError):
+                args = None
     if isinstance(args, dict):
         return name, args
     if args is not None:
@@ -303,11 +423,12 @@ def parse_call_syntax(raw: str) -> tuple[str, dict[str, Any], list[Any]] | None:
         calculator({"expression": "6*7"})    -> {"expression": "6*7"}
         calculator {"expression": "6*7"}     -> {"expression": "6*7"}
 
-    A single positional argument becomes ``__raw_input__``, which the agent's
-    existing mapper resolves against the tool's declared parameters — the same
-    route a plain ``Action Input:`` value already takes, so a one-argument call
-    needs no schema here. Several positional arguments are returned separately
-    for a caller that has the schema to map them onto.
+    A single positional argument becomes ``__raw_input__`` (as a string; a
+    number or a list is given as its JSON text), which the agent's existing
+    mapper resolves against the tool's declared parameters — the same route a
+    plain ``Action Input:`` value already takes, so a one-argument call needs
+    no schema here. Several positional arguments are returned separately for a
+    caller that has the schema to map them onto.
 
     Args:
         raw: The text following ``Action:``, with its surrounding quotes
@@ -371,7 +492,10 @@ def parse_call_syntax(raw: str) -> tuple[str, dict[str, Any], list[Any]] | None:
         return None
 
     if len(positional) == 1 and not keywords:
-        return name, {"__raw_input__": positional[0]}, []
+        value = positional[0]
+        return name, {
+            RAW_INPUT_KEY: value if isinstance(value, str) else json.dumps(value)
+        }, []
     return name, keywords, positional
 
 
@@ -487,13 +611,97 @@ def _escape_line_breaks(body: str, quotes: str) -> str:
     return "".join(out)
 
 
+#: A string value closed just before a run of ``)``/``]`` that is followed
+#: only by the object's closing braces: ``…print(sum([1, 2])")}}``.
+_MISPLACED_QUOTE_RE = re.compile(r'"([)\]]+)((?:\s*\})+\s*)$')
+
+
+def _move_closing_quote(body: str) -> str | None:
+    """*body* with a string's closing quote moved past the brackets after it.
+
+    A model writing a program as a JSON string sometimes closes the string one
+    bracket early — ``"print(sum([1, 2])")}}`` — so the brackets that end the
+    program sit outside it and the object no longer parses. Only that shape,
+    at the very end of the body, is moved; ``None`` when the body ends
+    otherwise.
+    """
+    match = _MISPLACED_QUOTE_RE.search(body)
+    if match is None:
+        return None
+    return body[:match.start()] + match.group(1) + '"' + match.group(2)
+
+
+def _bracket_balance(text: str) -> tuple[int, int]:
+    """Open minus closed parentheses and square brackets in *text*."""
+    return text.count("(") - text.count(")"), text.count("[") - text.count("]")
+
+
+def _moved_string_is_whole(data: Any, run: str) -> bool:
+    """Whether moving *run* inside a string made that string's brackets whole.
+
+    The quote is only misplaced when the string was missing exactly those
+    brackets; a string that was whole already and had a stray bracket after it
+    would be made wrong by the move.
+    """
+    values: list[Any] = [data]
+    while values:
+        value = values.pop()
+        if isinstance(value, dict):
+            values.extend(value.values())
+        elif isinstance(value, list):
+            values.extend(value)
+        elif isinstance(value, str) and value.endswith(run):
+            if _bracket_balance(value) == (0, 0) and _bracket_balance(
+                value[:-len(run)]
+            ) != (0, 0):
+                return True
+    return False
+
+
+def _escape_inner_quotes(body: str) -> str | None:
+    """*body* with the double quotes inside its string values escaped.
+
+    A program written as a JSON string often carries its own double quotes
+    unescaped — ``"code": "f(x, key="a")"`` — so the string ends early and
+    the object no longer parses. Inside a string, a quote that is followed
+    (after spaces) by ``,``, ``:``, ``}``, ``]`` or the end of the body closes
+    it; any other quote is taken as part of the value. ``None`` when nothing
+    was escaped.
+    """
+    out: list[str] = []
+    in_string = escaped = changed = False
+    for i, char in enumerate(body):
+        if not in_string:
+            if char == '"':
+                in_string = True
+            out.append(char)
+            continue
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            rest = body[i + 1:].lstrip(" \t\r\n")
+            if not rest or rest[0] in ",:}]":
+                in_string = False
+            else:
+                out.append('\\"')
+                changed = True
+                continue
+        out.append(char)
+    return "".join(out) if changed else None
+
+
 def read_call_body(body: str) -> tuple[str, Any] | None:
     """Read the body of a tagged call that is not strict JSON.
 
-    Two shapes are read, in order: JSON whose string values carry raw line
-    breaks — a program written out line by line — and a Python literal, where
-    the arguments are quoted the way Python quotes them. A body that is strict
-    JSON returns ``None``: the ordinary readers own it.
+    Four shapes are read, in order: JSON whose string values carry raw line
+    breaks — a program written out line by line — a Python literal, where the
+    arguments are quoted the way Python quotes them, JSON whose last string
+    was closed before the brackets that end it (``"print(f([1])")}}``) — read
+    only when moving the quote makes that string's brackets whole — and JSON
+    whose string values carry unescaped double quotes (``"f(k="a")"``). A body
+    that is strict JSON returns ``None``: the ordinary readers own it.
 
     Args:
         body: The text inside the call's tags.
@@ -522,6 +730,24 @@ def read_call_body(body: str) -> tuple[str, Any] | None:
             continue
         if value is not _NOT_LITERAL:
             return "python literal", value
+    moved = _move_closing_quote(body)
+    if moved is not None:
+        run = _MISPLACED_QUOTE_RE.search(body).group(1)  # type: ignore[union-attr]
+        for candidate in (moved, _escape_line_breaks(moved, '"')):
+            try:
+                value = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if _moved_string_is_whole(value, run):
+                return "closing quote moved", value
+            break
+    inner = _escape_inner_quotes(body)
+    if inner is not None:
+        for candidate in (inner, _escape_line_breaks(inner, '"')):
+            try:
+                return "inner quotes escaped", json.loads(candidate)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
     return None
 
 
@@ -553,6 +779,13 @@ def _read_tagged_call(
                 candidates.append(blob)
         for candidate in candidates:
             read = read_call_body(candidate)
+            if read is None and candidate is not body and not body[:start].strip():
+                # A whole, strict JSON object with other text after it inside
+                # the tag: the object is the call, the text is not part of it.
+                try:
+                    read = "object followed by text", json.loads(candidate)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    read = None
             if read is None:
                 continue
             how, data = read
@@ -562,11 +795,8 @@ def _read_tagged_call(
             call = inner if isinstance(inner, dict) else data
             name = call.get("name")
             args = call.get("arguments", call.get("parameters"))
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    args = None
+            if isinstance(args, str) and isinstance(name, str) and name in tools:
+                args = read_call_arguments(args, tools[name])
             if isinstance(name, str) and name in tools and isinstance(args, dict):
                 return name, args, how if closed >= 0 else f"{how}, no closing tag"
     return None
@@ -745,9 +975,10 @@ def name_positional_arguments(
 
     ``file_operations('write', 'greet.py', 'print(1)')`` carries its values in
     the order the tool's own parameters are declared, which is the only thing
-    that can name them. Without the tool the values cannot be placed, so the
-    first is handed over as raw input — the same shape a plain ``Action Input:``
-    takes — rather than being dropped.
+    that can name them. When they cannot be named — more values than the tool
+    declares parameters, or a tool the agent does not hold — the call carries
+    no arguments: keeping only the first value would run a different call from
+    the one the model wrote.
 
     Args:
         tool_name: The name the call resolved to.
@@ -755,8 +986,8 @@ def name_positional_arguments(
         tools: The agent's tools by name, or ``None`` when unavailable.
 
     Returns:
-        The values under the tool's declared parameter names, or the first value
-        under ``__raw_input__`` when there is no schema to name them by.
+        The values under the tool's declared parameter names, or ``{}`` when
+        they cannot be named.
     """
     tool = (tools or {}).get(tool_name)
     parameters = getattr(getattr(tool, "metadata", None), "parameters", None)
@@ -764,7 +995,159 @@ def name_positional_arguments(
         names = [p.name for p in parameters]
         if len(names) >= len(positional):
             return dict(zip(names, positional, strict=False))
-    return {"__raw_input__": positional[0]}
+    logger.info(POSITIONAL_NOT_NAMED_LOG, tool_name, len(positional))
+    return {}
+
+
+def call_input(arguments: dict[str, Any]) -> str:
+    """The input a decoded call hands the agent's executor.
+
+    A value still waiting to be matched to the tool's parameters travels as the
+    text it is, so the executor's mapper binds it; anything else as the JSON
+    text of the mapping.
+    """
+    raw = arguments.get(RAW_INPUT_KEY) if isinstance(arguments, dict) else None
+    if isinstance(raw, str) and len(arguments) == 1:
+        return raw
+    return json.dumps(arguments, default=str)
+
+
+def missing_required_arguments(tool: Any, arguments: Any) -> list[str]:
+    """The required parameters a call's arguments leave without a value.
+
+    Only arguments that are a mapping — an object, or the JSON text of one —
+    are judged: plain text is bound to the tool's parameter by the agent's
+    mapper and is never refused here. A tool that declares no required
+    parameter, or that takes its input through an ``execute`` of its own, is
+    never refused either. A parameter the tool accepts under a synonym (an
+    ``action`` passed for ``operation``) counts as supplied.
+
+    Args:
+        tool: The tool the call names.
+        arguments: The call's arguments, as a mapping or as text.
+
+    Returns:
+        The names of the required parameters with no value, in declaration
+        order; empty when the call can be dispatched.
+    """
+    parameters = getattr(getattr(tool, "metadata", None), "parameters", None) or []
+    required = [str(p.name) for p in parameters if getattr(p, "required", False)]
+    if not required:
+        return []
+    from effgen.tools.base_tool import BaseTool
+
+    if isinstance(tool, BaseTool) and type(tool).execute is not BaseTool.execute:
+        return []
+    mapping: Any
+    if arguments is None:
+        mapping = {}
+    elif isinstance(arguments, dict):
+        mapping = arguments
+    elif isinstance(arguments, str):
+        text = arguments.strip()
+        if not text:
+            mapping = {}
+        else:
+            try:
+                mapping = json.loads(text)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return []
+    else:
+        return []
+    if not isinstance(mapping, dict):
+        return []
+    if mapping.get(RAW_INPUT_KEY) not in (None, ""):
+        return []
+    supplied = {k: v for k, v in mapping.items() if v is not None}
+    normalize = getattr(tool, "_normalize_selector", None)
+    if callable(normalize):
+        try:
+            supplied = normalize(dict(supplied))
+        except Exception:  # noqa: BLE001 - a tool's own hook never blocks a call
+            logger.debug("selector normalisation failed", exc_info=True)
+    return [name for name in required if supplied.get(name) is None]
+
+
+#: The languages a fenced block may be tagged with to be run by a code tool
+#: whose call the turn opened and left empty; an untagged block counts too.
+_RUNNABLE_FENCE_TAGS = frozenset({"", "python", "py", "python3"})
+_FENCED_BLOCK_RE = re.compile(r"```[ \t]*([\w+-]*)[ \t]*\n(.*?)```", re.DOTALL)
+
+#: Logged when a turn's fenced block is run as the call it opened and left empty.
+FENCED_BLOCK_CALL_LOG = "[call] ran the fenced block before an empty call to '%s'"
+
+
+def fenced_block_call(
+    text: str, tools: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """The call a turn announced with a fenced program and an empty call tag.
+
+    A model often writes its program in a fenced block, says it will run it,
+    and then opens a call it leaves empty. When the agent holds exactly one tool
+    of the code-execution category, that tool declares exactly one required
+    parameter and it takes a string, the last fenced block written before the
+    opening is that call's argument. A block after the opening, a turn that
+    opened no call, a call whose unread text names another held tool, or an
+    agent holding no such tool (or several) gives ``None``.
+
+    Args:
+        text: The turn's text.
+        tools: The agent's tools by name.
+
+    Returns:
+        ``(tool name, arguments)`` or ``None``.
+    """
+    if not text or not tools or "```" not in text:
+        return None
+    from effgen.tools.base_tool import ParameterType, ToolCategory
+
+    executors = [
+        (name, tool) for name, tool in tools.items()
+        if getattr(getattr(tool, "metadata", None), "category", None)
+        is ToolCategory.CODE_EXECUTION
+    ]
+    if len(executors) != 1:
+        return None
+    name, tool = executors[0]
+    required = [
+        p for p in (getattr(tool.metadata, "parameters", None) or [])
+        if getattr(p, "required", False)
+    ]
+    if len(required) != 1 or required[0].type is not ParameterType.STRING:
+        return None
+    blocks = list(_FENCED_BLOCK_RE.finditer(text))
+    spans = [(m.start(), m.end()) for m in blocks]
+    opening = -1
+    for marker in CALL_OPENING_MARKERS:
+        at = text.rfind(marker)
+        while at >= 0 and any(a <= at < b for a, b in spans):
+            at = text.rfind(marker, 0, at)
+        opening = max(opening, at)
+    if opening < 0:
+        return None
+    after = text[opening:]
+    if any(
+        other != name and re.search(rf"(?<![\w-]){re.escape(str(other))}(?![\w-])", after)
+        for other in tools
+    ):
+        # What follows the opening names another held tool: the turn asked for
+        # that call, and running the program instead would be a different one.
+        return None
+    before = [
+        m for m in blocks
+        if m.end() <= opening and m.group(1).lower() in _RUNNABLE_FENCE_TAGS
+        and m.group(2).strip()
+    ]
+    if not before:
+        return None
+    return str(name), {str(required[0].name): before[-1].group(2).strip("\n")}
+
+
+#: Logged when a call's positional values could not be given parameter names.
+POSITIONAL_NOT_NAMED_LOG = (
+    "[call] positional values could not be named for '%s' (%d values); the "
+    "call carries no arguments"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1258,8 +1641,10 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
                 call_data = json.loads(qwen_match.group(1))
                 tool_name = call_data.get("name") or call_data.get("function")
                 arguments = call_data.get("arguments") or call_data.get("parameters") or {}
-                if isinstance(arguments, str):
-                    arguments = json.loads(arguments)
+                if not isinstance(arguments, dict):
+                    arguments = read_call_arguments(
+                        arguments, (tools or {}).get(str(tool_name))
+                    )
                 if tool_name:
                     result.tool_name = tool_name
                     result.arguments = arguments
@@ -1353,8 +1738,10 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
                     call = calls[0]  # Take first tool call
                     tool_name = call.get("name") or call.get("function")
                     arguments = call.get("arguments") or call.get("parameters") or {}
-                    if isinstance(arguments, str):
-                        arguments = json.loads(arguments)
+                    if not isinstance(arguments, dict):
+                        arguments = read_call_arguments(
+                            arguments, (tools or {}).get(str(tool_name))
+                        )
                     if tool_name:
                         result.tool_name = tool_name
                         result.arguments = arguments

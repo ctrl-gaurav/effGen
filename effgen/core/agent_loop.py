@@ -66,10 +66,11 @@ from ..prompts.tool_contract import is_execution_tool
 from ..utils.prometheus_metrics import metrics as prom_metrics
 from ..utils.structured_logging import get_structured_logger
 from . import ledger as _ledger
-from .agent_config import AgentMode
+from .agent_config import DEFAULT_RECOVER_LOST_TOOL_CALLS, AgentMode
 from .agent_response import AgentResponse, StreamEvent
 from .agent_runtime import (
     CALL_NOT_READ_EMPTY,
+    CALL_NOT_READ_MISSING,
     CALL_NOT_READ_UNREAD,
     CALL_NOT_READ_WRITTEN,
     CONTINUE_REASONING_LINE,
@@ -103,6 +104,7 @@ from .agent_tool_loop import (
     ASK_AFTER_LOOP,
     ASK_AFTER_REPEATED_RESULT,
     LOST_CALL_ASK,
+    LOST_CALL_CONTINUE,
     LOST_CALL_REPORT,
     LOST_CALL_WARN,
     NativeToolLoop,
@@ -133,7 +135,14 @@ from .thread_budget import (
 )
 from .thread_compaction import resolve_policy
 from .tool_call_record import ToolCallList
-from .tool_calling import opened_call
+from .tool_calling import (
+    FENCED_BLOCK_CALL_LOG,
+    call_input,
+    fenced_block_call,
+    missing_required_arguments,
+    opened_call,
+    read_call_arguments,
+)
 from .tool_failure import ToolFailure, collecting_failures
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -343,7 +352,9 @@ class _LoopPolicy:
         recover_lost = bool(
             kwargs["recover_lost_tool_calls"]
             if "recover_lost_tool_calls" in kwargs
-            else getattr(agent.config, "recover_lost_tool_calls", False)
+            else getattr(
+                agent.config, "recover_lost_tool_calls", DEFAULT_RECOVER_LOST_TOOL_CALLS,
+            )
         )
         from ..prompts.answer_style import resolve_answer_style
 
@@ -1827,6 +1838,11 @@ def _lost_call(
     )
     if decision == LOST_CALL_REPORT:
         return _written_call(agent, state, guards.written_call, text)
+    if decision == LOST_CALL_CONTINUE:
+        logger.info(
+            "[call] the turn opened a tool call that could not be run (%s); "
+            "the run goes on", reason,
+        )
     if decision == LOST_CALL_ASK:
         requirable = policy.tools_travel_as_parameter and model_can_require_tool_call(
             agent.model
@@ -1845,12 +1861,83 @@ def _lost_call(
             )
         )
     elif decision == LOST_CALL_WARN:
+        logger.info(
+            "[call] the turn opened a tool call that could not be run (%s); "
+            "answered in words", reason,
+        )
         state.thread.append(
             NudgeStep(
                 text=NUDGE_NOT_USABLE, render_as="observation", nudge_id="not_usable",
             )
         )
     return None
+
+
+#: Logged each time a call is not dispatched for a missing required argument.
+MISSING_ARGUMENTS_LOG = (
+    "[call] not dispatched: '%s' is missing its required argument(s) %s; %s"
+)
+
+
+def _missing_arguments_reply(
+    agent: Any,
+    policy: _LoopPolicy,
+    state: _RunState,
+    tool_name: str,
+    missing: list[str],
+) -> str:
+    """What a call that left required parameters empty is answered with.
+
+    The call is not dispatched. The first such call of a run is handled like
+    any call that could not be read: sent back once, with a call required on
+    the next turn where the run recovers lost calls and the provider can
+    require one. Every later one is answered with what the tool would have
+    said — which parameters it requires — and counts as a declined call.
+
+    Args:
+        agent: The agent the run belongs to.
+        policy: The run's policy.
+        state: The run's conversation and guards.
+        tool_name: The tool the call named.
+        missing: The required parameters with no value.
+
+    Returns:
+        The reply the model reads for the call.
+    """
+    guards = state.guards
+    guards.missing_argument_calls += 1
+    names = ", ".join(missing)
+    if guards.missing_argument_calls == 1:
+        decision = guards.note_lost_call(
+            None,
+            can_ask=policy.recover_lost_tool_calls and not guards.tools_suppressed(),
+        )
+        if decision == LOST_CALL_ASK:
+            requirable = policy.tools_travel_as_parameter and model_can_require_tool_call(
+                agent.model
+            )
+            logger.info(
+                MISSING_ARGUMENTS_LOG, tool_name, names,
+                "requiring a call on the next turn" if requirable
+                else "asking again (no request-level constraint available here)",
+            )
+            return NUDGE_CALL_NOT_READ.format(
+                reason=CALL_NOT_READ_MISSING.format(names=names)
+            )
+    else:
+        guards.note_declined()
+    logger.info(MISSING_ARGUMENTS_LOG, tool_name, names, "answered with what it requires")
+    tool = (agent.tools or {}).get(tool_name)
+    reply = f"Tool '{tool_name}' was not run: parameter '{missing[0]}' is required."
+    next_step = getattr(tool, "_validation_next_step", None)
+    if callable(next_step):
+        try:
+            hint = next_step(f"Parameter '{missing[0]}' is required")
+        except Exception:  # noqa: BLE001 - guidance is optional
+            hint = ""
+        if hint:
+            reply = f"{reply} {hint}"
+    return reply
 
 
 #: Whether a strategy class's ``parse_response`` takes ``lenient``, read once
@@ -2470,12 +2557,9 @@ def _take_turn(
         for _tc in native_tool_calls:
             _fn = _tc.get("function", _tc)
             _tname = _fn.get("name", "")
-            _targs = _fn.get("arguments", {})
-            if isinstance(_targs, str):
-                try:
-                    _targs = json.loads(_targs)
-                except (json.JSONDecodeError, TypeError):
-                    _targs = {"__raw_input__": _targs}
+            _targs = read_call_arguments(
+                _fn.get("arguments", {}), (agent.tools or {}).get(_tname),
+            )
             _call_id = _tc.get("id") or None
             _declined: str | None = None
             yield from emitter.tool_call(_tname, json.dumps(_targs, default=str))
@@ -2484,12 +2568,20 @@ def _take_turn(
                 guards.note_declined()
                 _obs = unavailable_tool_observation(_tname)
                 batch_observations.append(f"[{_tname}] → {_obs}")
+            elif _tname in agent.tools and (
+                _missing := missing_required_arguments(agent.tools[_tname], _targs)
+            ):
+                _declined = "missing_arguments"
+                _obs = _missing_arguments_reply(
+                    agent, policy, state, _tname, _missing,
+                )
+                batch_observations.append(f"[{_tname}] → {_obs}")
             elif _tname in agent.tools:
                 _batch_start = time.time()
                 with start_tool_call(
                     tool_name=_tname, tool_input=str(_targs)[:500]
                 ) as _btspan, collecting_failures() as _bfailures:
-                    _obs = agent._execute_tool(_tname, json.dumps(_targs))
+                    _obs = agent._execute_tool(_tname, call_input(_targs))
                     try:
                         _btspan.set_attribute(ToolAttrs.STATUS, "ok")
                     except Exception:
@@ -2566,7 +2658,7 @@ def _take_turn(
         )
     elif native_tool_calls:
         strategy_result = agent._parse_native_tool_calls(
-            native_tool_calls, response.get("text") or "",
+            native_tool_calls, response.get("text") or "", tools=agent.tools,
         )
         parsed = agent._tool_call_result_to_dict(strategy_result)
     else:
@@ -2803,8 +2895,17 @@ def _take_turn(
         and (not proposed or proposed not in agent.tools)
     ):
         opened = opened_call(response["text"])
-        unmade = _unmade_call_in(agent, guards, response["text"])
-        if opened or unmade:
+        fenced = fenced_block_call(response["text"], agent.tools) if opened else None
+        unmade = (
+            None if fenced else _unmade_call_in(agent, guards, response["text"])
+        )
+        if fenced is not None:
+            # The turn wrote its program in a fenced block and then opened a
+            # call it left empty: the block is that call's argument.
+            logger.info(FENCED_BLOCK_CALL_LOG, fenced[0])
+            parsed["action"] = fenced[0]
+            parsed["action_input"] = json.dumps(fenced[1])
+        elif opened or unmade:
             reason = (
                 CALL_NOT_READ_WRITTEN if not opened
                 else CALL_NOT_READ_EMPTY if opened == "empty"
@@ -2982,6 +3083,19 @@ def _take_turn(
                 thread, action, action_input,
                 call_id=call_id, reasoning=reasoning,
                 reason="tool_unavailable", text=observation,
+            )
+            yield from emitter.observation(action, observation)
+        elif missing := missing_required_arguments(agent.tools[action], action_input):
+            # A call that does not carry what the tool requires is not run: the
+            # tool would only refuse it, and the model is asked for the call
+            # again instead.
+            observation = _missing_arguments_reply(
+                agent, policy, state, action, missing,
+            )
+            _decline_call(
+                thread, action, action_input,
+                call_id=call_id, reasoning=reasoning,
+                reason="missing_arguments", text=observation,
             )
             yield from emitter.observation(action, observation)
         else:

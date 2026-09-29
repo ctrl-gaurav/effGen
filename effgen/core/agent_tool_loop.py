@@ -251,6 +251,9 @@ class NativeToolLoop:
     #: Turns that opened a call nothing could run — a tag with nothing after
     #: it, arguments that did not read, or a call written out as text.
     lost_calls: int = 0
+    #: Calls not dispatched because they left a required parameter without a
+    #: value.
+    missing_argument_calls: int = 0
     #: Tools this run actually dispatched.
     executed_tools: set[str] = field(default_factory=set)
     #: One record per dispatched call, in call order — what
@@ -448,14 +451,22 @@ class NativeToolLoop:
     # Repeat detection
     # ------------------------------------------------------------------
     @staticmethod
-    def normalize_input(action_input: str) -> str:
+    def normalize_input(action_input: Any) -> str:
         """Return *action_input* in a form two equivalent calls share.
 
         JSON arguments are re-serialized with sorted keys so the same call
         written with its keys in a different order compares equal; anything that
-        is not JSON is compared as trimmed text.
+        is not JSON is compared as trimmed text. A value that is not a string
+        (a mapping, a number) is compared as its JSON text; this never raises.
         """
-        normalized = (action_input or "").strip()
+        if action_input is None:
+            return ""
+        if not isinstance(action_input, str):
+            try:
+                return json.dumps(action_input, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                return str(action_input).strip()
+        normalized = action_input.strip()
         try:
             return json.dumps(json.loads(normalized), sort_keys=True)
         except (json.JSONDecodeError, TypeError):

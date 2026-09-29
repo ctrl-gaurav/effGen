@@ -374,11 +374,11 @@ class TestPositionalCallArguments:
         assert result.arguments["path"] == "greet.py"
         assert result.arguments["content"] == "print(1)"
 
-    def test_without_the_tool_the_first_value_is_still_handed_over(self):
-        """No schema to name them by, so the call degrades rather than dropping
-        every value."""
+    def test_without_the_tool_the_values_are_not_guessed_at(self):
+        """No schema to name them by, so the call carries no arguments rather
+        than running a different call with only the first value."""
         result = ReActStrategy().parse_response('Action: unknown_tool("a", "b")')
-        assert result.arguments == {"__raw_input__": "a"}
+        assert result.arguments == {}
 
 
 class TestCallSyntaxIsNotOverEager:

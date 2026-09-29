@@ -157,10 +157,9 @@ def _parse_failed_generation_json_call(message: str) -> dict[str, Any] | None:
                 if arguments is None:
                     arguments = data.get("parameters")
                 if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except (json.JSONDecodeError, TypeError):
-                        arguments = {"__raw_input__": arguments}
+                    from effgen.core.tool_calling import read_call_arguments
+
+                    arguments = read_call_arguments(arguments)
                 if isinstance(name, str) and name and isinstance(arguments, dict):
                     return tool_call_entry(name, arguments)
         search_from = start + 1
@@ -193,6 +192,10 @@ def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
 
     try:
         arguments = json.loads(raw_args) if raw_args else {}
+        if isinstance(arguments, str):
+            from effgen.core.tool_calling import read_call_arguments
+
+            arguments = read_call_arguments(arguments)
     except (json.JSONDecodeError, TypeError):
         # A missing closing tag can leave trailing junk after the JSON object
         # (stray escape sequences, a second concatenated call) that a plain
