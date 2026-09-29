@@ -39,7 +39,7 @@ DEFAULT_MAX_TURNS_WITHOUT_PROGRESS: int | None = 2
 #: Whether a run reads a tool call its model wrote in a shape the strict reader
 #: refuses, and asks for a call again when one could not be read at all.
 #: See :attr:`AgentConfig.recover_lost_tool_calls`.
-DEFAULT_RECOVER_LOST_TOOL_CALLS = False
+DEFAULT_RECOVER_LOST_TOOL_CALLS = True
 
 
 def validate_max_turns_without_progress(value: Any) -> int | None:
@@ -202,11 +202,17 @@ class AgentConfig:
             protocol a run actually used comes back on
             ``response.metadata["prompt_protocol"]``.
         recover_lost_tool_calls: Whether a tool call the model wrote in a
-            shape the runtime could not run is read anyway (raw line breaks or
-            Python-style quoting inside the arguments), and a call that could
-            not be read at all is asked for once more with a call required
-            where the provider enforces it. ``False`` by default.
-            ``run(recover_lost_tool_calls=...)`` sets it for one call.
+            shape the runtime could not run is read anyway (raw line breaks,
+            Python-style quoting, a string closed before the brackets that end
+            it, or text after a whole call object inside its tag; a program in
+            a fenced block before an empty call when the agent holds one code
+            tool), and a call that could not be read at all is asked for once
+            more with a call required where the provider enforces it. ``True``
+            by default; ``False`` restores the strict reader of earlier
+            releases. Arguments that arrive as a string, calls missing a
+            required argument and positional values are handled the same way
+            under either setting. ``run(recover_lost_tool_calls=...)`` sets it
+            for one call; delegated sub-agents inherit it.
         max_turns_without_progress: How many turns in a row may bring no new
             tool result before the run is asked for its answer; ``2`` by
             default. The count starts after the run's first new result (before

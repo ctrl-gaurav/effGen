@@ -543,6 +543,8 @@ def _run_frame(model: Any, mode: str, frame: str, run: _Run) -> dict[str, int]:
             # answer request or the closing request; a probe that measured
             # with them would read a different model.
             max_turns_without_progress=None,
+            # Likewise calibrated against the strict reader.
+            recover_lost_tool_calls=False,
         ))
         try:
             response = agent.run(question)

@@ -177,12 +177,11 @@ class _Script(BaseModel):
 
 
 def _agent(model: _Script, tools: list[BaseTool], **config: Any) -> Agent:
-    """An agent with both settings opted in, unless a test says otherwise.
+    """An agent with both settings named, unless a test says otherwise.
 
-    Both ship off: ``max_turns_without_progress`` never asks for the answer,
-    and a call the runtime could not run is not recovered. The mechanisms are
-    exercised here with them on, and the shipped defaults have tests of their
-    own.
+    The mechanisms are exercised here with both on explicitly, so a change of
+    the shipped defaults does not change what these tests exercise; the
+    shipped defaults have tests of their own.
     """
     options: dict[str, Any] = {
         "name": "probe", "model": model, "tools": tools,
@@ -442,8 +441,8 @@ def test_the_default_asks_after_two_and_none_turns_it_off() -> None:
     ).max_turns_without_progress is None
 
 
-def test_the_shipped_default_does_not_recover_a_lost_call(caplog) -> None:
-    """Off by default: the call is not read, and no call is required back.
+def test_recovery_off_does_not_recover_a_lost_call(caplog) -> None:
+    """``False``: the call is not read, and no call is required back.
 
     The turn is sent back in words once and reported the second time, which is
     what the loop did before any of this existed.
@@ -454,10 +453,11 @@ def test_the_shipped_default_does_not_recover_a_lost_call(caplog) -> None:
     agent = Agent(AgentConfig(
         name="probe", model=model, tools=[tool], max_iterations=10,
         raise_on_error=False, enable_memory=False, tool_calling_mode="hybrid",
+        recover_lost_tool_calls=False,
     ))
     response = agent.run(TASK)
 
-    assert AgentConfig(model=_Script([])).recover_lost_tool_calls is False
+    assert AgentConfig(model=_Script([])).recover_lost_tool_calls is True
     assert not _lines(caplog, "not strict JSON")
     assert tool.inputs == []
     assert _required(model) == [False, False]

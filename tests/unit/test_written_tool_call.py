@@ -169,15 +169,25 @@ def test_tagged_call_block_fails_on_the_first_turn():
     """The shape a small model emits under native tool calling costs one call.
 
     ``<calculator> {…} </calculator>`` survives answer sanitization, so without
-    the guard it is returned as a successful answer. It is deterministic for the
-    model that produces it, so the turn is reported at once rather than retried.
+    the guard it is returned as a successful answer. With lost-call recovery
+    off it is reported at once rather than retried.
     """
-    agent = _agent([TAGGED_CALL_BLOCK], mode="hybrid", native=True)
+    agent = _agent([TAGGED_CALL_BLOCK], mode="hybrid", native=True,
+                   recover_lost_tool_calls=False)
     resp = agent.run("What is 379 * 68?")
     assert resp.success is False
     assert resp.metadata["reason"] == "written_tool_call"
     assert resp.metadata["error"]["tool"] == "calculator"
     assert agent.model.calls == 1, "a deterministic outcome must not be re-billed"
+
+
+def test_the_shipped_default_asks_once_before_it_reports_a_written_call():
+    """At the default a written call is sent back once, then reported."""
+    agent = _agent([TAGGED_CALL_BLOCK], mode="hybrid", native=True)
+    resp = agent.run("What is 379 * 68?")
+    assert resp.success is False
+    assert resp.metadata["reason"] == "written_tool_call"
+    assert agent.model.calls == 2
 
 
 def test_a_run_that_recovers_lost_calls_asks_once_before_it_reports():
