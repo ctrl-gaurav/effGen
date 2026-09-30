@@ -142,7 +142,8 @@ document that is exactly what it says it is.
 ### One agent, many conversations
 
 `session_id=` on the constructor binds a conversation to the agent for its
-whole life. A server handling many users wants the opposite: one agent, and the
+whole life: every `run()` and `stream()` turn is appended to it and saved.
+A server handling many users wants the opposite: one agent, and the
 conversation named per call. Pass `session=` to `run()`:
 
 ```python

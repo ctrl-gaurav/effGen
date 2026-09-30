@@ -487,3 +487,35 @@ def test_the_agent_s_own_session_and_memory_still_behave_as_plain_attributes(att
         getattr(agent, attr)
     setattr(agent, attr, original)
     assert getattr(agent, attr) is original
+
+
+@pytest.mark.parametrize("tools", [False, True], ids=["no-tools", "tool-loop"])
+def test_a_streamed_turn_is_saved_to_the_session_the_agent_is_bound_to(tools, _sessions_dir):
+    """``session_id=`` binds a conversation for the agent's whole life, streams included.
+
+    Each streamed turn reaches the session file, so a new agent bound to the
+    same id continues the conversation; a stream given its own ``session=``
+    records there and leaves the bound session alone.
+    """
+    agent = Agent(AgentConfig(
+        name="bound", model=EchoModel(tools=tools), tools=[Echo()] if tools else [],
+        max_iterations=6, raise_on_error=False, enable_sub_agents=False,
+    ), session_id="bound-conv")
+    for turn in range(2):
+        "".join(str(x) for x in agent.stream(_task(1, turn)))
+    saved = Session.load("bound-conv", str(_sessions_dir))
+    users = [m for m in saved.messages if m.get("role") == "user"]
+    assert [m["content"] for m in users] == [_task(1, 0), _task(1, 1)]
+
+    other = Session(session_id="other-conv")
+    "".join(str(x) for x in agent.stream(_task(2, 0), session=other))
+    assert sum(1 for m in other.messages if m.get("role") == "user") == 1
+    again = Session.load("bound-conv", str(_sessions_dir))
+    assert "NONCE-02" not in json.dumps(again.messages)
+
+    fresh = Agent(AgentConfig(
+        name="bound", model=EchoModel(), max_iterations=6,
+        raise_on_error=False, enable_sub_agents=False,
+    ), session_id="bound-conv")
+    answer = str(fresh.run(_task(1, 2)).output)
+    assert "NONCE-010000" in answer and "NONCE-010001" in answer

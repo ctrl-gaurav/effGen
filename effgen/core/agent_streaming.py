@@ -86,7 +86,7 @@ class AgentStreamingMixin:
 
         def _open_stream_scope(self, scope: Any) -> Any: ...
 
-        def _run_scope(self) -> Any: ...
+        session: Any
 
         def _save_session_turn(
             self, session: Any, task: Any, output: Any, response: Any,
@@ -127,20 +127,20 @@ class AgentStreamingMixin:
         acc["model_calls"] = acc.get("model_calls", 0) + 1
 
     def _save_stream_turn(self, task: Any, answer: str, response: Any) -> None:
-        """Append a streamed turn to the session the stream was given, if any.
+        """Append a streamed turn to the stream's session, as a run's would be.
 
-        Only a ``stream(..., session=...)`` call records its turn this way; a
-        stream without one keeps its turn in the agent's own memory, as before.
+        That is the session passed as ``stream(..., session=...)``, or else the
+        one the agent is bound to (``session_id=`` or an assigned
+        ``agent.session``). An agent with neither keeps the turn in its own
+        memory only.
         """
-        scope = self._run_scope()
-        if scope is None or scope.conversation is None:
+        session = self.session
+        if session is None:
             return
         run_id = None
         if response is not None:
             run_id = (getattr(response, "metadata", None) or {}).get("run_id")
-        self._save_session_turn(
-            scope.conversation[0], task, answer, response, run_id=run_id,
-        )
+        self._save_session_turn(session, task, answer, response, run_id=run_id)
 
     def _stream_direct(self, task: str, on_answer: Callable[[str], None] | None = None,
                        include_events: bool = False,

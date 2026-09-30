@@ -171,6 +171,11 @@ See [conventions](api/conventions.md) for the full contract.
 - **`stream()` honours `session=`.** It used to ignore it and write the turn to
   the agent's own memory; it now reads that conversation's history and appends
   the streamed turn to it.
+- **A streamed turn is saved to the agent's bound session.** On an agent
+  created with `session_id=` (or given `agent.session`), `stream()` now appends
+  each answered turn to that session and saves it, as `run()` always did; in
+  1.2 streamed turns stayed in memory and were missing from the session file,
+  so a later process continuing the conversation never saw them.
 - **A run whose input a guardrail blocks** leaves the agent's session as it was;
   in 1.2 a blocked `run(session=...)` left that session on the agent.
 - Per-call middleware (`run(middleware=[...])`) applies to that call's model
