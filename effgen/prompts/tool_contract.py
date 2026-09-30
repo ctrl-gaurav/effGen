@@ -79,10 +79,16 @@ TOOL_CONTRACT_GENERAL = (
 #: itself. One step per call, and the tool has the last word where the two
 #: disagree: a model that hands the whole task to a calculator loses the steps
 #: it would otherwise have taken.
+#:
+#: It opens by asking for the model's own working first. Measured against the
+#: shorter text that states only the checking sentences, the model makes fewer
+#: calls for the same answers: it sends the tool fewer of the steps.
 TOOL_CONTRACT_VERIFY = (
-    "Use the tools to check the steps you are least sure of, one step per call, "
-    "and correct yourself if a tool disagrees with you. Do not hand a tool the "
-    "whole task at once."
+    "First work the task out yourself, in your own words, step by step, and say "
+    "what each step gives. Then use the tools to check the steps you are least "
+    "sure of, one step per call, and correct yourself if a tool disagrees with "
+    "you. Do not hand a tool the whole task at once, and do not skip the "
+    "reasoning and call a tool instead. Finish by stating the final answer."
 )
 
 #: Stated for tools that run code or system commands — work the model cannot
@@ -91,11 +97,10 @@ TOOL_CONTRACT_VERIFY = (
 #: produced.
 #:
 #: This is the one contract that still asks for a line of narration before the
-#: call. Taking it out is **unmeasured**: the run that appeared to condemn it
-#: also moved where the contract was read, and the movement belonged to the
-#: placement rather than to the wording. A tool that does work the model cannot
-#: do is the case where saying what is about to be computed plausibly earns its
-#: tokens, so the shipped wording stays until something measures it alone.
+#: call. Measured clause by clause, taking that line out cost a mid-size model
+#: accuracy on hard programming tasks and made its runs longer, and a text
+#: without the two closing sentences cost another model accuracy on the same
+#: tasks, so the text stays whole.
 TOOL_CONTRACT_EXECUTE = (
     "Use the tools to do this task rather than working it out in your head. Say "
     "in one line what you are about to compute, call the tool to compute it, "
@@ -109,6 +114,13 @@ TOOL_CONTRACT_EXECUTE = (
 #: material to answer from, and a run that returns a retrieved passage verbatim
 #: has answered a different question from the one asked. Says nothing about
 #: whether or how often to search — that is the caller's and the loop's.
+#:
+#: An earlier closing sentence — if what comes back does not answer the question,
+#: say so and name what is missing — is not stated here. Measured against this
+#: text, it made a capable model answer without searching at all on many
+#: questions: fewer calls, fewer right answers. A prompt written as ReAct text
+#: still closes with that instruction after a search has returned, where it can
+#: only be about what came back (:mod:`effgen.core.retrieval_requery` reads it).
 TOOL_CONTRACT_LOOKUP = (
     "The tools bring back source material, not the answer. Answer the question "
     "yourself, in the form it asks for, from what they return, and do not "

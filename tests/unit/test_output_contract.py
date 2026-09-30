@@ -207,25 +207,33 @@ class TestNoContractAsksForMoreOutput:
 
     #: Phrases that ask for text the task did not ask for. Each one was in a
     #: shipped contract and each one is paid for on every request that carries
-    #: it.
+    #: it. The computation contract's opening asks for the model's own working
+    #: and is allowed there alone, because it measured shorter runs than the
+    #: text without it: the model calls the tool for fewer of the steps.
+    #: :data:`ONLY_IN` names the one contract each such phrase may appear in.
     DEMANDS = (
         "in your own words",
         "say what each step gives",
         "name what is missing",
         "step by step",
     )
+    ONLY_IN = {"in your own words": TOOL_CONTRACT_VERIFY,
+               "say what each step gives": TOOL_CONTRACT_VERIFY,
+               "step by step": TOOL_CONTRACT_VERIFY}
 
     @pytest.mark.parametrize("phrase", DEMANDS)
     def test_no_contract_asks_the_model_to_write_more(self, phrase):
         for contract in self.FOUR:
+            if contract is self.ONLY_IN.get(phrase):
+                continue
             assert phrase not in contract.lower(), contract
 
     def test_the_executing_contract_keeps_its_one_line_of_narration(self):
         """The executing contract alone still asks for a line of narration.
 
-        A tool that does work the model cannot do is the case where saying what
-        is about to be computed plausibly earns its tokens, so that wording stays
-        until something measures it on its own; the other contracts ask for none.
+        Measured on its own, taking that line out of the executing contract cost
+        accuracy on hard programming tasks and made runs longer; the other
+        contracts ask for none.
         """
         assert "say in one line" in TOOL_CONTRACT_EXECUTE.lower()
         for contract in (TOOL_CONTRACT_GENERAL, TOOL_CONTRACT_VERIFY,
@@ -235,9 +243,12 @@ class TestNoContractAsksForMoreOutput:
     def test_the_four_texts_are_what_they_are(self):
         """Pinned verbatim: this text is what a request is billed for."""
         assert TOOL_CONTRACT_VERIFY == (
-            "Use the tools to check the steps you are least sure of, one step "
-            "per call, and correct yourself if a tool disagrees with you. Do "
-            "not hand a tool the whole task at once."
+            "First work the task out yourself, in your own words, step by step, "
+            "and say what each step gives. Then use the tools to check the steps "
+            "you are least sure of, one step per call, and correct yourself if a "
+            "tool disagrees with you. Do not hand a tool the whole task at once, "
+            "and do not skip the reasoning and call a tool instead. Finish by "
+            "stating the final answer."
         )
         assert TOOL_CONTRACT_LOOKUP == (
             "The tools bring back source material, not the answer. Answer the "

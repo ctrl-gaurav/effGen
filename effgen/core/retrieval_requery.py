@@ -20,10 +20,10 @@ observation was unhelpful: the tool reported an error, the tool returned
 nothing, and the model's own turn saying the material does not answer the
 question. The first two are one cheap test each and are checked first; the third
 is what actually fires. It is a general signal rather than a guess about prose
-because the framework asked for it: the closing line of a retrieval prompt and
-the lookup contract a retrieval tool is given both end with the same sentence,
-and both are selected from the tool's declared category. Detecting that sentence
-being obeyed is recognising compliance with a contract the framework states.
+because the framework asked for it: the closing line of a retrieval prompt ends
+with that sentence, and it is stated because of the tool's declared category.
+Detecting that sentence being obeyed is recognising compliance with an
+instruction the framework gives.
 
 **The claim, not the prose around it.** :func:`declines_from_context` reads what
 the answer commits to — the text after its last answer label, or the whole text
