@@ -88,6 +88,21 @@ _SEED = 7
 _MAX_TOKENS = 256
 _MAX_ITERATIONS = 3
 
+#: What each probe run tells the model about its search tool: the text the
+#: thresholds above were calibrated with, stated verbatim. It is pinned rather
+#: than selected from the tool's category so that a later change to the
+#: framework's own tool contract does not silently move a probe calibrated
+#: against this one (and stored under the same :data:`PROBE_VERSION`). It equals
+#: the shipped lookup contract; a change to that contract that makes a model call
+#: its search tool less often is read differently here, so such a change comes
+#: with a new copy and a new :data:`PROBE_VERSION`, not a silent drift between the
+#: two.
+_PROBE_TOOL_CONTRACT = (
+    "The tools bring back source material, not the answer. Answer the question "
+    "yourself, in the form it asks for, from what they return, and do not "
+    "return a passage as the answer."
+)
+
 #: ``(shape, question, what the search tool returns, tokens the answer must carry)``.
 #: Every entity is fictional, so a right answer can only come from the tool.
 _ITEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
@@ -545,6 +560,8 @@ def _run_frame(model: Any, mode: str, frame: str, run: _Run) -> dict[str, int]:
             max_turns_without_progress=None,
             # Likewise calibrated against the strict reader.
             recover_lost_tool_calls=False,
+            # And against this text, whatever the lookup contract says now.
+            tool_contract=_PROBE_TOOL_CONTRACT,
         ))
         try:
             response = agent.run(question)

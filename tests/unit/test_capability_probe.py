@@ -530,3 +530,52 @@ def test_persistence_off_keeps_the_store_in_memory(monkeypatch, tmp_path):
     agent_for(model)
     assert model.calls == 16
     assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# What the probe tells the model is fixed, whatever the tool contract says
+# ---------------------------------------------------------------------------
+
+
+class _Recording(Scripted):
+    """A scripted model that also keeps the text of every request."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.prompts: list[str] = []
+
+    def generate(self, prompt, config=None, **kw):
+        text = prompt if isinstance(prompt, str) else json.dumps(prompt, default=str)
+        with self.lock:
+            self.prompts.append(text)
+        return super().generate(prompt, config, **kw)
+
+
+@pytest.mark.parametrize("kind", ["resolve", "native_broken"])
+def test_the_probe_states_its_own_contract_when_the_lookup_contract_changes(monkeypatch, kind):
+    """The thresholds were calibrated against one text; a new lookup contract must not move them."""
+    from effgen.prompts import tool_contract as tc
+
+    changed = "A different sentence about search tools."
+    monkeypatch.setitem(tc.TOOL_CONTRACTS, ToolCategory.INFORMATION_RETRIEVAL, changed)
+    model = _Recording(kind)
+    probe = cp.probe_tool_calling(model)
+    assert probe is not None and probe.source == "ran"
+    assert model.prompts, "the probe sent no request"
+    assert not [text for text in model.prompts if changed in text]
+    pinned = json.dumps(cp._PROBE_TOOL_CONTRACT)[1:-1]
+    stating = [text for text in model.prompts if cp._PROBE_TOOL_CONTRACT in text or pinned in text]
+    # The contract opens each run (a later turn carries the run's own steps instead).
+    assert len(stating) >= 8
+
+
+def test_the_probes_copy_is_the_shipped_lookup_text():
+    """The copy may not drift from the shipped text without a new probe version.
+
+    A lookup text that makes a model search less often reads differently in the
+    probe, so the two move together: a new lookup contract comes with a new copy
+    and a new ``PROBE_VERSION``.
+    """
+    from effgen.prompts.tool_contract import TOOL_CONTRACT_LOOKUP
+
+    assert cp._PROBE_TOOL_CONTRACT == TOOL_CONTRACT_LOOKUP
