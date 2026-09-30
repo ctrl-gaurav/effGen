@@ -80,15 +80,13 @@ TOOL_CONTRACT_GENERAL = (
 #: disagree: a model that hands the whole task to a calculator loses the steps
 #: it would otherwise have taken.
 #:
-#: It opens by asking for the model's own working first. Measured against the
-#: shorter text that states only the checking sentences, the model makes fewer
-#: calls for the same answers: it sends the tool fewer of the steps.
+#: An opening that asks for the model's own working first is not stated: it
+#: cut calls but lengthened every answer and the wall time of the run for no
+#: gain in right answers, and it put step-by-step working into short answers.
 TOOL_CONTRACT_VERIFY = (
-    "First work the task out yourself, in your own words, step by step, and say "
-    "what each step gives. Then use the tools to check the steps you are least "
-    "sure of, one step per call, and correct yourself if a tool disagrees with "
-    "you. Do not hand a tool the whole task at once, and do not skip the "
-    "reasoning and call a tool instead. Finish by stating the final answer."
+    "Use the tools to check the steps you are least sure of, one step per call, "
+    "and correct yourself if a tool disagrees with you. Do not hand a tool the "
+    "whole task at once."
 )
 
 #: Stated for tools that run code or system commands — work the model cannot

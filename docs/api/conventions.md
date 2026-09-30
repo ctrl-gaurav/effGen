@@ -493,7 +493,7 @@ Which sentences depends on what the tools *are*, read from each tool's declared
 
 | the tools you attached | what the model is told |
 |---|---|
-| `COMPUTATION` | work the task out first, then use the tools to check the steps you are least sure of, one step per call |
+| `COMPUTATION` | use the tools to check the steps you are least sure of, one step per call |
 | `CODE_EXECUTION`, `SYSTEM` | use the tools to do the task rather than working it out in your head, and read the answer off what they return |
 | `INFORMATION_RETRIEVAL`, `EXTERNAL_API` | what comes back is source material, not the answer |
 | anything else, **or a set that mixes the above** | work through the task one step at a time, one step per call |

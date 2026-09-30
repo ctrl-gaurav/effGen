@@ -68,7 +68,7 @@ print(thread_as_text(response.thread))
   1. system (persona)
      | You are a careful assistant.
   2. system (contract)
-     | First work the task out yourself, in your own words, step b…
+     | Use the tools to check the steps you are least sure of, one…
   3. task
      | What is 6 * 7?
   4. thought
