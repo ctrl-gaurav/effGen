@@ -60,14 +60,18 @@ class CircuitBreaker:
             self._load_state()
 
     def _get_circuit(self, tool_name: str) -> _CoreCircuitBreaker:
-        if tool_name not in self._circuits:
-            self._circuits[tool_name] = _CoreCircuitBreaker(
+        circuit = self._circuits.get(tool_name)
+        if circuit is None:
+            # setdefault keeps whichever circuit was stored first, so two runs
+            # of one agent failing the same tool at once count both failures
+            # on the one circuit rather than one of them on a discarded copy.
+            circuit = self._circuits.setdefault(tool_name, _CoreCircuitBreaker(
                 name=tool_name,
                 failure_threshold=self.failure_threshold,
                 recovery_timeout=self.cooldown_seconds,
                 half_open_probes=1,
-            )
-        return self._circuits[tool_name]
+            ))
+        return circuit
 
     def is_available(self, tool_name: str) -> bool:
         """
@@ -117,7 +121,7 @@ class CircuitBreaker:
         if not self._persist_path:
             return
         data = {}
-        for name, circuit in self._circuits.items():
+        for name, circuit in list(self._circuits.items()):
             data[name] = {
                 "consecutive_failures": circuit._consecutive_failures,
                 "last_failure_time": circuit._opened_at,
