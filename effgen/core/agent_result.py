@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("effgen.core.agent")
 
 
+def _turn_thread(response: Any) -> dict[str, Any]:
+    """The run's steps as session-turn metadata, or nothing when it kept none."""
+    thread = (getattr(response, "metadata", None) or {}).get("thread")
+    to_dict = getattr(thread, "to_dict", None)
+    if callable(to_dict):
+        return {"thread": to_dict()}
+    return {"thread": dict(thread)} if isinstance(thread, dict) else {}
+
+
 class AgentResultMixin:
     """Run identity, session-turn metadata, and the run-history record."""
 
@@ -112,6 +121,47 @@ class AgentResultMixin:
         if cost is not None:
             meta["cost_usd"] = cost
         return {k: v for k, v in meta.items() if v is not None}
+
+    def _save_session_turn(
+        self,
+        session: Any,
+        task: Any,
+        output: Any,
+        response: AgentResponse | None,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        """Append one answered turn to *session* and save it.
+
+        Each message is stamped with the model, token counts, cost and latency
+        the turn was answered with (:meth:`_session_turn_metadata`), so a stored
+        conversation can be reviewed turn by turn. *response* is ``None`` for a
+        turn that produced no response object (a tool-free stream), which is
+        stamped with the model alone.
+        """
+        if response is not None:
+            turn_meta = self._session_turn_metadata(response, run_id=run_id)
+        else:
+            turn_meta = {"model": str(getattr(self, "model_name", None) or "unknown")}
+            if run_id:
+                turn_meta["run_id"] = run_id
+        session.add_message("user", task, **turn_meta)
+        # The reply carries the run's own steps as well, so a later turn can
+        # continue from the conversation the run had rather than from a reading
+        # of its text. The question does not: one copy per turn is the record.
+        session.add_message(
+            "assistant",
+            output,
+            **turn_meta,
+            **_turn_thread(response),
+        )
+        if turn_meta.get("model"):
+            session.metadata["model"] = turn_meta["model"]
+        session.metadata.setdefault("agent_name", getattr(self, "name", None))
+        try:
+            session.save()
+        except Exception as _e:
+            logger.warning("Failed to save session: %s", _e)
 
     def _record_dashboard_run(
         self,

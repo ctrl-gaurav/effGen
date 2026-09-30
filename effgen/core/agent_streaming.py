@@ -78,6 +78,21 @@ class AgentStreamingMixin:
             self, metadata: dict[str, Any] | None, response: Any = None,
         ) -> Exception: ...
 
+        def _get_call_state(self) -> Any: ...
+
+        def _new_run_scope(
+            self, *, session: Any = None, middleware: Any = None, run_context: Any = None,
+        ) -> Any: ...
+
+        def _open_stream_scope(self, scope: Any) -> Any: ...
+
+        def _run_scope(self) -> Any: ...
+
+        def _save_session_turn(
+            self, session: Any, task: Any, output: Any, response: Any,
+            *, run_id: str | None = None,
+        ) -> None: ...
+
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
     ) -> None:
@@ -110,6 +125,22 @@ class AgentStreamingMixin:
         if cost is not None:
             acc["cost_usd"] = (acc.get("cost_usd") or 0.0) + float(cost)
         acc["model_calls"] = acc.get("model_calls", 0) + 1
+
+    def _save_stream_turn(self, task: Any, answer: str, response: Any) -> None:
+        """Append a streamed turn to the session the stream was given, if any.
+
+        Only a ``stream(..., session=...)`` call records its turn this way; a
+        stream without one keeps its turn in the agent's own memory, as before.
+        """
+        scope = self._run_scope()
+        if scope is None or scope.conversation is None:
+            return
+        run_id = None
+        if response is not None:
+            run_id = (getattr(response, "metadata", None) or {}).get("run_id")
+        self._save_session_turn(
+            scope.conversation[0], task, answer, response, run_id=run_id,
+        )
 
     def _stream_direct(self, task: str, on_answer: Callable[[str], None] | None = None,
                        include_events: bool = False,
@@ -175,6 +206,7 @@ class AgentStreamingMixin:
         if answer:
             self.short_term_memory.add_user_message(task)
             self.short_term_memory.add_assistant_message(answer)
+            self._save_stream_turn(task, answer, None)
         if on_answer:
             on_answer(answer)
 
@@ -246,7 +278,11 @@ class AgentStreamingMixin:
                 media parts are supplied a clear error points to ``run()``.
             include_events: When True, yield typed :class:`StreamEvent` objects
                 instead of plain answer-text ``str`` deltas (opt-in; see above).
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments. ``session`` — a
+                :class:`~effgen.core.session.Session` or a session id — works as
+                it does on :meth:`run`: the stream builds its prompt from that
+                conversation's history and appends the answered turn to it,
+                leaving the agent's own memory alone.
 
         Yields:
             ``str`` answer-text deltas by default, or :class:`StreamEvent`
@@ -254,11 +290,47 @@ class AgentStreamingMixin:
         """
         usage_acc: dict[str, Any] = {}
         started = time.perf_counter()
-        ttft: float | None = None
         # Cleared up front so a stream that does not reach the loop — a
         # tool-free stream — never leaves the previous stream's record readable
         # as if it were this one's.
         self._last_stream_response = None
+        # What this stream holds that another call on this agent must not see:
+        # its conversation (``session=``), citations, cost and tracker. They
+        # are installed around each step below and removed before the consumer
+        # gets an item, so two streams — or a stream and a run — on one agent,
+        # in one thread or many, never read each other's.
+        scope = self._open_stream_scope(
+            self._new_run_scope(session=kwargs.pop("session", None))
+        )
+        try:
+            yield from self._stream_scoped(
+                scope, task, mode=mode, context=context, on_thought=on_thought,
+                on_tool_call=on_tool_call, on_observation=on_observation,
+                on_answer=on_answer, inputs=inputs, include_events=include_events,
+                usage_acc=usage_acc, started=started, **kwargs,
+            )
+        finally:
+            scope.close()
+
+    def _stream_scoped(
+        self,
+        scope: Any,
+        task: "str | Message | list[Any]",
+        *,
+        mode: AgentMode | None,
+        context: dict[str, Any] | None,
+        on_thought: Callable[[str], None] | None,
+        on_tool_call: Callable[[str, str], None] | None,
+        on_observation: Callable[[str], None] | None,
+        on_answer: Callable[[str], None] | None,
+        inputs: list[Any] | None,
+        include_events: bool,
+        usage_acc: dict[str, Any],
+        started: float,
+        **kwargs: Any,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """The body of :meth:`stream`, run with *scope* installed per step."""
+        ttft: float | None = None
         # The stream's ledger is current only while the stream is producing its
         # next item; the time the consumer holds an item is the caller's, and a
         # run the consumer starts meanwhile is not this stream's child.
@@ -278,11 +350,13 @@ class AgentStreamingMixin:
         )
         while True:
             ledger_token = _ledger.enter(ledger_rec)
+            scope_tokens = scope.enter()
             try:
                 item = next(items)
             except StopIteration:
                 break
             finally:
+                scope.leave(scope_tokens)
                 _ledger.leave(ledger_token)
             if ttft is None:
                 is_answer_text = (
@@ -297,7 +371,8 @@ class AgentStreamingMixin:
             if ledger_rec is not None:
                 ledger_rec.caller_wait(time.perf_counter() - handed_over)
 
-        stream_response = getattr(self, "_last_stream_response", None)
+        # This stream's own record, not whichever stream finished last.
+        stream_response = scope.call_state.stream_response
         run_ledger = (
             ledger_rec.close(getattr(stream_response, "iterations", None))
             if ledger_rec is not None else None
@@ -319,7 +394,7 @@ class AgentStreamingMixin:
         # A reconstructed per-turn record is built before these run-level
         # timings exist, so it is completed here rather than carrying its own
         # narrower numbers.
-        response = getattr(self, "_last_stream_response", None)
+        response = stream_response
         if response is not None:
             for key in ("prompt_tokens", "completion_tokens", "total_tokens",
                         "cost_usd"):
@@ -462,6 +537,7 @@ class AgentStreamingMixin:
                 # blocking path. The key is what a caller has always read to
                 # tell a fallback from a clean stream.
                 response.metadata["stream_fallback"] = True
+            self._get_call_state().stream_response = response
             self._last_stream_response = response
             yield from self._finish_stream(
                 prompt_task, response, emitter, on_answer=on_answer,
@@ -509,6 +585,7 @@ class AgentStreamingMixin:
             if text:
                 self.short_term_memory.add_user_message(task)
                 self.short_term_memory.add_assistant_message(text)
+                self._save_stream_turn(task, text, response)
             yield from emitter.answer(text)
             return
         # A provider that never answered has no result to report, so a caller

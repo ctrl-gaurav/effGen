@@ -160,6 +160,22 @@ See [conventions](api/conventions.md) for the full contract.
 - The capability probe keeps the 1.2 reader, so its stored results keep their
   meaning.
 
+## 1.2 → 1.3: one agent, many conversations at once
+
+- **`run(session=...)` holds the conversation on the call.** Overlapping calls
+  on one agent — threads, `run_async()` tasks, streams — each read and write
+  only their own session. In 1.2 they swapped `agent.session` and
+  `agent.short_term_memory` on the shared object, so overlapping calls could
+  read and record each other's turns. Inside a call, `agent.session` and
+  `agent.short_term_memory` still name that call's conversation.
+- **`stream()` honours `session=`.** It used to ignore it and write the turn to
+  the agent's own memory; it now reads that conversation's history and appends
+  the streamed turn to it.
+- **A run whose input a guardrail blocks** leaves the agent's session as it was;
+  in 1.2 a blocked `run(session=...)` left that session on the agent.
+- Per-call middleware (`run(middleware=[...])`) applies to that call's model
+  and tool calls only, also when another call on the agent overlaps it.
+
 ## v0.1.x → v0.2.0
 
 ### Breaking Changes

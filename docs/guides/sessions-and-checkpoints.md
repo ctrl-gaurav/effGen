@@ -159,7 +159,37 @@ print(agent.run("What is my pet's name?", session="user-456").output)  # -> Mote
 
 The run builds its prompt from that conversation's history and appends the turn
 to it. The two conversations never see each other, and the agent's own memory is
-untouched and restored when the call ends — including when the run fails.
+left untouched — including when the run fails or a guardrail blocks the input.
+
+The conversation belongs to the call, not to the agent object, so the calls may
+overlap: threads calling `run()` on one agent, `run_async()` tasks on one event
+loop, and streams all keep their own history.
+
+```python
+import asyncio
+
+async def main():
+    await asyncio.gather(
+        agent.run_async("What is my pet's name?", session="user-123"),
+        agent.run_async("What is my pet's name?", session="user-456"),
+    )
+
+asyncio.run(main())
+```
+
+`stream()` takes `session=` the same way: the streamed answer is appended to
+that conversation once the stream finishes.
+
+```python
+for chunk in agent.stream("And how old is he?", session="user-123"):
+    print(chunk, end="")
+```
+
+Calls made without `session=` share the agent's own memory, so overlapping
+calls of that kind see each other's turns — give each concurrent conversation a
+session. `agent.last_stream_response` and `agent.last_stream_usage` describe the
+stream that finished last; when streams overlap, read each one's own record from
+its terminal `usage` event (`include_events=True`).
 
 A `Session` object works as well as an id, which is what you want when the
 conversation is already in hand:

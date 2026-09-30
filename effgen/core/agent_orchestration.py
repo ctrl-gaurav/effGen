@@ -47,6 +47,8 @@ from .agent_runtime import _strip_run_citation_markers, sanitize_final_answer
 from .execution_tracker import EventType, ExecutionEvent
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from .agent_config import AgentConfig
     from .messages import Message
 
@@ -73,15 +75,6 @@ _obs_log = _get_obs_logger("effgen.core.agent")
 
 
 
-def _turn_thread(response: Any) -> dict[str, Any]:
-    """The run's steps as session-turn metadata, or nothing when it kept none."""
-    thread = (getattr(response, "metadata", None) or {}).get("thread")
-    to_dict = getattr(thread, "to_dict", None)
-    if callable(to_dict):
-        return {"thread": to_dict()}
-    return {"thread": dict(thread)} if isinstance(thread, dict) else {}
-
-
 class AgentOrchestrationMixin:
     """The run entry points and the work that surrounds a single task run."""
 
@@ -93,6 +86,19 @@ class AgentOrchestrationMixin:
 
         def _set_effective_output_schema(
             self, schema: dict[str, Any] | None
+        ) -> None: ...
+
+        def _new_run_scope(
+            self, *, session: Any = None, middleware: Any = None, run_context: Any = None,
+        ) -> Any: ...
+
+        def _agent_call_scope(self) -> AbstractContextManager[None]: ...
+
+        def _agent_run_scope(self, scope: Any) -> AbstractContextManager[None]: ...
+
+        def _save_session_turn(
+            self, session: Any, task: Any, output: Any, response: Any,
+            *, run_id: str | None = None,
         ) -> None: ...
 
     def run(self,
@@ -254,15 +260,15 @@ class AgentOrchestrationMixin:
                 )
             if isinstance(task, str):
                 task = _mw_run_ctx.task
-        self._active_middleware = _chain
-        self._active_run_context = _mw_run_ctx
-
         # A conversation handle for this call only. The run reads its history
         # in and writes the turn back, so one agent serves many conversations
-        # without an agent object per conversation.
+        # without an agent object per conversation. The handle, and the
+        # middleware this call's model and tool calls run through, are held by
+        # the call (a context variable), never set on the agent, so calls that
+        # overlap on one agent each keep their own.
         _run_session = kwargs.pop("session", None)
-        _previous_session = (
-            self._enter_run_session(_run_session) if _run_session is not None else None
+        _run_scope = self._new_run_scope(
+            session=_run_session, middleware=_chain, run_context=_mw_run_ctx,
         )
 
         debug = kwargs.pop("debug", False)
@@ -334,6 +340,7 @@ class AgentOrchestrationMixin:
         # collide with a concurrent or prior call on this Agent instance.
         _task_preview = self._extract_task_preview(task, 200)
         with self._agent_call_scope(), \
+             self._agent_run_scope(_run_scope), \
              _ledger.activate(_ledger_rec), \
              start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
@@ -586,25 +593,9 @@ class AgentOrchestrationMixin:
                     # token counts, cost and latency it was answered with so a
                     # stored conversation can be reviewed turn by turn.
                     if self.session is not None:
-                        turn_meta = self._session_turn_metadata(response, run_id=run_id)
-                        self.session.add_message("user", task, **turn_meta)
-                        # The reply carries the run's own steps as well, so a
-                        # later turn can continue from the conversation the run
-                        # had rather than from a reading of its text. The
-                        # question does not: one copy per turn is the record.
-                        self.session.add_message(
-                            "assistant",
-                            response.output,
-                            **turn_meta,
-                            **_turn_thread(response),
+                        self._save_session_turn(
+                            self.session, task, response.output, response, run_id=run_id,
                         )
-                        if turn_meta.get("model"):
-                            self.session.metadata["model"] = turn_meta["model"]
-                        self.session.metadata.setdefault("agent_name", self.name)
-                        try:
-                            self.session.save()
-                        except Exception as _e:
-                            logger.warning("Failed to save session: %s", _e)
 
                 # Final checkpoint
                 ckpt_dir = _outer_ckpt_dir
@@ -722,10 +713,6 @@ class AgentOrchestrationMixin:
 
             finally:
                 prom_metrics.active_agents.dec(labels=labels)
-                self._active_middleware = None
-                self._active_run_context = None
-                if _previous_session is not None:
-                    self._exit_run_session(_previous_session)
 
     def run_batch(
         self,

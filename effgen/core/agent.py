@@ -109,6 +109,34 @@ class _AgentCallState:
     # never enters this scope), and the agent's configured schema applies.
     output_schema_resolved: bool = False
     output_schema: dict[str, Any] | None = None
+    # The record a stream's loop produced, kept here so the stream that ran it
+    # attaches its own ledger and usage to it even when another stream on the
+    # same agent finishes in between.
+    stream_response: Any = None
+
+
+@dataclass
+class _RunScope:
+    """What one call on an :class:`Agent` holds that another call must not see.
+
+    ``conversation`` is the ``(session, short-term memory)`` pair of a call made
+    with ``session=``; ``None`` means the call uses the agent's own. The
+    middleware chain and its run context are the ones this call's model and
+    tool calls run through.
+    """
+
+    conversation: tuple[Any, ShortTermMemory] | None = None
+    middleware: Any = None
+    run_context: Any = None
+
+
+# The active call's scope, per agent (keyed by ``id(agent)``), for the thread or
+# task running it. Keyed rather than single so that a run on one agent that
+# calls another agent's run (a tool that is itself an agent) leaves each
+# reading its own conversation.
+_run_scope_var: contextvars.ContextVar[dict[int, _RunScope] | None] = contextvars.ContextVar(
+    "effgen_agent_run_scope", default=None
+)
 
 
 # Per-call state for the three attributes above. Set for the duration of one
@@ -128,6 +156,44 @@ _call_state_var: contextvars.ContextVar[_AgentCallState | None] = contextvars.Co
 _tracker_override_var: contextvars.ContextVar[ExecutionTracker | None] = contextvars.ContextVar(
     "effgen_agent_tracker_override", default=None
 )
+
+
+@dataclass
+class _StreamScope:
+    """One stream's call state, conversation and tracker, held between items.
+
+    :meth:`enter` installs them for one step of the stream and returns the
+    tokens :meth:`leave` resets them with, so the consumer's own context never
+    sees them while it holds an item. :meth:`close` ends the stream's claim on
+    the agent's in-flight count; it runs once, when the stream finishes, fails
+    or is abandoned.
+    """
+
+    agent: Any
+    run_scope: _RunScope
+    call_state: _AgentCallState
+    tracker: ExecutionTracker | None
+    closed: bool = False
+
+    def enter(self) -> tuple[contextvars.Token, ...]:
+        return (
+            self.agent._enter_run_scope(self.run_scope),
+            _call_state_var.set(self.call_state),
+            _tracker_override_var.set(self.tracker),
+        )
+
+    def leave(self, tokens: tuple[contextvars.Token, ...]) -> None:
+        scope_token, state_token, tracker_token = tokens
+        _tracker_override_var.reset(tracker_token)
+        _call_state_var.reset(state_token)
+        _run_scope_var.reset(scope_token)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        with self.agent._active_run_lock:
+            self.agent._active_run_count -= 1
 
 
 from .agent_generation import AgentGenerationMixin  # noqa: E402
@@ -544,34 +610,151 @@ class Agent(
             elif role == "assistant":
                 memory.add_assistant_message(content)
 
-    def _enter_run_session(self, session: Any) -> tuple[Any, Any]:
-        """Point this run at *session*, and return what to restore afterwards.
+    def _open_run_conversation(self, session: Any) -> tuple[Any, ShortTermMemory]:
+        """The conversation one call made with ``session=`` reads and writes.
 
-        The conversation the prompt is built from comes from the session rather
-        than from whatever this agent answered last, so one agent can serve many
-        independent conversations without their histories mixing.
+        The prompt is built from the session's history rather than from
+        whatever this agent answered last, so one agent can serve many
+        independent conversations without their histories mixing. The pair is
+        held by the call (see :meth:`_run_scope`), never put on the agent, so
+        calls that overlap each keep their own.
 
         Args:
             session: A :class:`~effgen.core.session.Session`, or a session id to
                 load or create.
 
         Returns:
-            The agent's own session and short-term memory, to put back.
+            The session and a short-term memory holding its turns.
         """
         from .session import Session as _Session
 
         if isinstance(session, str):
             session = _Session.load_or_create(session, agent_name=self.name)
+        memory = self._new_short_term_memory()
+        self._hydrate_memory_from(session, memory)
+        logger.debug(
+            "[session] call scoped to session %r (%d earlier messages)",
+            getattr(session, "session_id", None),
+            len(getattr(session, "messages", None) or []),
+        )
+        return session, memory
 
-        previous = (self.session, self.short_term_memory)
-        self.session = session
-        self.short_term_memory = self._new_short_term_memory()
-        self._hydrate_memory_from(session, self.short_term_memory)
-        return previous
+    def _new_run_scope(
+        self, *, session: Any = None, middleware: Any = None, run_context: Any = None,
+    ) -> _RunScope:
+        """A fresh scope for one call; *session* (a handle or id) or ``None``."""
+        return _RunScope(
+            conversation=(
+                self._open_run_conversation(session) if session is not None else None
+            ),
+            middleware=middleware,
+            run_context=run_context,
+        )
 
-    def _exit_run_session(self, previous: tuple[Any, Any]) -> None:
-        """Put back the session and memory :meth:`_enter_run_session` replaced."""
-        self.session, self.short_term_memory = previous
+    def _run_scope(self) -> _RunScope | None:
+        """This agent's scope for the call running in this thread or task, if any."""
+        scopes = _run_scope_var.get()
+        if not scopes:
+            return None
+        return scopes.get(id(self))
+
+    def _enter_run_scope(self, scope: _RunScope) -> contextvars.Token:
+        """Make *scope* this agent's for the current context; returns the reset token."""
+        scopes = dict(_run_scope_var.get() or {})
+        scopes[id(self)] = scope
+        return _run_scope_var.set(scopes)
+
+    @contextlib.contextmanager
+    def _agent_run_scope(self, scope: _RunScope) -> Iterator[None]:
+        """Hold *scope* for the duration of one blocking call."""
+        token = self._enter_run_scope(scope)
+        try:
+            yield
+        finally:
+            _run_scope_var.reset(token)
+
+    @property
+    def session(self) -> Any:
+        """The conversation this agent records turns in.
+
+        Inside a call made with ``run(..., session=...)`` it is that call's
+        session; everywhere else it is the one bound at construction
+        (``session_id=``), or ``None``.
+        """
+        scope = self._run_scope()
+        if scope is not None and scope.conversation is not None:
+            return scope.conversation[0]
+        return self._own_state("session")
+
+    @session.setter
+    def session(self, value: Any) -> None:
+        """Replace the session: the call's inside a ``session=`` call, else the agent's own."""
+        scope = self._run_scope()
+        if scope is not None and scope.conversation is not None:
+            scope.conversation = (value, scope.conversation[1])
+        else:
+            self.__dict__["session"] = value
+
+    @session.deleter
+    def session(self) -> None:
+        """Remove the agent's own session, as deleting a plain attribute would."""
+        self._drop_own_state("session")
+
+    @property
+    def short_term_memory(self) -> ShortTermMemory:
+        """The conversation memory prompts are built from.
+
+        Inside a call made with ``session=`` it holds that session's turns and
+        belongs to the call alone; everywhere else it is the agent's own.
+        """
+        scope = self._run_scope()
+        if scope is not None and scope.conversation is not None:
+            return scope.conversation[1]
+        memory: ShortTermMemory = self._own_state("short_term_memory")
+        return memory
+
+    @short_term_memory.setter
+    def short_term_memory(self, value: ShortTermMemory) -> None:
+        """Replace the memory: the call's inside a ``session=`` call, else the agent's own."""
+        scope = self._run_scope()
+        if scope is not None and scope.conversation is not None:
+            scope.conversation = (scope.conversation[0], value)
+        else:
+            self.__dict__["short_term_memory"] = value
+
+    @short_term_memory.deleter
+    def short_term_memory(self) -> None:
+        """Remove the agent's own memory, as deleting a plain attribute would."""
+        self._drop_own_state("short_term_memory")
+
+    # The agent's own session and memory live in the instance ``__dict__`` under
+    # their public names, so the instance looks as it did when they were plain
+    # attributes: ``vars(agent)`` lists them, and ``mock.patch.object`` /
+    # ``del`` on them restore and remove the agent's own value.
+    def _own_state(self, name: str) -> Any:
+        try:
+            return self.__dict__[name]
+        except KeyError:
+            raise AttributeError(
+                f"This agent has no {name}: it was deleted. "
+                "Set it again before reading it."
+            ) from None
+
+    def _drop_own_state(self, name: str) -> None:
+        self._own_state(name)
+        del self.__dict__[name]
+
+    @property
+    def _active_middleware(self) -> Any:
+        """The middleware chain the current call's model and tool calls run through."""
+        scope = self._run_scope()
+        return scope.middleware if scope is not None else None
+
+    @property
+    def _active_run_context(self) -> Any:
+        """The middleware run context of the current call, or ``None``."""
+        scope = self._run_scope()
+        return scope.run_context if scope is not None else None
 
     def _get_call_state(self) -> _AgentCallState:
         """Return the active per-call state, or a private per-instance
@@ -701,19 +884,40 @@ class Agent(
         with self._active_run_lock:
             concurrent = self._active_run_count > 0
             self._active_run_count += 1
-        tracker_token = None
-        if concurrent:
-            tracker_token = _tracker_override_var.set(ExecutionTracker())
-        else:
+        # Set either way: a run nested inside another agent's isolated run
+        # (a tool that is itself an agent) must write to its own tracker, not
+        # to the override the outer run left in this context.
+        tracker_token = _tracker_override_var.set(
+            ExecutionTracker() if concurrent else None
+        )
+        if not concurrent:
             self._default_execution_tracker.clear()
         try:
             yield
         finally:
             with self._active_run_lock:
                 self._active_run_count -= 1
-            if tracker_token is not None:
-                _tracker_override_var.reset(tracker_token)
+            _tracker_override_var.reset(tracker_token)
             _call_state_var.reset(state_token)
+
+    def _open_stream_scope(self, scope: _RunScope) -> _StreamScope:
+        """The per-call state one :meth:`stream` holds across its items.
+
+        A stream is a generator, so it cannot hold context variables across the
+        points where it hands an item to the consumer. It carries its call
+        state, conversation and tracker here instead, and :meth:`stream`
+        installs them around every step it takes and removes them before each
+        item is handed over.
+        """
+        with self._active_run_lock:
+            concurrent = self._active_run_count > 0
+            self._active_run_count += 1
+        return _StreamScope(
+            agent=self,
+            run_scope=scope,
+            call_state=_AgentCallState(),
+            tracker=ExecutionTracker() if concurrent else None,
+        )
 
     def _capability_probe_for(self, config: AgentConfig) -> Any:
         """The capability probe this agent resolves ``auto`` against, or ``None``.
