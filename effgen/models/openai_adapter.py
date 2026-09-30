@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
@@ -99,6 +100,54 @@ _obs_log = _get_obs_logger(__name__)
 
 _REASONING_UNSUPPORTED_PARAMS = {"temperature", "top_p", "presence_penalty", "frequency_penalty"}
 _FIXED_SAMPLING_PREFIXES = ("gpt-5",)
+
+
+_RESPONSE_TYPES_BUILT = False
+_RESPONSE_TYPES_LOCK = threading.Lock()
+
+
+def _build_response_types() -> None:
+    """Finish building the SDK's chat response models once, before any call.
+
+    The ``openai`` SDK defers building its pydantic response models until one
+    is first constructed, and that deferred build is not safe to run from two
+    threads at once: the first streams opened concurrently in a fresh process
+    can fail with ``type object 'BaseModel' has no attribute
+    '__pydantic_core_schema__'``. Building every model reachable from the chat
+    completion and chunk types here, once and under a lock, takes that first
+    use off the concurrent path. Best effort: an SDK whose types look
+    different is left to build them itself.
+    """
+    global _RESPONSE_TYPES_BUILT
+    if _RESPONSE_TYPES_BUILT:
+        return
+    with _RESPONSE_TYPES_LOCK:
+        if _RESPONSE_TYPES_BUILT:
+            return
+        try:
+            import typing
+
+            import pydantic
+            from openai.types.chat import ChatCompletion, ChatCompletionChunk
+
+            seen: set[type] = set()
+            pending: list[Any] = [ChatCompletion, ChatCompletionChunk]
+            while pending:
+                tp: Any = pending.pop()
+                if isinstance(tp, type) and issubclass(tp, pydantic.BaseModel):
+                    model: Any = tp
+                    if model in seen:
+                        continue
+                    seen.add(model)
+                    if not getattr(model, "__pydantic_complete__", True):
+                        model.model_rebuild()
+                    pending.extend(f.annotation for f in model.model_fields.values())
+                else:
+                    pending.extend(typing.get_args(tp))
+            logger.debug("[openai] %d response types built before first use", len(seen))
+        except Exception:  # noqa: BLE001 - the SDK builds them lazily as before
+            logger.debug("[openai] response types left to build lazily", exc_info=True)
+        _RESPONSE_TYPES_BUILT = True
 
 
 def _pick_default_max_output(model_id: str) -> int:
@@ -279,6 +328,7 @@ class OpenAIAdapter(FunctionCallingModel):
             client_kwargs.update(self.additional_kwargs)
 
             self.client = OpenAI(**client_kwargs)
+            _build_response_types()
 
             # Light connectivity check — swallow failures, model may not be
             # listed via models.retrieve for all accounts/tiers.
