@@ -20,7 +20,9 @@ text file and fails on two classes of text:
   role names that have no ordinary technical use at all — ``lead architect``,
   ``scrub agent``, ``release-verifier``), and the review protocol's own labels
   for a test (``over-correction guard``) or for the tree a change is compared
-  against (``pre-fix tree``, ``pre-change copy``),
+  against (``pre-fix tree``, ``pre-change copy``), and the measurement
+  protocol's labels for how a number was taken (``the post arm``, ``ABBA``
+  order, ``w2r``/``r2w`` flips, ``the lead's ruling``),
 * the release-notes disclaimer about benchmarks (``not tuned for a
   benchmark``, ``chase a score``), which public documents do not carry,
 * names of internal planning artifacts (``findings report``, ``phase brief``,
@@ -229,7 +231,14 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         # "pre-fix tree" a change was compared against. They describe how the
         # change was checked, not what the code does.
         r"\bover[ -]correction guards?\b|\bguards? (?:against )?over[ -]correction\b|"
-        r"\bpre[ -](?:fix|change) (?:tree|copy)\b",
+        r"\bpre[ -](?:fix|change) (?:tree|copy)\b|"
+        # The measurement protocol's labels: the arms a change was measured in
+        # ("the post arm"), the order they ran in ("ABBA"), the per-sample
+        # flips counted between them ("w2r", "r2w"), and the rulings that
+        # settled a trade. They describe how a number was taken, not what the
+        # code does.
+        r"\b(?:pre|post)[ -]arms?\b|\bABBA\b|\b[wr]2[rw]\b|"
+        r"\blead's ruling\b|\bthe owner's (?:rule|ruling)\b",
         re.IGNORECASE,
     ),
     # The benchmark disclaimer public documents do not carry: a release note
@@ -571,6 +580,10 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "These guard against over-correction, so they pass anyway",
         "they pass on the pre-fix tree too",
         "run it against the pre-change copy",
+        "the post arm made fewer calls",
+        "both pairs ran in ABBA order",
+        "w2r 17 / r2w 45 on the row",
+        "settled by the lead's ruling",
     ],
     "benchmark-disclaimer": [
         "None of this is tuned for a benchmark.",
@@ -966,6 +979,7 @@ def test_gated_vocabulary_covers_the_house_style_list():
         "TODO", "FIXME", "XXX", "HACK", "breakpoint()", "pdb.set_trace()",
         "# R2 — a session keeps one shape", "an over-correction guard",
         "the pre-fix tree", "None of it is tuned for a benchmark",
+        "the pre arm", "measured ABBA", "r2w 5", "the owner's ruling",
         # self-praise
         "fails honestly", "an honest error", "the honesty of it",
         "degrades gracefully", "a graceful fallback",
@@ -1003,6 +1017,7 @@ def test_gated_vocabulary_covers_the_house_style_list():
         "# Qwen2 — a model family", "# V8 engine — not a header",
         "the model corrects itself once", "a guard against overflow",
         "the fixed tree is walked twice", "a change to the pre-flight check",
+        "a pre-armed timer", "the arm of the plot", "an abbey", "w2 and r2 registers",
     ):
         assert not find_violations("s.py", ordinary), ordinary
 
@@ -1190,7 +1205,8 @@ def test_no_test_module_lets_the_repo_dotenv_override_the_environment():
 BENCHMARK_NAME_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(?:gsm8k|gsm_?plus|math[-_]?500|bb_(?:easy|med|hard)|beyond_?bench"
     r"|big[-_ ]?bench|bbh|arc_[ce]|arc[-_ ](?:easy|challenge)|csqa|commonsense_?qa"
-    r"|simpleqa|gaia|locomo|longmemeval|hotpot_?qa|mmlu|humaneval|agentloop)(?![A-Za-z0-9])",
+    r"|simpleqa|gaia|locomo|longmemeval|hotpot_?qa|mmlu|humaneval|agentloop"
+    r"|pubmed_?qa|musique|coqa|squad)(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 
@@ -1254,11 +1270,14 @@ def test_the_shipped_package_names_no_benchmark_or_dataset():
 
 def test_benchmark_name_detector_catches_a_planted_name():
     for line in ('if suite == "gsm8k":', "PROMPTS = {'bb_hard': ...}",
-                 "GSM8K_PROMPT = 'x'", "# tuned for MMLU", 'name.startswith("arc_c")'):
+                 "GSM8K_PROMPT = 'x'", "# tuned for MMLU", 'name.startswith("arc_c")',
+                 'if suite == "musique":', "# drawn from SQuAD 2.0", "PubMedQA labels",
+                 "coqa_history = []", 'load("squad_v2")'):
         assert find_benchmark_names("effgen/bench/runner.py", line), line
         assert find_benchmark_names("effgen/core/agent.py", line), line
     # Words that merely contain a name's letters are not names.
-    for line in ("gaiapath = 1", "the archive", "commonsense reasoning", "bbhx"):
+    for line in ("gaiapath = 1", "the archive", "commonsense reasoning", "bbhx",
+                 "the squadron", "music", "pubmed search"):
         assert not find_benchmark_names("effgen/core/agent.py", line), line
 
 
