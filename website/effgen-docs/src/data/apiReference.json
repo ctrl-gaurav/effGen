@@ -1,14 +1,14 @@
 {
- "derived_at": "2026-09-27",
- "version": "1.2.0",
- "public_names": 251,
+ "derived_at": "2026-10-01",
+ "version": "1.3.0",
+ "public_names": 253,
  "kind_counts": {
   "alias": 1,
   "class": 97,
-  "dataclass": 54,
+  "dataclass": 55,
   "enum": 12,
   "exception": 19,
-  "function": 67,
+  "function": 68,
   "module": 1
  },
  "areas": [
@@ -34,7 +34,7 @@
    "id": "models",
    "title": "Models and providers",
    "blurb": "Loading a model, the adapter classes behind each provider, the local engines, and the trackers that record what a call cost and how long it took.",
-   "count": 29
+   "count": 31
   },
   {
    "id": "catalogs",
@@ -425,6 +425,22 @@
      "inherited_from": null
     },
     {
+     "name": "session",
+     "kind": "property",
+     "signature": "",
+     "summary": "The conversation this agent records turns in.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "short_term_memory",
+     "kind": "property",
+     "signature": "",
+     "summary": "The conversation memory prompts are built from.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "stream",
      "kind": "method",
      "signature": "(task: str | Message | list[Any], mode: AgentMode | None = None, context: dict[str, Any] | None = None, on_thought: Callable[[str], None] | None = None, on_tool_call: Callable[[str, str], None] | None = None, on_observation: Callable[[str], None] | None = None, on_answer: Callable[[str], None] | None = None, inputs: list[Any] | None = None, include_events: bool = False, **kwargs: Any) -> Iterator[str] | Iterator[StreamEvent]",
@@ -449,7 +465,7 @@
    "module": "effgen.core.agent_config",
    "area": "agents",
    "summary": "Agent configuration.",
-   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, context_budget: int | float | str | None = 'auto', compaction: Any = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, cite_sources: bool = False, tool_contract: str | None = None, tool_use: ToolUsePolicy | str | None = None, answer_style: str | None = None, prompt_protocol: str = 'auto', max_turns_without_progress: int | None = None, recover_lost_tool_calls: bool = False, *, name: str = '') -> None",
+   "signature": "(model: BaseModel | str, tools: list[BaseTool] = <factory>, system_prompt: str = 'You are a helpful AI assistant.', max_iterations: int = 10, temperature: float = 0.7, max_tokens: int | None = None, top_p: float = 0.9, top_k: int = 50, seed: int | None = None, presence_penalty: float = 0.0, frequency_penalty: float = 0.0, repetition_penalty: float = 1.0, mode: AgentMode = AgentMode.SINGLE, enable_sub_agents: bool = True, enable_memory: bool = True, enable_streaming: bool = False, max_context_length: int | None = None, context_budget: int | float | str | None = 'auto', compaction: Any = None, router_config: dict[str, Any] = <factory>, sub_agent_config: dict[str, Any] = <factory>, model_config: dict[str, Any] | None = None, require_model: bool = True, provider: str | None = None, base_url: str | None = None, api_key: str | None = None, middleware: list[Any] = <factory>, compaction_strategy: Any = None, tokenizer: Any = None, raise_on_error: bool = True, system_prompt_template: str | None = None, verbose_tools: bool | None = None, fallback_chain: dict[str, list] | None = None, enable_fallback: bool = True, max_sub_agent_depth: int = 3, tool_calling_mode: str = 'auto', output_format: str | None = None, output_schema: dict[str, Any] | None = None, guardrails: Any = None, memory_config: dict[str, Any] = <factory>, models: list[BaseModel | str] | None = None, speculative_execution: bool = False, approval_callback: Callable[[str, str], bool] | None = None, approval_mode: str = 'never', approval_timeout: float = 0.0, clarification_callback: Callable[[str, list[str]], int] | None = None, input_callback: Callable[[str], str] | None = None, stable_system_prompt: bool = True, cache_system_prompt: bool = True, cache_tools: bool = True, cite_sources: bool = False, tool_contract: str | None = None, tool_use: ToolUsePolicy | str | None = None, capability_probe: bool = True, answer_style: str | None = None, prompt_protocol: str = 'auto', max_turns_without_progress: int | None = 2, recover_lost_tool_calls: bool = True, *, name: str = '') -> None",
    "params": [
     {
      "name": "model",
@@ -876,6 +892,14 @@
      "description": ""
     },
     {
+     "name": "capability_probe",
+     "type": "bool",
+     "default": "True",
+     "required": false,
+     "keyword_only": false,
+     "description": ""
+    },
+    {
      "name": "answer_style",
      "type": "str | None",
      "default": "None",
@@ -894,18 +918,18 @@
     {
      "name": "max_turns_without_progress",
      "type": "int | None",
-     "default": "None",
+     "default": "2",
      "required": false,
      "keyword_only": false,
-     "description": "How many turns in a row may bring no new tool result before the run is asked for its answer. `None` (the default) never asks; `2` is a reasonable setting. The count starts after the run's first new result; the next turn offers no tools and asks for the answer, and nothing ends the run early. `run(max_turns_without_progress=...)` sets it for one call."
+     "description": "How many turns in a row may bring no new tool result before the run is asked for its answer; `2` by default. The count starts after the run's first new result (before it, only turns whose every call was declined or failed on the tool's side count); the next turn offers no tools and asks for the answer. A run whose asked turn still writes no answer, or that is about to stop without one, gets one closing request: its own calls and results sent back with no tools, in the run's own request shape, and its reply is the answer. `None` turns all three off and restores the earlier loop. `run(max_turns_without_progress=...)` sets it for one call."
     },
     {
      "name": "recover_lost_tool_calls",
      "type": "bool",
-     "default": "False",
+     "default": "True",
      "required": false,
      "keyword_only": false,
-     "description": "Whether a tool call the model wrote in a shape the runtime could not run is read anyway (raw line breaks or Python-style quoting inside the arguments), and a call that could not be read at all is asked for once more with a call required where the provider enforces it. `False` by default. `run(recover_lost_tool_calls=...)` sets it for one call."
+     "description": "Whether a tool call the model wrote in a shape the runtime could not run is read anyway (raw line breaks, Python-style quoting, a string closed before the brackets that end it, or text after a whole call object inside its tag; a program in a fenced block before an empty call when the agent holds one code tool), and a call that could not be read at all is asked for once more with a call required where the provider enforces it. `True` by default; `False` restores the strict reader of earlier releases. Arguments that arrive as a string, calls missing a required argument and positional values are handled the same way under either setting. `run(recover_lost_tool_calls=...)` sets it for one call; delegated sub-agents inherit it."
     },
     {
      "name": "name",
@@ -2122,10 +2146,26 @@
      "inherited_from": null
     },
     {
+     "name": "capability_key",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "A key for what this model does with a tool, or `None` if it is known.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "count_tokens",
      "kind": "method",
      "signature": "(text: str) -> TokenCount",
      "summary": "Count the number of tokens in the given text.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "forwards_reasoning_effort",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "Whether a `reasoning_effort` set on a request reaches the provider.",
      "is_async": false,
      "inherited_from": null
     },
@@ -5610,6 +5650,14 @@
      "inherited_from": null
     },
     {
+     "name": "forwards_reasoning_effort",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True for a model the catalog marks as reasoning: the field is sent.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "generate",
      "kind": "method",
      "signature": "(prompt: str, config: GenerationConfig | None = None, **kwargs: Any) -> GenerationResult",
@@ -8376,6 +8424,14 @@
      "inherited_from": null
     },
     {
+     "name": "forwards_reasoning_effort",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True for a model the catalog marks as reasoning: the field is sent.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "generate",
      "kind": "method",
      "signature": "(prompt: str, config: GenerationConfig | None = None, **kwargs: Any) -> GenerationResult",
@@ -8665,6 +8721,38 @@
     "OpenAIAdapter"
    ],
    "members": [
+    {
+     "name": "capability_key",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "The endpoint, the served id and the server's own description of it.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "forwards_reasoning_effort",
+     "kind": "method",
+     "signature": "() -> bool",
+     "summary": "True unless this server has rejected the field before.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "generate",
+     "kind": "method",
+     "signature": "(prompt: str, config: GenerationConfig | None = None, **kwargs: Any) -> GenerationResult",
+     "summary": "Generate as `OpenAIAdapter` does, retrying once without a rejected field.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "generate_stream",
+     "kind": "method",
+     "signature": "(prompt: str, config: GenerationConfig | None = None, **kwargs: Any) -> Iterator[str]",
+     "summary": "Stream as `OpenAIAdapter` does, with the same one retry.",
+     "is_async": false,
+     "inherited_from": null
+    },
     {
      "name": "generate_with_tools",
      "kind": "method",
@@ -14038,6 +14126,182 @@
    "values": []
   },
   {
+   "name": "ToolCallingProbe",
+   "kind": "dataclass",
+   "module": "effgen.models.capability_probe",
+   "area": "models",
+   "summary": "What one model did with a tool, and the defaults derived from it.",
+   "signature": "(key: str, model: str, endpoint: str | None, backend: str, native: dict[str, int], text: dict[str, int] | None, strategy: str, required_categories: tuple[str, ...], items: tuple[tuple[str, str, str], ...] = (), requests: int = 0, prompt_tokens: int = 0, completion_tokens: int = 0, wall_s: float = 0.0, probed_at: float = 0.0, probe_version: int = 1, effgen_version: str = '', source: str = 'ran') -> None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The cache key the adapter answered (weights, template, endpoint)."
+    },
+    {
+     "name": "model",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The model's name."
+    },
+    {
+     "name": "endpoint",
+     "type": "str | None",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The URL it is served at, or `None` for a local engine."
+    },
+    {
+     "name": "backend",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The adapter or engine class that answered."
+    },
+    {
+     "name": "native",
+     "type": "dict[str, int]",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "Outcome counts in the native frame: `resolved`, `unresolved` and `skipped`."
+    },
+    {
+     "name": "text",
+     "type": "dict[str, int] | None",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "The same counts in the ReAct text frame, or `None` when it was not measured (it is only measured when native calls go unresolved)."
+    },
+    {
+     "name": "strategy",
+     "type": "str",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "`\"react\"` when `auto` resolves to the text frame for this model, `\"declared\"` when it resolves as the model declares."
+    },
+    {
+     "name": "required_categories",
+     "type": "tuple[str, ...]",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "Tool categories a run may not answer without calling, for this model, when the caller stated no `tool_use`."
+    },
+    {
+     "name": "items",
+     "type": "tuple[tuple[str, str, str], ...]",
+     "default": "()",
+     "required": false,
+     "keyword_only": false,
+     "description": "One `(frame, shape, outcome)` per run, in order."
+    },
+    {
+     "name": "requests",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Model requests the probe made."
+    },
+    {
+     "name": "prompt_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Prompt tokens those requests sent."
+    },
+    {
+     "name": "completion_tokens",
+     "type": "int",
+     "default": "0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Completion tokens they returned."
+    },
+    {
+     "name": "wall_s",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "Seconds the probe took."
+    },
+    {
+     "name": "probed_at",
+     "type": "float",
+     "default": "0.0",
+     "required": false,
+     "keyword_only": false,
+     "description": "When it ran (seconds since the epoch)."
+    },
+    {
+     "name": "probe_version",
+     "type": "int",
+     "default": "1",
+     "required": false,
+     "keyword_only": false,
+     "description": "`PROBE_VERSION` at the time."
+    },
+    {
+     "name": "effgen_version",
+     "type": "str",
+     "default": "''",
+     "required": false,
+     "keyword_only": false,
+     "description": "The effGen version that ran it."
+    },
+    {
+     "name": "source",
+     "type": "str",
+     "default": "'ran'",
+     "required": false,
+     "keyword_only": false,
+     "description": "`\"ran\"` when this call measured it, `\"cached\"` when it was read from the store. Not stored."
+    }
+   ],
+   "returns": null,
+   "raises": [],
+   "bases": [],
+   "members": [
+    {
+     "name": "from_dict",
+     "kind": "classmethod",
+     "signature": "(data: dict[str, Any], *, source: str = 'cached') -> ToolCallingProbe",
+     "summary": "Rebuild a stored probe.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "summary",
+     "kind": "method",
+     "signature": "() -> str",
+     "summary": "One line: the counts per frame.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
+     "name": "to_dict",
+     "kind": "method",
+     "signature": "() -> dict[str, Any]",
+     "summary": "The stored form (everything but `source`).",
+     "is_async": false,
+     "inherited_from": null
+    }
+   ],
+   "values": []
+  },
+  {
    "name": "ToolFallbackChain",
    "kind": "class",
    "module": "effgen.tools.fallback",
@@ -14715,6 +14979,14 @@
    ],
    "members": [
     {
+     "name": "capability_key",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "Weights, their revision and the chat template: the probe's cache key.",
+     "is_async": false,
+     "inherited_from": null
+    },
+    {
      "name": "count_tokens",
      "kind": "method",
      "signature": "(text: str) -> TokenCount",
@@ -15004,6 +15276,14 @@
     "BatchModel"
    ],
    "members": [
+    {
+     "name": "capability_key",
+     "kind": "method",
+     "signature": "() -> str | None",
+     "summary": "Weights, their revision and the chat template: the probe's cache key.",
+     "is_async": false,
+     "inherited_from": null
+    },
     {
      "name": "count_tokens",
      "kind": "method",
@@ -17227,6 +17507,41 @@
    "returns": {
     "type": "list[str]",
     "description": ""
+   },
+   "raises": [],
+   "bases": [],
+   "members": [],
+   "values": [],
+   "is_async": false
+  },
+  {
+   "name": "probe_tool_calling",
+   "kind": "function",
+   "module": "effgen.models.capability_probe",
+   "area": "models",
+   "summary": "Measure how *model* uses a tool, or return what was measured before.",
+   "signature": "(model: Any, *, refresh: bool = False) -> ToolCallingProbe | None",
+   "params": [
+    {
+     "name": "model",
+     "type": "Any",
+     "default": null,
+     "required": true,
+     "keyword_only": false,
+     "description": "A loaded model. Only one whose adapter answers `effgen.models.base.BaseModel.capability_key` is probed."
+    },
+    {
+     "name": "refresh",
+     "type": "bool",
+     "default": "False",
+     "required": false,
+     "keyword_only": true,
+     "description": "Measure again even when a stored result exists."
+    }
+   ],
+   "returns": {
+    "type": "ToolCallingProbe | None",
+    "description": "The probe, with `source` `\"cached\"` or `\"ran\"`; `None` when the model is not one that is probed, or when the probe could not run (a refused or failing request, or over its budget), in which case nothing is stored and one WARNING says why."
    },
    "raises": [],
    "bases": [],

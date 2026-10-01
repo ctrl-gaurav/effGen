@@ -226,7 +226,12 @@ Execution Statistics
               The local picture: which provider keys are present, the Python and platform version,
               the sandbox backend, whether git is available, and what{' '}
               <code>effgen code</code> would use. <code>--live --cheap</code> adds one small call
-              per keyed provider to confirm the keys work.
+              per keyed provider to confirm the keys work. It also lists what each served or local
+              model was measured to do with a tool, from <code>~/.effgen/capabilities.json</code>.{' '}
+              <code>--probe MODEL</code> measures one model now: a local model, or one served at{' '}
+              <code>--base-url URL</code>, with <code>--api-key-env VAR</code> naming the variable
+              that holds the endpoint's key. <code>--refresh</code> measures it again and replaces
+              the stored result, and <code>--json</code> prints the report as JSON.
             </>,
           ],
           [
