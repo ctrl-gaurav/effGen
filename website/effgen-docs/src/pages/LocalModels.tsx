@@ -48,7 +48,7 @@ model.unload()`}
 
       <Terminal command="python local.py" output={`'The capital of France is Paris.'
 Qwen/Qwen2.5-0.5B-Instruct 8 stop
-cost: None`} caption={`Run against effGen ${version}.`} />
+cost: None`} caption={`Run against effGen 1.0.0.`} />
 
       <p>
         Cost is <code>None</code>, not <code>0</code>: a model running on hardware you already own

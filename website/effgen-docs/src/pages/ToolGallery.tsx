@@ -213,7 +213,7 @@ export default function ToolGallery() {
                 language="text"
                 filename="output"
                 code={run.output}
-                caption={`Captured from that script on ${gallery.run_at}, against effGen ${version}.`}
+                caption={`Captured from that script on ${gallery.run_at}, against effGen 1.0.0.`}
               />
             )}
 

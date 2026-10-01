@@ -53,6 +53,7 @@ Daily budget: $0.0527 / $1.0000 (5%)`}
           [<code>effgen cost today</code>, 'The last 24 hours, per provider and model.'],
           [<code>effgen cost week</code>, 'A rolling seven days.'],
           [<code>effgen cost by-provider</code>, 'Lifetime totals, grouped by provider.'],
+          [<code>effgen cost prune</code>, 'Delete old events from the local ledger.'],
           [<code>effgen cost set-budget &lt;amount&gt;</code>, 'Set the daily cap, in USD.'],
           [<code>effgen cost clear-budget</code>, 'Remove the configured limits.'],
         ]}
@@ -198,8 +199,14 @@ Daily budget: $0.0527 / $1.0000 (5%)`} />
             </>,
           ],
           [
-            'Zero-cost calls, past 100%',
-            'Still allowed, so failover onto a free-tier provider is possible after the budget is spent.',
+            'Calls that cost nothing, past 100%',
+            <>
+              Still allowed: a model running in this process, a model the catalog flags as a free
+              tier, and a provider that publishes no prices, such as a server reached with{' '}
+              <code>base_url=</code>. A model a pricing provider bills but the catalog does not
+              list yet is still refused. Failover onto a free-tier provider is possible after the
+              budget is spent.
+            </>,
           ],
         ]}
       />
@@ -225,6 +232,15 @@ BudgetExceededError -> Daily budget $1.0000 exceeded: actual=$1.2400 (provider='
         <code>check_preflight</code> refuses to start when existing spend is already at the cap — so
         that call is never billed. After a call, <code>record</code> catches the one that pushed
         spend over for the first time, which no pre-flight check could have foreseen.
+      </p>
+
+      <p>
+        Since 1.2.0 a call refused before it is sent raises <code>BudgetExceededError</code> out
+        of <code>run()</code> whatever <code>raise_on_error</code> says, and no request reaches the
+        provider. It is not a <code>RuntimeError</code>, so catch it by name.{' '}
+        <code>stream()</code> raises it, <code>run_batch()</code> raises and stops, the server
+        answers HTTP 429 with <code>budget_exceeded</code>, and <code>effgen run --json</code>{' '}
+        prints the error document.
       </p>
 
       <Callout type="note" title="Two budgets, two scopes">
@@ -375,7 +391,12 @@ for event in events[:5]:
             <>
               The store at <code>~/.effgen/costs.sqlite</code>. <code>query_today()</code>,{' '}
               <code>query_week()</code>, <code>query_month()</code>, <code>query_all()</code>,{' '}
-              <code>query_since(ts)</code> and <code>cleanup()</code>.
+              <code>query_since(ts)</code> and <code>cleanup()</code> return events;{' '}
+              <code>spend_today()</code>, <code>spend_week()</code>, <code>spend_month()</code>,{' '}
+              <code>spend_since(ts)</code>, <code>count()</code> and <code>count_since(ts)</code>{' '}
+              return totals without reading the rows behind them; and{' '}
+              <code>prune(max_age_days=..., keep_rows=...)</code> deletes old events and returns how
+              many went.
             </>,
           ],
         ]}
@@ -388,11 +409,73 @@ for event in events[:5]:
         }
       />
 
+      <h2>Keeping the ledger bounded</h2>
+
+      <p>
+        The ledger gains one row per model call and normal operation removes none, so it grows for
+        as long as you use effGen. The budget check before each call reads a total summed in SQLite
+        against an index on the timestamp, so its cost follows the window it asks about rather than
+        the size of the file — but the file itself keeps growing. Once it passes 250,000 events
+        effGen logs one line naming <code>effgen cost prune</code>. Nothing is deleted for you:
+        these are your own spend records, and <code>effgen cost by-provider</code> reports them over
+        the ledger’s whole lifetime.
+      </p>
+
+      <p>
+        Since 1.2.0 the file also bounds itself. At 250,000 rows it folds its oldest rows into
+        per-model totals, so every total stays exact while the row count stops growing.{' '}
+        <code>EFFGEN_COST_MAX_ROWS</code> sets the ceiling, and <code>0</code> keeps every row.
+        Opening a file written by an earlier release adds two columns, <code>calls</code> and{' '}
+        <code>unpriced_calls</code>, and rows in <code>effgen cost --json</code> gain{' '}
+        <code>unpriced_requests</code>. A write that triggers a fold waits for it. Many agents in
+        one process share the ledger without queueing on it; <code>SQLiteCostStore.flush()</code>{' '}
+        writes whatever is buffered.
+      </p>
+
+      <CodeBlock
+        language="bash"
+        filename="terminal"
+        code={`effgen cost prune --dry-run           # what would go, keeping the last 90 days
+effgen cost prune                     # keep the last 90 days
+effgen cost prune --older-than-days 30
+effgen cost prune --keep-rows 100000  # keep the newest 100,000 events`}
+      />
+
+      <p>
+        <code>--dry-run</code> and <code>--json</code> work together, so a scheduled job can report
+        before it deletes.
+      </p>
+
       <h2>Per-run cost</h2>
 
       <p>
         A single run's cost is on the response, not only in the aggregate:{' '}
-        <code>response.metadata["cost_usd"]</code>, alongside token counts and latency.{' '}
+        <code>response.metadata["cost_usd"]</code>, alongside token counts and latency. Since
+        1.2.0 the run also carries <code>response.ledger</code>, a <code>RunLedger</code>: its model
+        and tool calls; its prompt, completion, cached and cache-write tokens; its cost; and its
+        wall time split into model, tool, caller, child and framework time, per run and per
+        iteration. Sub-agents, workflow nodes, team members and an agent run inside a tool attach
+        to their parent once, and <code>total()</code> adds them up. A model you serve yourself
+        reads <code>cost_usd=None</code> — unpriced, not free — and records its provider as{' '}
+        <code>openai_compatible</code>.
+      </p>
+
+      <CodeBlock
+        filename="ledger.py"
+        code={`response = agent.run("What is 17 * 23?")
+ledger = response.ledger
+
+print(ledger.llm_calls, ledger.tool_calls, ledger.prompt_tokens, ledger.completion_tokens)
+print(f"model {ledger.model_wait_s:.2f} s, tools {ledger.tool_wait_s:.3f} s, "
+      f"framework {ledger.framework_s * 1000:.1f} ms")
+print(ledger.cost_usd)`}
+      />
+
+      <p>
+        Cached tokens are part of <code>prompt_tokens</code>, not added to it. They are read on
+        OpenAI, Anthropic, Groq, Together, Fireworks, Cerebras and Gemini, and priced at the cached
+        rate where the model catalog carries one; elsewhere they are billed in the estimate at the
+        full input rate.{' '}
         <Link to="/observability">Observability</Link> shows the whole metadata block, and{' '}
         <code>effgen top</code> puts 24-hour spend, the daily budget and a dollar-per-hour burn rate
         next to live activity.

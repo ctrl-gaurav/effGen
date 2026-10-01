@@ -20,25 +20,27 @@ import { resolveRoute } from "./routes";
 import { useReducedMotion } from "./useReducedMotion";
 import { accentTextStyle } from "./accentText";
 
-// One key per release, so a reader who dismissed the 0.3.1 modal still sees this
+// One key per release, so a reader who dismissed the 1.2.0 modal still sees this
 // one, and dismissing this one is remembered.
-const STORAGE_KEY = "effgen_v100_launch_seen";
+const STORAGE_KEY = "effgen_v130_launch_seen";
 
-// Four, not the whole release. The full 1.0.0 story is a page — /changelog — and
+// Four, not the whole release. The full 1.3.0 story is a page — /changelog — and
 // restating it here would mean two copies to keep true.
 const HIGHLIGHTS = [
-  { icon: FiServer, label: "Point it at any OpenAI-compatible server", sub: "base_url= reaches vLLM, SGLang, TGI, llama.cpp, Ollama, LM Studio or a gateway, with the ids the server actually serves", accent: "#00ff88" },
-  { icon: FiCode, label: "effgen code", sub: "A terminal coding agent: unified diffs, four permission modes, --undo, --review, and a git allow-list", accent: "#22d3ee" },
-  { icon: FiActivity, label: "Read back what a run did", sub: "AgentResponse.tool_calls carries each call, its arguments, its result and its duration — with .failed and .by_name()", accent: "#a78bfa" },
-  { icon: FiCpu, label: "Middleware, sessions, compaction, resumable workflows", sub: "Wrap the loop, give one agent many conversations, choose how context is compacted, and resume a DAG that died half way", accent: "#f59e0b" },
+  { icon: FiActivity, label: "Every run says how it ended", sub: "response.termination is done, not_possible, stuck, tool_failed or error, and a run that stops making progress is asked for its answer", accent: "#00ff88" },
+  { icon: FiCode, label: "A broken tool call is read", sub: "A call written in a broken or unexpected shape runs instead of ending the run, and string arguments are decoded", accent: "#22d3ee" },
+  { icon: FiCpu, label: "Measured, not assumed", sub: "A served or local model is probed once for what it does with a tool, and tool_calling_mode=\"auto\" follows the result", accent: "#a78bfa" },
+  { icon: FiServer, label: "One agent, many conversations", sub: "Overlapping run(session=...) and stream(session=...) calls on one agent no longer mix their turns", accent: "#f59e0b" },
 ];
 
-// 1.0.0 is the first stable release and it breaks three things. A launch modal
-// that only lists the good news is how someone upgrades into a surprise.
+// A minor release can still change what existing code sees. A launch modal that
+// only lists the good news is how someone upgrades into a surprise. Four of the
+// ten; the changelog has the rest.
 const BREAKING = [
-  "Python 3.10 is no longer supported — the floor is 3.11.",
-  "AgentConfig.raise_on_error now defaults to True; opt out with raise_on_error=False.",
-  "An unreachable backend raises BackendUnreachableError regardless of that flag.",
+  "max_turns_without_progress defaults to 2: a run with no new tool result is asked for its answer. None restores 1.2.0's loop.",
+  "A run whose tool keeps failing on its own side stops with tool_failed and raises RunStoppedError by default.",
+  "recover_lost_tool_calls defaults to True, so some runs make more tool calls. False restores 1.2.0's reader.",
+  "A served or local model is probed once at tool_calling_mode=\"auto\"; capability_probe=False turns it off.",
 ];
 
 // Fixed positions to avoid SSR/hydration mismatch
@@ -293,7 +295,7 @@ export default function LaunchModal() {
                   />
                   <FiStar size={12} className="text-green-300" />
                   <span className="text-[11px] font-bold tracking-[0.2em] text-green-300 uppercase">
-                    v1.0.0 · First stable release
+                    v1.3.0 · Minor release
                   </span>
                 </motion.div>
 
@@ -314,7 +316,7 @@ export default function LaunchModal() {
                       animate={{ opacity: [0.6, 1, 0.6] }}
                       transition={{ duration: 3, repeat: Infinity }}
                     >
-                      v1.0.0
+                      v1.3.0
                     </motion.span>
                     <span
                       className="relative bg-clip-text text-transparent"
@@ -323,7 +325,7 @@ export default function LaunchModal() {
                           "linear-gradient(120deg, #00ff88, #00e5ff, #a78bfa)",
                       }}
                     >
-                      v1.0.0
+                      v1.3.0
                     </span>
                   </span>{" "}
                   is here!
@@ -335,9 +337,10 @@ export default function LaunchModal() {
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.32 }}
                 >
-                  The first stable release, out on 14 August 2026. It opens effGen up to any
-                  OpenAI-protocol endpoint, adds a terminal coding agent, and makes a run report what
-                  it actually did — every tool call, and a cost that is either real or absent.
+                  Out on 1 October 2026. A run that stops making progress is asked for its answer,
+                  every run says how it ended, and a tool that keeps failing ends the run as
+                  tool_failed instead of being answered around. Nothing was removed or renamed.
+                  Small models given a search tool now cost more per run; the changelog says why.
                 </motion.p>
 
                 {/* Highlights */}
@@ -389,8 +392,8 @@ export default function LaunchModal() {
                   ))}
                 </motion.ul>
 
-                {/* Three things break. Say so here rather than letting an
-                    upgrade discover them. */}
+                {/* Changes existing code can see. Say so here rather than
+                    letting an upgrade discover them. */}
                 <motion.div
                   className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3.5 py-3"
                   initial={{ y: 10, opacity: 0 }}
@@ -400,7 +403,7 @@ export default function LaunchModal() {
                   <div className="flex items-center gap-2 mb-1.5">
                     <FiShield size={12} className="text-amber-400 flex-shrink-0" />
                     <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-300">
-                      Three breaking changes
+                      Ten changes existing code sees, among them
                     </span>
                   </div>
                   <ul className="space-y-0.5">
@@ -499,7 +502,7 @@ export default function LaunchModal() {
                     onClick={close}
                     className="inline-flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm text-green-300 border border-green-500/40 bg-green-500/5 hover:bg-green-500/15 hover:border-green-400 hover:text-white transition-all"
                   >
-                    Everything in 1.0.0
+                    Everything in 1.3.0
                   </a>
 
                   <button

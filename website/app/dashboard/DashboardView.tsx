@@ -944,7 +944,7 @@ EFFGEN_DEV_MODE=1 EFFGEN_PUBLIC_DASHBOARD=1 effgen serve --port 8000
 # then
 open http://127.0.0.1:8000/dashboard
 open http://127.0.0.1:8000/playground`}
-                output={`{"status":"ok","version":"1.0.0"}`}
+                output={`{"status":"ok","version":"1.0.1"}`}
                 outputLabel="curl -s http://127.0.0.1:8000/health"
               />
               <p className="mt-4 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">

@@ -1,0 +1,190 @@
+{
+ "_comment": "Samples that cannot run on an ordinary machine, each with a reason. Keyed by the sha-256 of the sample text, so an entry survives the page being edited and stops applying the moment the sample itself changes \u2014 a rewritten sample is tested again rather than silently exempt.",
+ "entries": {
+  "960c8cbad78b11b4": {
+   "kind": "illustration",
+   "reason": "A picture of what the editor does, not a program: the first line is a half-typed identifier being completed, and the annotations point at a hover and a run lens. It cannot parse, by design.",
+   "where": "effgen-docs/src/pages/VSCode.tsx:165"
+  },
+  "0d4bdcc881d9f6cb": {
+   "kind": "illustration",
+   "reason": "The two-line guard the prose introduces, shown on its own so it can be put in front of any call. `result` is whichever call the reader is guarding.",
+   "where": "effgen-docs/src/pages/Tools.tsx:196"
+  },
+  "cf30b237360496ba": {
+   "kind": "illustration",
+   "reason": "One line showing that `middleware=` on a call adds to the configured chain. `agent` and `task` are the reader's.",
+   "where": "effgen-docs/src/pages/Middleware.tsx:218"
+  },
+  "a926fe2fd207701c": {
+   "kind": "illustration",
+   "reason": "The except-ladder, shown as a skeleton with `...` bodies so the order of the clauses is the subject. `task` is the reader's.",
+   "where": "effgen-docs/src/pages/Errors.tsx:504"
+  },
+  "d2f810f7af158dec": {
+   "kind": "illustration",
+   "reason": "Three one-line calls contrasting the three agent modes. `agent` and `task` are the reader's.",
+   "where": "effgen-docs/src/pages/MultiAgent.tsx:449"
+  },
+  "ffcde0ddde79c8ce": {
+   "kind": "illustration",
+   "reason": "The circuit-breaker guard wrapped around `call_model()`, which stands for whatever call the reader is protecting.",
+   "where": "effgen-docs/src/pages/Reliability.tsx:350"
+  },
+  "096756882e818271": {
+   "kind": "external-service",
+   "reason": "Verifies a JWT issued by the reader's own OIDC provider: `raw_token` is the token on the incoming request, and the issuer, client id and JWKS URI are that provider's. There is no identity provider on this machine.",
+   "where": "effgen-docs/src/pages/APIServer.tsx:299"
+  },
+  "644863531287d600": {
+   "kind": "no-credential",
+   "reason": "Anthropic prompt caching. It needs an Anthropic key, which this machine deliberately does not carry, and a long stable system prompt of the reader's own.",
+   "where": "effgen-docs/src/pages/Providers.tsx:183"
+  },
+  "65b076e175173b66": {
+   "kind": "no-credential",
+   "reason": "Posts to a Discord webhook. Needs DISCORD_WEBHOOK_URL, and running it would post to a real channel.",
+   "where": "effgen-docs/src/data/toolGallery.json:15"
+  },
+  "aaa38280d8688e78": {
+   "kind": "no-credential",
+   "reason": "Reads a mailbox. Needs IMAP_HOST, IMAP_USER and IMAP_PASSWORD for a real account.",
+   "where": "effgen-docs/src/data/toolGallery.json:19"
+  },
+  "de572fc1687cf9fc": {
+   "kind": "no-credential",
+   "reason": "Sends mail. Needs SMTP_HOST, SMTP_USER and SMTP_PASSWORD, and running it would send a real message.",
+   "where": "effgen-docs/src/data/toolGallery.json:20"
+  },
+  "d1fa77dbabce163e": {
+   "kind": "no-credential",
+   "reason": "Posts to a Slack webhook. Needs SLACK_WEBHOOK_URL, and running it would post to a real channel.",
+   "where": "effgen-docs/src/data/toolGallery.json:52"
+  },
+  "e5c814384b9df036": {
+   "kind": "no-credential",
+   "reason": "Needs a Wolfram Alpha app id (WOLFRAM_ALPHA_APPID), which this machine does not have.",
+   "where": "effgen-docs/src/data/toolGallery.json:64"
+  },
+  "2a2083f0a9ccaff7": {
+   "kind": "blocked-api",
+   "reason": "Reddit answers unauthenticated API traffic from this network with HTTP 403. The tool reports it as a failed call, which is the behaviour the sample documents.",
+   "where": "effgen-docs/src/data/toolGallery.json:47"
+  },
+  "28ef39f701bc57fd": {
+   "kind": "no-credential",
+   "reason": "Routes through a commercial gateway and reads GATEWAY_TOKEN. There is no such gateway here.",
+   "where": "effgen-docs/src/pages/OpenAICompatible.tsx:171"
+  },
+  "b190200786ea779a": {
+   "kind": "no-credential",
+   "reason": "Calls a remote A2A agent and reads A2A_TOKEN. There is no remote agent to call.",
+   "where": "effgen-docs/src/pages/Protocols.tsx:337"
+  },
+  "589da49b27fa45f2": {
+   "kind": "no-credit",
+   "reason": "Runs against Cerebras. The account reachable from this machine has no credit and the call returns HTTP 402 at setup; that is the state of the environment, not the sample.",
+   "where": "effgen-docs/src/pages/Cost.tsx:307"
+  },
+  "370fdd439668fe50": {
+   "kind": "needs-gpu",
+   "reason": "Loads local weights onto a GPU. No GPU is free on this shared host.",
+   "where": "effgen-docs/src/pages/LocalModels.tsx:38"
+  },
+  "36979e44772ae9be": {
+   "kind": "too-slow",
+   "reason": "A multi-agent team over several provider round trips; it does not finish inside the harness's 300s budget. The shorter samples on the same page cover the same API.",
+   "where": "effgen-docs/src/pages/MultiAgent.tsx:177"
+  },
+  "ae5035271e04c40d": {
+   "kind": "too-slow",
+   "reason": "As above: a full orchestration run that exceeds the 300s budget.",
+   "where": "effgen-docs/src/pages/MultiAgent.tsx:218"
+  },
+  "4a335b404a2dd545": {
+   "kind": "needs-input",
+   "reason": "Loads the alert rules that ship in the framework repository at docs/observability/alert_rules.yaml, so it runs from a checkout of that repository rather than from an empty directory.",
+   "where": "app/production/ProductionView.tsx:70"
+  },
+  "3c941225f2d97641": {
+   "kind": "needs-input",
+   "reason": "Loads an effgen.yaml the reader has written; the page shows that file immediately above.",
+   "where": "effgen-docs/src/pages/Configuration.tsx:50"
+  },
+  "25474138c079124d": {
+   "kind": "needs-input",
+   "reason": "Summarises sample_video.mp4, a clip the reader supplies. The recipe says so in its own prose.",
+   "where": "effgen-docs/src/pages/Cookbook.tsx:207"
+  },
+  "fbfab4a1f9fd18d3": {
+   "kind": "needs-input",
+   "reason": "Imports my_tools, the plugin package the reader is being shown how to write.",
+   "where": "effgen-docs/src/pages/CustomTools.tsx:392"
+  },
+  "8455184c11c642b2": {
+   "kind": "needs-input",
+   "reason": "Uploads my_doc.txt, a document the reader supplies.",
+   "where": "effgen-docs/src/pages/NativeProviderTools.tsx:284"
+  },
+  "17618696fce9a0ed": {
+   "kind": "needs-input",
+   "reason": "Builds a knowledge base from ./docs, the reader's own documents.",
+   "where": "effgen-docs/src/pages/Presets.tsx:379"
+  },
+  "93805d3ce734283d": {
+   "kind": "illustration",
+   "reason": "The failover call shape. `ctx` is the RoutingContext built two blocks above and `call_provider` is the reader's own function \u2014 the block is about the events the router emits, not about either of them.",
+   "where": "effgen-docs/src/pages/Routing.tsx:283"
+  },
+  "055c46e9f2a599af": {
+   "kind": "blocked-api",
+   "reason": "Semantic Scholar rate-limits unauthenticated traffic and answers this network with HTTP 429. The tool reports it as a failed call, which is the behaviour the sample documents.",
+   "where": "effgen-docs/src/data/toolGallery.json:50"
+  },
+  "07ad84d0b1c81ee7": {
+   "kind": "too-slow",
+   "reason": "Carries on from the team build above, so running it means running a full hierarchical orchestration; it does not finish inside the harness's 300s budget. The shorter samples on the same page cover the same API.",
+   "where": "effgen-docs/src/pages/MultiAgent.tsx:429"
+  },
+  "51f02c14fc9ede40": {
+   "kind": "needs-gpu",
+   "reason": "Pins a local model to a GPU. No GPU is free on this shared host.",
+   "where": "app/models/ModelsView.tsx:662"
+  },
+  "a2126c3bd9273741": {
+   "kind": "quota-exhausted",
+   "where": "effgen-docs/src/pages/NativeProviderTools.tsx:310",
+   "reason": "Gemini grounded search. The Google account reachable from this machine has exhausted its quota for the feature, so the call returns HTTP 429 (\"You exceeded your current quota\") on every attempt, alone or under load. The API the sample uses was verified without completing a grounded call: GoogleSearchTool() builds and reports name 'google_search', and an AgentConfig with tool_calling_mode='native' accepts it. The answer the page shows beside it was captured when the quota was available; this run did not reproduce it."
+  },
+  "4872e07a3cbf46f9": {
+   "kind": "illustration",
+   "reason": "Two lines showing how to keep only the answer events of a stream. `agent` and `task` are the reader's.",
+   "where": "effgen-docs/src/pages/Migration.tsx:106"
+  },
+  "4972e9d1780704fe": {
+   "kind": "illustration",
+   "reason": "Four alternative prune invocations listed side by side. Run in sequence they would delete events from the reader's own spend ledger.",
+   "where": "effgen-docs/src/pages/Cost.tsx:412"
+  },
+  "dab926540c0653c6": {
+   "kind": "illustration",
+   "reason": "Reading the ledger off a response. `agent` is the reader's; the full run that binds it is on the Releases page.",
+   "where": "effgen-docs/src/pages/Cost.tsx:463"
+  },
+  "cf466472cf5cdbf5": {
+   "kind": "illustration",
+   "reason": "Catching the typed spend-cap error. `agent` and `task` are the reader's, and the except branch only runs once a configured cap is spent.",
+   "where": "effgen-docs/src/pages/Migration.tsx:137"
+  },
+  "3d4a24aa8a9a87e3": {
+   "kind": "illustration",
+   "reason": "Adding up cost when some runs are unpriced. `responses` is the reader's list of run results.",
+   "where": "effgen-docs/src/pages/Migration.tsx:159"
+  },
+  "a8a0f57778b3825c": {
+   "kind": "illustration",
+   "reason": "Branching on a run whose tools failed. `agent` and `task` are the reader's, and the branch only runs once a tool keeps failing on its own side.",
+   "where": "effgen-docs/src/pages/Migration.tsx:94"
+  }
+ }
+}

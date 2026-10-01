@@ -9,7 +9,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { siteData, version } from '../siteData';
+import { siteData } from '../siteData';
 
 const serveOptions = siteData.cli.command_options['serve'] ?? [];
 const serveEnv = siteData.cli.serve_env ?? [];
@@ -60,7 +60,7 @@ export default function APIServer() {
         }
       />
 
-      <Terminal command="curl -s http://127.0.0.1:8000/health" output={`{"status":"ok","version":"1.0.0"}`} />
+      <Terminal command="curl -s http://127.0.0.1:8000/health" output={`{"status":"ok","version":"1.0.1"}`} />
 
       <p>
         That is one of the handful of public routes. Everything else needs a credential, and says so
@@ -91,7 +91,7 @@ openai:gpt-5-nano`}
         title="curl"
         caption={
           <>
-            Captured against effGen {version}. <code>/v1/models</code> lists the aliases plus every
+            Captured against effGen 1.0.1. <code>/v1/models</code> lists the aliases plus every
             id this process has already served — it is not the catalogue. Any{' '}
             <code>provider:model</code> id the server can reach is callable whether or not it
             appears there; <Link to="/catalog">the model catalog</Link> is the full list.

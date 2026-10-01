@@ -26,10 +26,10 @@ export const presetCount = siteData.presets.count;
 export const providerCount = siteData.models.adapter_count;
 export const providersWithCatalog = siteData.models.with_catalog_count;
 
-/** 417 catalogued models, across the nine providers that carry a catalog. */
+/** 416 catalogued models, across the nine providers that carry a catalog. */
 export const modelCount = siteData.models.models;
 
-/** 29 top-level commands and 38 sub-commands. */
+/** 30 top-level commands and 42 sub-commands. */
 export const commandCount = siteData.cli.command_count;
 export const subcommandCount = siteData.cli.subcommand_count;
 

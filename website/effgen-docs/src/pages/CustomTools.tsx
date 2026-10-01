@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function CustomTools() {
   return (
@@ -50,7 +49,7 @@ print(agent.run("How many words are in 'the quick brown fox'? Use the tool.").te
       <Terminal
         command="python counter.py"
         output={`4`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <p>

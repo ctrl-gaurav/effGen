@@ -28,7 +28,7 @@ export default function StubPage({ path }: { path: string }) {
           <span>This page has not been written yet</span>
         </div>
         <p>
-          It is part of the documentation for effGen 1.0.0 and is being written. The
+          It is part of the documentation for effGen 1.3.0 and is being written. The
           navigation carries it already so that nothing links into a gap.
         </p>
         {page.source && (

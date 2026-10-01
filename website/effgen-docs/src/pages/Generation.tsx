@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Generation() {
   return (
@@ -46,7 +45,7 @@ print(agent.run("Name three primes, comma separated.").text.strip())`}
         command="python sampling.py"
         output={`2, 3, 5
 7, 11, 13`}
-        caption={`Run against effGen ${version}. Two runs of one agent, same settings, different answers — a seed is not a promise that the same question is asked twice in the same conversation state.`}
+        caption={`Run against effGen 1.0.0. Two runs of one agent, same settings, different answers — a seed is not a promise that the same question is asked twice in the same conversation state.`}
       />
 
       <h2>The sampling surface</h2>
@@ -112,7 +111,7 @@ print(agent.run("Name three primes, comma separated.").text.strip())`}
             name: 'reasoning_effort',
             type: '"none" | "minimal" | "low" | "medium" | "high" | "xhigh" | None',
             default: 'None',
-            description: 'How much hidden reasoning a reasoning model should spend before answering. GenerationConfig only.',
+            description: 'How much hidden reasoning a reasoning model should spend before answering. GenerationConfig only. Since 1.3.0 it is also sent to a model served behind base_url, whatever it is called, and by Groq for a model its catalog marks as reasoning; a server that refuses it is asked once more without it and remembered, and any other adapter that drops it says so once per model at WARNING level.',
           },
           {
             name: 'max_reasoning_tokens',
@@ -264,6 +263,17 @@ print()`}
         structured tool-call list is only available from a non-streaming call — see{' '}
         <Link to="/tool-calling">Tool calling</Link>.
       </p>
+
+      <p>
+        <code>agent.stream(task)</code> yields the model’s working as well as its answer, the
+        working first. To show only the answer, ask for events and join the answer events — for a
+        turn that answered, that reproduces <code>response.output</code> exactly:
+      </p>
+
+      <CodeBlock
+        code={`events = list(agent.stream(task, include_events=True))
+answer = "".join(e.text for e in events if e.kind == "answer")`}
+      />
 
       <h2>Structured output</h2>
       <p>

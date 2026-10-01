@@ -10,8 +10,8 @@ import { SITE_NAME, SITE_URL } from "./seo";
 //
 // It is emitted once, in the root layout, and applies to every route.
 
-/** The date on the 1.0.0 entry in the framework's changelog, in ISO form. */
-const RELEASE_DATE_ISO = "2026-08-14";
+/** The date on the 1.3.0 entry in the framework's changelog, in ISO form. */
+const RELEASE_DATE_ISO = "2026-10-01";
 
 const REPOSITORY = "https://github.com/ctrl-gaurav/effGen";
 const PACKAGE = "https://pypi.org/project/effgen/";

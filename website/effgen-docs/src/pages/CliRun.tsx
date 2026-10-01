@@ -257,32 +257,28 @@ effgen run "Draft a reply" --persona "terse, formal" --json | jq .output`}
 }`}
       />
 
-      <Callout type="danger" title="A run that called a tool cannot be serialized in 1.0.0">
+      <Callout type="note" title="Fixed in 1.1.0: a run that called a tool serializes">
         <p>
-          <code>--json</code> and <code>-o FILE</code> both fail with{' '}
-          <code>Object of type ToolCall is not JSON serializable</code> whenever the run made a tool
-          call — the saved document's <code>execution_tree</code> carries tool-call objects the JSON
-          writer cannot encode. The command exits <code>1</code>, and <code>-o</code> leaves a
-          truncated file that will not parse. A run with no tool call is unaffected.
-        </p>
-        <p>
-          Until it is fixed, use <code>--card out.html</code>, which renders the same run{' '}
-          <em>including</em> its tool trace, or read the run back from{' '}
-          <Link to="/cli/history">history</Link> with{' '}
-          <code>effgen runs show &lt;id&gt; --json</code>.
+          In 1.0.0 and 1.0.1, <code>--json</code>, <code>-o FILE</code> and <code>--card</code> failed
+          with <code>Object of type ToolCall is not JSON serializable</code> whenever the run made a
+          tool call, because the saved document's <code>execution_tree</code> carried tool-call
+          objects. From 1.1.0 the tree is written as data, so those runs serialize like any other.
+          The three documents, and <code>--show-thread</code>, go through one scrubber; the terminal
+          answer panel still prints the run's own words unredacted.
         </p>
       </Callout>
 
-      <Terminal
-        command={`effgen run "What is 7*6? Use the calculator." -m openai:gpt-5-nano -t calculator -q --json`}
-        output={`{
-  "success": false,
-  "error": {
-    "type": "TypeError",
-    "message": "Object of type ToolCall is not JSON serializable"
-  }
-}`}
-        caption="Exit 1. The answer itself was computed — only writing it out failed."
+      <h3>Reading the run back step by step</h3>
+      <p>
+        <code>--show-thread</code> prints the run's conversation after the answer: the frame it
+        started from, every thought, every tool call with its input, every result, and the answer.
+        The same steps are in the <code>--json</code> document under{' '}
+        <code>metadata.thread</code>.
+      </p>
+
+      <CodeBlock
+        language="bash"
+        code={`effgen run "What is 7*6? Use the calculator." -m openai:gpt-5-nano -t calculator --show-thread`}
       />
 
       <h3>What a saved result carries</h3>
@@ -290,12 +286,14 @@ effgen run "Draft a reply" --persona "terse, formal" --json | jq .output`}
       <Terminal
         command={`effgen run "Name one prime number under 10." -m openai:gpt-5-nano -o saved-run.json -q && python -c 'import json; print(sorted(json.load(open("saved-run.json"))))'`}
         output={`['citations', 'execution_time', 'execution_trace', 'execution_tree', 'iterations',
- 'metadata', 'mode', 'model', 'output', 'provider', 'routing_decision', 'sources',
- 'started_at', 'success', 'task', 'tokens_used', 'tool_call_details', 'tool_calls']`}
+ 'metadata', 'mode', 'model', 'outcome', 'output', 'partial', 'provider',
+ 'routing_decision', 'sources', 'started_at', 'stop_reason', 'success', 'task',
+ 'tokens_used', 'tool_call_details', 'tool_calls']`}
         caption={
           <>
             <code>tool_calls</code> is the count and <code>tool_call_details</code> is the list.{' '}
-            <code>metadata</code> carries <code>cost_usd</code>, the token breakdown, latency,{' '}
+            <code>outcome</code>, <code>stop_reason</code> and <code>partial</code> say how the
+            run ended. <code>metadata</code> carries <code>cost_usd</code>, the token breakdown, latency,{' '}
             <code>partial_output</code> and <code>input_redaction</code>.{' '}
             <code>effgen report saved-run.json</code> turns it into HTML.
           </>
@@ -315,7 +313,7 @@ effgen chat --session-id support-42       # resume a saved session`}
       <Terminal
         command="effgen chat -m openai:gpt-5-nano"
         output={`
-effGen v1.0.0 · chat
+effGen v1.0.1 · chat
 Model: gpt-5-nano
 Type your message and press Enter.  End a line with \\ for multi-line input.
 Slash commands (type / for the menu): /help  /model  /tools  /status  /cost  /trace  /reset  /save
@@ -516,9 +514,10 @@ Response
             <>
               <code>Object of type ToolCall is not JSON serializable</code>, exit <code>1</code>
             </>,
-            'The serialization defect above. The run succeeded; writing it out did not.',
+            'The serialization defect in 1.0.0 and 1.0.1, fixed in 1.1.0. The run succeeded; writing it out did not.',
             <>
-              <code>--card out.html</code>, or <code>effgen runs show &lt;id&gt; --json</code>.
+              <code>pip install -U effgen</code>. On an older release, <code>--card out.html</code>{' '}
+              or <code>effgen runs show &lt;id&gt; --json</code>.
             </>,
           ],
           [
@@ -587,7 +586,7 @@ Response
           <code>--preset</code>, <code>--guardrails</code> and the shared answer presentation. Two
           behaviours changed: <code>raise_on_error</code> now defaults to <code>True</code>, and an
           unreachable backend raises <code>BackendUnreachableError</code> regardless of that flag —{' '}
-          <Link to="/migration">Migrating to 1.0.0</Link>.
+          <Link to="/migration">Migrating to 1.2.0</Link>. 1.1.0 added <code>--show-thread</code>.
         </p>
       </Callout>
 

@@ -10,7 +10,6 @@ import {
   Step,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 /**
  * The twelve tutorials the framework ships, and where each one is on this site.
@@ -100,7 +99,7 @@ export default function Tutorials() {
       <p>
         A tutorial is a whole program: something to build, the code to build it with, and the
         output it produced when it was run. The three below each take one task from an empty file
-        to a printed answer, and every block on this page is a real run against effGen {version} —
+        to a printed answer, and every block on this page is a real run against effGen 1.0.1 —
         including the one where a tool fails.
       </p>
 
@@ -193,7 +192,7 @@ success   : True
 tools     : ['calculator', 'python_repl']
 calls     : 2
 iterations: 3`}
-        caption={`Run against effGen ${version}. Both tools were used, in three passes of the loop.`}
+        caption={`Run against effGen 1.0.0. Both tools were used, in three passes of the loop.`}
       />
 
       <h3>The same agent, from a preset</h3>

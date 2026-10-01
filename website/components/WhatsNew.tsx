@@ -89,11 +89,12 @@ agent = Agent(AgentConfig(
 r = agent.run("Use the calculator tool to work out 24344 * 334.")
 
 print(r.text)
-print(r.tool_calls.total, "tool call")
+print(r.tool_calls.total, "tool calls")
 for call in r.tool_calls:
     print(call.name, call.arguments, "->", call.result)`,
       output: `8130896
-1 tool call
+2 tool calls
+calculator {"expression": "24344 * 4"} -> 97376
 calculator {"expression": "24344 * 334"} -> 8130896`,
     },
   },
@@ -218,7 +219,7 @@ draft     failed     13.46s`,
     hrefLabel: "The web surfaces",
     capture: {
       command: "effgen serve --port 8000",
-      output: `effGen v1.0.0 - API Server
+      output: `effGen v1.0.1 - API Server
 ✓ Auth: static API key (EFFGEN_API_KEY)
 Starting server on 127.0.0.1:8000
   OpenAI-compatible API : http://127.0.0.1:8000/v1
@@ -230,20 +231,28 @@ Starting server on 127.0.0.1:8000
   },
 ];
 
+// Four of the ten 1.3.0 changes existing code can see — the ones most code
+// meets first. The changelog lists all ten.
 const breaking = [
   {
-    title: "Python 3.10 is no longer supported",
-    detail: "The floor is 3.11, and the package is tested through 3.14.",
+    title: "A run with no progress is asked for its answer",
+    detail:
+      "max_turns_without_progress defaults to 2, and a stuck run gets one closing request, so a run that raised RunStoppedError in 1.2.0 can now return an answer. None restores the earlier loop.",
   },
   {
-    title: "raise_on_error defaults to True",
+    title: "A failing tool ends the run tool_failed",
     detail:
-      "A failed run raises instead of returning a result with success=False. Pass raise_on_error=False for the old behaviour.",
+      "A tool that fails on its own side three times in a row is unavailable for the run; a run left with no usable tool stops with tool_failed and raises RunStoppedError by default.",
   },
   {
-    title: "An unreachable backend always raises",
+    title: "A broken tool call is read",
     detail:
-      "BackendUnreachableError is raised whatever raise_on_error is set to, because there is no result to return.",
+      "recover_lost_tool_calls defaults to True, so some runs make more tool calls. A call missing a required argument is asked for again, never dispatched.",
+  },
+  {
+    title: "Served and local models are probed",
+    detail:
+      "At tool_calling_mode=\"auto\" the first agent measures what the model does with a tool, once. capability_probe=False or EFFGEN_CAPABILITY_PROBE=0 turns it off.",
   },
 ];
 
@@ -271,13 +280,16 @@ export default function WhatsNew() {
             What&rsquo;s new
           </motion.span>
           <h2 className="text-4xl md:text-5xl font-black mb-6 text-gray-900 dark:text-white leading-tight">
-            The first stable release,
+            The stable line,
             <br />
             <span className="gradient-text">shown rather than listed</span>
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            Five of the changes in {version}, each with the output it produces beside
-            it. Every sample here was run before it was written down.
+            {version} makes every run say how it ended: a run that stops making progress is asked
+            for its answer, a tool that keeps failing ends the run as tool_failed, and a tool call
+            written in a broken shape is read rather than reported. Below, five of the changes 1.0.0 brought, each with the output it produces
+            beside it. Every sample here was run before it was written down, on the release it
+            was recorded on.
           </p>
         </motion.div>
 
@@ -359,7 +371,7 @@ export default function WhatsNew() {
           ))}
         </div>
 
-        {/* The three breaking changes */}
+        {/* Changes existing code sees */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
@@ -367,20 +379,24 @@ export default function WhatsNew() {
           className="mt-10 rounded-2xl border border-orange-500/25 bg-orange-500/[0.04] p-6 lg:p-8"
         >
           <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">
-            Three things change when you upgrade
+            Four of the ten things existing code sees in {version}
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-            Everything else in {version} is additive — nothing was removed or renamed.
+            Nothing was removed or renamed. Coming from 1.1.x, 1.2.0 also made a spent cap raise
+            BudgetExceededError and an unpriced model report its cost as None; from 1.0.x, 1.1.0 also put the run&rsquo;s
+            conversation in response.metadata as a live thread; from 1.0.0, 1.0.1 made a stopped run
+            report failure and made citation markers opt-in; coming from 0.3.x, 1.0.0 raised
+            the Python floor to 3.11 and made raise_on_error default to True.
           </p>
 
-          <ol className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
             {breaking.map((item, i) => (
               <li
                 key={item.title}
                 className="rounded-xl bg-white dark:bg-black/40 border border-gray-200 dark:border-gray-800 p-4"
               >
                 <span className="text-[10px] font-mono uppercase tracking-widest text-orange-700 dark:text-orange-400">
-                  Breaking {String(i + 1).padStart(2, "0")}
+                  Change {String(i + 1).padStart(2, "0")}
                 </span>
                 <h4 className="mt-2 text-sm font-bold text-gray-900 dark:text-white">
                   {item.title}
@@ -404,7 +420,7 @@ export default function WhatsNew() {
               to="/docs/migration"
               className="inline-flex items-center gap-1.5 text-sm font-semibold text-green-700 dark:text-green-400"
             >
-              Migrating from 0.3.x
+              The migration guide
               <FiArrowRight size={14} />
             </RouteLink>
           </div>

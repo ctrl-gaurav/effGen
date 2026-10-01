@@ -59,7 +59,7 @@ print(result.success, result.tool_call_count)`,
         command="python hello.py"
         output={`42.5
 True 1`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <Callout type="note" title="Any of these model ids works">
@@ -169,7 +169,7 @@ effgen presets`}
 
       <Terminal
         command={'effgen run "What is 25 * 17?" -m openai:gpt-5-nano'}
-        output={`effGen v1.0.0 - Running Task
+        output={`effGen v1.0.1 - Running Task
 
 Initializing agent: cli-agent
 Model: openai:gpt-5-nano
@@ -230,7 +230,7 @@ effgen run "What is 25 * 17?" -c effgen.yaml`}
             <code>AmbiguousModelError</code>,
             'The bare id exists on more than one provider.',
             <>
-              Prefix it — <code>groq:llama-3.3-70b-versatile</code> — or pass{' '}
+              Prefix it — <code>groq:openai/gpt-oss-120b</code> — or pass{' '}
               <code>provider=</code>.
             </>,
           ],

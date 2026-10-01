@@ -6,7 +6,7 @@
 // here restates any of them.
 //
 // What is written here is the one thing the classes do not state: which of the
-// 49 `AgentConfig` fields this page documents, and in what order. The
+// 52 `AgentConfig` fields this page documents, and in what order. The
 // assertions below fail the build if a name here stops existing on the class,
 // so a field renamed in the framework cannot leave a row on the page pointing
 // at nothing.
@@ -30,7 +30,7 @@ const api = siteData.api;
 /**
  * The `AgentConfig` fields this page documents, grouped by what they decide.
  *
- * `AgentConfig` carries 49 fields. Printing all of them would be a reference
+ * `AgentConfig` carries 52 fields. Printing all of them would be a reference
  * page, not an orientation, so this names the ones a first agent is written
  * with — and `configRows` reads each one's real annotation and default out of
  * the generated data rather than repeating them here.
@@ -76,8 +76,8 @@ export const configGroups: ConfigGroup[] = [
   {
     id: "what-it-returns",
     title: "What comes back",
-    what: "Ask for a shape, and the answer is validated against it before the run reports success.",
-    fields: ["output_format", "output_schema"],
+    what: "Ask for a shape, and the answer is validated against it before the run reports success. Ask for citations, and the answer marks the passages it used.",
+    fields: ["output_format", "output_schema", "cite_sources"],
   },
 ];
 
@@ -131,7 +131,9 @@ export function responseField(name: string) {
  */
 export const responseNotes: { name: string; what: string }[] = [
   { name: "output", what: "The answer, as text. Passing the response to str() gives the same string." },
-  { name: "success", what: "Whether the run finished the task rather than running out of turns or failing." },
+  { name: "success", what: "Whether the run answered, rather than being stopped by the loop or failing." },
+  { name: "stop_reason", what: "The exit the run took — \"final_answer\" when it answered. response.outcome reads it as answered, stopped or failed, and since 1.3.0 response.termination as done, not_possible, stuck, tool_failed or error." },
+  { name: "partial", what: "What a stopped run had reached: its tool observations, its last reasoning line and a one-line text." },
   { name: "tool_calls", what: "The calls the run made, as records. Still compares and casts as their count." },
   { name: "iterations", what: "How many turns of the loop it took." },
   { name: "tokens_used", what: "Prompt and completion tokens across every model call in the run." },
@@ -139,7 +141,7 @@ export const responseNotes: { name: string; what: string }[] = [
   { name: "sources", what: "The documents a retrieval-backed answer drew on." },
   { name: "citations", what: "The specific passages behind the answer, each with its source." },
   { name: "execution_trace", what: "Every step in order: the thought, the action, the observation." },
-  { name: "metadata", what: "Cost, per-call token counts, the partial answer of a run that stopped early, and what redaction removed." },
+  { name: "metadata", what: "Cost, per-call token counts, the partial text under partial_output, what redaction removed, since 1.1.0 the run's thread and its context budget, since 1.2.0 its ledger, and since 1.3.0 tool_results, unavailable_tools, tool_calling and answer_source." },
 ];
 
 /* ── The presets ── */

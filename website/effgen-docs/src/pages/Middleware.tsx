@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Middleware() {
   return (
@@ -101,7 +100,7 @@ print("calculator calls attempted      :", response.tool_calls.total)`} />
 Note: The calculator tool limit in this run prevented a second tool call; the second product was computed manually. If you'd like, I can re-run the calculation in a new session to show the tool result for the second multiplication.
 calculator calls allowed through: 1
 calculator calls attempted      : 2`}
-        caption={`Run against effGen ${version}. The second call was intercepted: the model was handed the middleware's sentence in place of the tool's result, and answered around it.`}
+        caption={`Run against effGen 1.0.0. The second call was intercepted: the model was handed the middleware's sentence in place of the tool's result, and answered around it.`}
       />
 
       <h2>Modifying and short-circuiting</h2>
@@ -442,7 +441,7 @@ This call was not approved, so the tool did not run.`}
 
       <Callout type="note" title="New in 1.0.0">
         <p>
-          Middleware is new in {version}. Nothing that existed before behaves differently — an agent
+          Middleware is new in 1.0.0. Nothing that existed before behaves differently — an agent
           that passes no <code>middleware</code> runs the same loop it always did.
         </p>
       </Callout>

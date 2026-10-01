@@ -88,7 +88,7 @@ GROQ_API_KEY=<REDACTED:groq_key>
 {'model': 'gpt-5-nano', 'api_key': '<REDACTED:openai_key>'}
 
 15 patterns: anthropic_key, cerebras_key, google_key, hf_key, groq_key, replicate_key, fireworks_key, github_token, slack_token, aws_access_key, openai_key, bearer_token, slack_webhook, discord_webhook, env_secret`}
-        caption={`Run against effGen ${version}. The marker names the pattern that matched, so a redacted log still says what kind of credential was there.`}
+        caption={`Run against effGen 1.0.0. The marker names the pattern that matched, so a redacted log still says what kind of credential was there.`}
       />
 
       <p>

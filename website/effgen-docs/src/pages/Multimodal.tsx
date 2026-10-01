@@ -8,7 +8,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Multimodal() {
   return (
@@ -41,7 +40,7 @@ print(response.text)`} />
         output={`The image displays a bar graph with four vertical bars of increasing height, all colored in a dark shade of green. These bars are set against a plain white background, and a single black horizontal line runs along the bottom.
 
 The single color that dominates the image is dark green.`}
-        caption={`Run against effGen ${version}, on a 300×200 PNG bar chart.`}
+        caption={`Run against effGen 1.0.0, on a 300×200 PNG bar chart.`}
       />
 
       <h2>The three helpers</h2>

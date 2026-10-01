@@ -67,7 +67,7 @@ Raises:
 
 Rules:
   - Infer parameter types and return types from usage`}
-        caption={`Run against effGen ${version}; the first 400 characters of the rendered prompt.`}
+        caption={`Run against effGen 1.0.0; the first 400 characters of the rendered prompt.`}
       />
 
       <h2>What is in the library</h2>

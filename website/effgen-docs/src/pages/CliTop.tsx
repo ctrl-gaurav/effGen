@@ -27,7 +27,7 @@ export default function CliTop() {
 
       <Terminal
         command="effgen top --once"
-        output={`effGen 1.0.0 — wangserv — 2026-08-24T22:57:10Z
+        output={`effGen 1.0.1 — wangserv — 2026-08-24T22:57:10Z
 server http://127.0.0.1:8000 unavailable
 
 Activity — completed runs, local run history (all processes)

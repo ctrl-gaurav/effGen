@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function NativeProviderTools() {
   return (
@@ -43,7 +42,7 @@ print(response.text)`} />
       <Terminal
         command="python search_agent.py"
         output={`Python 3.14.7.`}
-        caption={`Run against effGen ${version} on 2026-08-23.`}
+        caption={`Run against effGen 1.0.0 on 2026-08-23.`}
       />
 
       <h2>What ships</h2>

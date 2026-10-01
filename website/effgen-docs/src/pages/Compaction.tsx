@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Compaction() {
   return (
@@ -22,6 +21,15 @@ export default function Compaction() {
         changes the answer more for a small model than for a frontier one, and different tasks want
         different answers — so in effGen the choice is a strategy you pass, not a fixed rule.
       </p>
+
+      <Callout type="note" title="Two kinds of compaction">
+        <p>
+          This page has two parts. A session’s <strong>history</strong> is compacted by the memory
+          strategy below, which is new in 1.0.0. Since 1.1.0 a single <strong>run</strong> is also
+          bounded by the prompt tokens it may send, and compacts its own thread to stay inside
+          them — <a href="#run-budget">keeping a run inside its budget</a>.
+        </p>
+      </Callout>
 
       <h2>It already happens</h2>
       <p>
@@ -51,7 +59,7 @@ messages held     6
 summarizations    1
 summaries kept    1
 tokens            303 of 512`}
-        caption={`Run against effGen ${version}. Fourteen turns went in; six are held, because one compaction pass replaced the older ones with a summary.`}
+        caption={`Run against effGen 1.0.0. Fourteen turns went in; six are held, because one compaction pass replaced the older ones with a summary.`}
       />
 
       <p>
@@ -258,6 +266,41 @@ replacement: None`} />
         }
       />
 
+      <h2 id="run-budget">Keeping a run inside its budget</h2>
+      <p>
+        <code>AgentConfig.context_budget</code> says how many prompt tokens a run may send. At the
+        default, <code>"auto"</code>, the budget is the model’s window less the output reserve,
+        times 0.85; it is unbounded when the model declares no window, because guessing one would
+        truncate a conversation that would have fitted. An integer names the budget yourself,{' '}
+        <code>None</code> leaves the run unbounded as in 1.0.x, and{' '}
+        <code>max_context_length</code> overrides the window the model declares.{' '}
+        <code>response.metadata["context_budget"]</code> reports it on every outcome.
+      </p>
+
+      <CodeBlock filename="budget.py" code={`from effgen import AgentConfig, ShortenOldestFirst
+
+config = AgentConfig(
+    model="openai:gpt-5-nano",
+    context_budget=8000,
+    compaction=ShortenOldestFirst(observation_keep_chars=120),
+)
+print(config.context_budget, type(config.compaction).__name__)`} />
+
+      <Terminal command="python budget.py" output="8000 ShortenOldestFirst" caption="Run against effGen 1.1.0." />
+
+      <p>
+        When the conversation will not fit, <code>AgentConfig.compaction</code> brings the thread
+        back under. The default, <code>ShortenOldestFirst</code>, makes no model call and gives up
+        the oldest material first: an old tool result is shortened, then an old thought dropped,
+        then whole answered cycles replaced by one <code>NudgeStep</code>. It never touches the
+        frame, the task, the most recent two complete cycles or the answer, and a call and the
+        result answering it always leave together. A shortened <code>ObservationStep</code> says so
+        through <code>compacted</code> and <code>original_chars</code>.{' '}
+        <code>SummarizeWithModel</code> is opt-in and leaves a model-written summary behind. A run
+        that still cannot fit raises <code>ContextBudgetExceededError</code>, and a prompt larger
+        than the model’s window is sent once rather than retried.
+      </p>
+
       <h2>The settings that shape it</h2>
 
       <ParamTable
@@ -316,7 +359,7 @@ replacement: None`} />
 
       <Callout type="note" title="New in 1.0.0">
         <p>
-          Pluggable compaction is new in {version}. Before it, what effGen did was what{' '}
+          Pluggable compaction is new in 1.0.0. Before it, what effGen did was what{' '}
           <code>SummarizeOldest</code> now does, and there was no way to change it. Code that does
           not pass <code>compaction_strategy</code> behaves exactly as it did.
         </p>

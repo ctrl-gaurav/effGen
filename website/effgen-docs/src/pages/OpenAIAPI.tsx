@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function OpenAIAPI() {
   return (
@@ -53,7 +52,7 @@ print(answer.model, answer.usage)`} />
         command="python first.py"
         output={`ok
 openai:gpt-5-nano CompletionUsage(completion_tokens=266, prompt_tokens=26, total_tokens=292, completion_tokens_details=None, prompt_tokens_details=None)`}
-        caption={`Against effGen ${version} serving on 127.0.0.1:8000. The usage numbers are the provider's own.`}
+        caption={`Against effGen 1.0.0 serving on 127.0.0.1:8000. The usage numbers are the provider's own.`}
       />
 
       <h2>Endpoints</h2>

@@ -617,8 +617,9 @@ compares as its own count: True · int(): 3`}
                 <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
                   <Mono>tool_calling_mode=&quot;react&quot;</Mono> is what makes it one
                   call per turn. In 1.0.0 a turn in which the model asks for several tools
-                  at once records their names; the fields beside them are filled in for a
-                  call the loop dispatched on its own turn.
+                  at once recorded their names, and the fields beside them were filled in
+                  only for a call the loop dispatched on its own turn; since 1.0.1 a batched
+                  call records what it returned as well.
                 </p>
               </div>
             </div>
@@ -1623,9 +1624,9 @@ partial_output: None`}
               outputLabel="what that printed"
             />
             <div className="space-y-4">
-              <Card title="raise_on_error defaults to True in 1.0.0">
+              <Card title="raise_on_error defaults to True since 1.0.0">
                 <p>
-                  One of the release&rsquo;s three breaking changes. Before, a run that
+                  One of 1.0.0&rsquo;s three breaking changes. Before, a run that
                   failed returned a response whose <Mono>success</Mono> was{" "}
                   <Mono>False</Mono> — and a caller that read <Mono>.output</Mono> without
                   checking got an error string treated as an answer. It now raises by
@@ -1635,11 +1636,14 @@ partial_output: None`}
               </Card>
               <Card title="A run that stops early says so">
                 <p>
-                  Hitting <Mono>max_iterations</Mono> is not success.{" "}
-                  <Mono>success</Mono> is <Mono>False</Mono>, and{" "}
-                  <Mono>metadata[&quot;partial_output&quot;]</Mono> carries what the run
-                  had produced when it stopped — so the work is not lost, and it is not
-                  mistaken for a finished answer.
+                  Hitting <Mono>max_iterations</Mono>, or a guard ending a run that
+                  repeats itself, is not success. <Mono>success</Mono> is{" "}
+                  <Mono>False</Mono>, <Mono>outcome</Mono> is{" "}
+                  <Mono>&quot;stopped&quot;</Mono>, <Mono>stop_reason</Mono> names the
+                  exit, and <Mono>.partial</Mono> carries what the run had reached — so
+                  the work is not lost, and it is not mistaken for a finished answer.
+                  Under the default <Mono>raise_on_error=True</Mono> the run raises{" "}
+                  <Mono>RunStoppedError</Mono>, which carries the same three.
                 </p>
               </Card>
               <Card title="An unreachable backend has no opt-out">

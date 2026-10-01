@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Workflows() {
   return (
@@ -53,7 +52,7 @@ for node, output in result.outputs.items():
 success: True
   draft: A tide is the regular rise and fall of sea level caused primarily by the gravitational forces of the Moon and Sun acting on the Earth's oceans.
   shorten: Tides: regular rise and fall of sea level.`}
-        caption={`Run against effGen ${version}. A single string is routed to the entry nodes; a node downstream is given its upstream's output.`}
+        caption={`Run against effGen 1.0.0. A single string is routed to the entry nodes; a node downstream is given its upstream's output.`}
       />
 
       <ApiTable

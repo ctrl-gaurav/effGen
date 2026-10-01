@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function ToolCalling() {
   return (
@@ -58,7 +57,7 @@ for call in result.metadata["tool_calls"]:
     print(call["id"], name, arguments)`}
       />
 
-      <Terminal command="python calls.py" output={`call_YHN5s6lhtcadKd5d5OURdc8r calculator {'expression': '6*7'}`} caption={`Run against effGen ${version}.`} />
+      <Terminal command="python calls.py" output={`call_YHN5s6lhtcadKd5d5OURdc8r calculator {'expression': '6*7'}`} caption={`Run against effGen 1.0.0.`} />
 
       <p>
         Swap the model id for <code>gemini:gemini-3.1-flash-lite</code>,{' '}
@@ -225,7 +224,7 @@ print(adapter.generate_with_tools("", tools=TOOLS, messages=messages).text.strip
             name: '"auto"',
             type: 'the default',
             description:
-              'Ask the model whether it supports native tool calling. If it does, use the hybrid strategy; if not, use ReAct.',
+              'Ask the model whether it supports native tool calling. If it does, use the hybrid strategy; if not, use ReAct. Since 1.3.0, for a model behind a base_url or on a local engine, it also follows what the capability probe measured (below).',
           },
           {
             name: '"native"',
@@ -279,13 +278,176 @@ hybrid  7,006,652                                  tool calls: 0`}
 
       <Callout type="note" title="A mode is not a guarantee that a tool is used">
         <p>
-          Whether a tool is called is the model's decision. If a run must go through a particular
-          tool, say so in the system prompt, or check{' '}
+          Whether a tool is called is the model's decision unless the run says otherwise. If a run
+          must go through its tools, set <code>tool_use="required"</code> (below), or check{' '}
           <code>response.tool_calls</code> and treat an empty list as a failure.
         </p>
       </Callout>
 
+      <h3>Measured, not assumed: the capability probe</h3>
+      <p>
+        A declaration says how tool definitions reach a model, not whether the model uses them. A
+        model served behind a <code>base_url</code> is declared an API caller whatever sits behind
+        the URL, and two things can still go wrong: a small model may answer from memory while
+        holding a search tool that has the answer, and a server may not carry a model’s native
+        calls back as structured calls. Since 1.3.0, at <code>tool_calling_mode="auto"</code>, the
+        first agent with tools built for such a model, or for a model on a local engine, measures
+        this once: a few questions about fictional things, answerable only through a stub search
+        tool, run as ordinary agent runs. Each is resolved, unresolved or skipped.
+      </p>
+      <ApiTable
+        headers={['Measured', 'What auto does for this model']}
+        rows={[
+          ['Three or more native runs unresolved, and the text frame resolves at least three more', 'Uses the ReAct text frame.'],
+          ['Any native run skipped', 'A run holding an information-retrieval tool that answers without calling it is sent back once and made to call.'],
+          ['Otherwise', 'As the declaration says.'],
+        ]}
+      />
+      <p>
+        Calculator and code tools are never moved by the probe. An explicit{' '}
+        <code>tool_calling_mode</code>, an explicit <code>tool_use</code>,{' '}
+        <code>capability_probe=False</code> or <code>EFFGEN_CAPABILITY_PROBE=0</code> keep the
+        declared behaviour, and first-party cloud adapters are never probed. The result is stored
+        in <code>~/.effgen/capabilities.json</code> (or under <code>$EFFGEN_HOME</code>, or at{' '}
+        <code>$EFFGEN_CAPABILITY_CACHE</code>) and read by every later agent, across processes; it
+        is measured again when the weights, the chat template, the endpoint or the probe change,
+        and after 30 days. A probe is bounded at 48 requests and 120 seconds, and one that cannot
+        run stores nothing, leaves <code>auto</code> as declared and logs one warning.{' '}
+        <code>response.metadata["tool_calling"]</code> says which strategy a run used and why.
+      </p>
+      <CodeBlock
+        filename="probe.py"
+        code={`from effgen import probe_tool_calling
+from effgen.models import load_model
+
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", provider="openai_compatible",
+                   base_url="http://127.0.0.1:8000/v1", context_length=8192)
+probe = probe_tool_calling(model)
+print(probe.summary(), probe.strategy, probe.required_categories)`}
+      />
+      <p>
+        <code>effgen doctor --probe MODEL</code> does the same from the command line. The same store
+        keeps two facts learned from real requests: a provider that rejects stop sequences sent
+        beside tool definitions is asked once more with the stops applied locally, and a server
+        that rejects a pinned <code>reasoning_effort</code> is asked once more without it.
+      </p>
+      <Callout type="warning" title="Small models given a search tool cost more">
+        <p>
+          When the probe finds that a model answers from memory while holding a search or
+          retrieval tool, every run holding one is made to call it, so such runs make several times
+          as many model calls on question-answering tasks. <code>tool_use="auto"</code> or{' '}
+          <code>capability_probe=False</code> turns it off for an agent. A probe’s own requests are
+          booked in the first agent’s cost ledger, with no tag marking them as the probe’s.
+        </p>
+      </Callout>
+
+      <h2>What the model is told about its tools</h2>
+      <p>
+        Tool definitions travel through the provider's tool-calling API or a local chat template,
+        not the prompt, so the model is left to work out what they are for. effGen states it once,
+        on the turn the model first sees them — the same sentences whether the run blocks or
+        streams, and whether the tools reach the model through an API or a template. Which
+        sentences depends on each tool's declared <code>ToolCategory</code>:
+      </p>
+
+      <ApiTable
+        headers={['The tools you attached', 'What the model is told']}
+        rows={[
+          [<code>COMPUTATION</code>, 'Use the tools to check the steps you are least sure of, one step per call, and correct yourself if a tool disagrees.'],
+          [
+            <>
+              <code>CODE_EXECUTION</code>, <code>SYSTEM</code>
+            </>,
+            'Use the tools to do the task rather than working it out in your head, and read the answer off what they return.',
+          ],
+          [
+            <>
+              <code>INFORMATION_RETRIEVAL</code>, <code>EXTERNAL_API</code>
+            </>,
+            'What comes back is source material, not the answer.',
+          ],
+          ['Anything else, or a set that mixes the above', 'Work through the task one step at a time, one step per call.'],
+        ]}
+        caption={
+          <>
+            Since 1.2.0 the contracts no longer ask for text the task did not ask for: the lookup
+            contract no longer asks the model to name what is missing, and the computation contract
+            no longer asks it to work the task out step by step and restate the answer. The
+            contract comes before the caller’s task, so the task is the last thing the model reads; <code>AgentConfig(answer_style=...)</code> is where the
+            form of the answer is set. <code>AgentConfig(tool_contract="...")</code> states your
+            text in the same position instead, and <code>tool_contract=""</code> states nothing. A{' '}
+            <code>system_prompt</code> persona still leads the prompt either way, and a{' '}
+            <code>system_prompt_template</code> owns the whole prompt.
+          </>
+        }
+      />
+
+      <p>
+        Whether a tool <em>has</em> to be called is a separate setting, <code>tool_use</code>. By
+        default it is read from the same categories: a code executor or a system tool is{' '}
+        <code>required</code> — an answer written with no call is sent back once, naming the tool,
+        and the next turn is required to call where the provider can enforce it — and everything
+        else is <code>auto</code>. A set that mixes categories takes the strictest policy present.
+      </p>
+
+      <ParamTable
+        nameLabel="tool_use"
+        params={[
+          {
+            name: '"required"',
+            description:
+              'Every attached tool is one the run may not answer without — on the ReAct and chat-template paths too, where there is no request parameter to constrain.',
+          },
+          {
+            name: '"auto"',
+            description: 'effGen states nothing and requires nothing, whatever the tools declare.',
+          },
+          {
+            name: '"sparing"',
+            description:
+              'One further sentence after the contract: calling a tool is optional, and a run that already knows the answer should give it.',
+          },
+        ]}
+        caption={
+          <>
+            A string or a <code>ToolUsePolicy</code> member, from{' '}
+            <code>effgen.prompts.tool_contract</code>. <code>run(tool_choice="required")</code>{' '}
+            constrains a single call on adapters where{' '}
+            <code>model.supports_forced_tool_call()</code> is true.
+          </>
+        }
+      />
+
       <h2>Reading a call out of text</h2>
+      <p>
+        Since 1.2.0 a turn that holds tools and whose reply may be read as text is sent one stop
+        sequence, <code>"\nObservation:"</code>, so generation ends where a tool’s result would
+        begin; a caller’s own <code>stop_sequences</code> replace it. When a reply holds a written
+        action anyway, the action runs and whatever the model wrote after it is discarded, so a
+        result the model invents is never taken as the answer. An adapter for a provider that
+        rejects <code>stop</code> beside <code>tools</code> answers{' '}
+        <code>supports_stop_with_tools()</code> with <code>False</code>, and the framework cuts the
+        text itself.
+      </p>
+      <p>
+        Since 1.3.0 <code>recover_lost_tool_calls</code> is on by default. A call written as a
+        Python literal, with raw line breaks inside its JSON, with unescaped double quotes inside a
+        string value, with its last string closed one bracket early, or as a whole object followed
+        by text inside its tag, runs instead of ending the run with <code>written_tool_call</code>;
+        a call nothing can read is sent back once, with a call required where the provider supports
+        it. When the agent holds exactly one code-execution tool, a program in a fenced block before
+        an empty call tag runs as that call. <code>recover_lost_tool_calls=False</code> restores the
+        strict reader.
+      </p>
+      <p>
+        Under either setting a call is read or refused, never half-read. Arguments a provider
+        returns as a string are the call’s arguments: keyword syntax (<code>code='…'</code>) is read
+        as those keywords, an object’s JSON text as that object, and anything else is bound to the
+        tool’s parameter; <code>tool_calls</code> records carry the decoded arguments. A call that
+        leaves a required parameter without a value is not dispatched and is asked for again.
+        Positional values are given the tool’s parameter names in order; a call with more values
+        than the tool has parameters carries none and is asked for again.
+      </p>
       <p>
         A model without a function-calling API writes its call into the text, and chat templates
         disagree about the spelling. effGen reads all of the common shapes: the ReAct{' '}
@@ -354,6 +516,15 @@ print(parsed.is_tool_call, parsed.tool_name, parsed.arguments)`}
             <>
               Try <code>tool_calling_mode="hybrid"</code>, or a model whose template writes a shape
               effGen reads. The raw text is in the execution trace.
+            </>,
+          ],
+          [
+            <><code>stop_reason="tool_failed"</code></>,
+            'Since 1.3.0: the tools the run needed kept failing on their own side, or on every input the model gave them.',
+            <>
+              <code>metadata["unavailable_tools"]</code> names them and{' '}
+              <code>metadata["error"]["kind"]</code> says whether the tool or its input failed. See{' '}
+              <Link to="/errors">Errors</Link>.
             </>,
           ],
           [

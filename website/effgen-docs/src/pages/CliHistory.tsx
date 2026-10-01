@@ -116,10 +116,11 @@ Open one with: effgen runs show <run-id>`}
         params={[
           { name: '--json', type: 'flag', description: 'Output as JSON' },
           {
-            name: '--status {ok,error,failed}',
+            name: '--status {ok,stopped,error,failed}',
             description: (
               <>
-                Only runs with this status (<code>failed</code> is an alias for <code>error</code>)
+                Only runs with this status (<code>failed</code> is an alias for <code>error</code>;{' '}
+                <code>stopped</code> is a run the loop ended before the model wrote an answer)
               </>
             ),
           },

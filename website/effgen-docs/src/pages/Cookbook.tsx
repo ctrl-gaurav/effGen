@@ -9,7 +9,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { siteData, version } from '../siteData';
+import { siteData } from '../siteData';
 
 export default function Cookbook() {
   return (
@@ -100,7 +100,7 @@ Objectively, the red rectangle is larger than the blue circle. By estimating the
 The red rectangle is larger by approximately 20% in terms of total surface area.
 [agent] success: True | tools: []`}
         maxLines={20}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <Callout type="tip" title="An empty tool list is not a failure">

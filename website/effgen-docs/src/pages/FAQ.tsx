@@ -117,9 +117,9 @@ print(len(list_presets()), "presets")
 print(len(get_tool_registry().list_tools()), "tools")`}
       />
 
-      <Terminal command="python offline.py" output={`10 adapters, 417 catalogued models
+      <Terminal command="python offline.py" output={`10 adapters, 416 catalogued models
 9 presets
-66 tools`} caption={`Run against effGen ${version} with no network calls.`} />
+66 tools`} caption={`Run against effGen 1.0.0 with no network calls. The counts are the same in ${version}.`} />
 
       <h2>What does a run cost?</h2>
       <p>
@@ -195,7 +195,7 @@ openai:gpt-5-nano openai`} />
 
       <h2>Which Python versions work?</h2>
       <p>
-        {pythonVersions.join(', ')}. 3.10 was dropped for {version} — see{' '}
+        {pythonVersions.join(', ')}. 3.10 was dropped for 1.0.0 — see{' '}
         <Link to="/migration">Migrating to {version}</Link>.
       </p>
 

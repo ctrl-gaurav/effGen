@@ -38,7 +38,7 @@ const destinations = [
   {
     href: "/changelog",
     title: "Changelog",
-    blurb: "What changed in 1.0.0, including the three breaking changes.",
+    blurb: "What changed in 1.3.0, and in every release before it.",
   },
 ];
 

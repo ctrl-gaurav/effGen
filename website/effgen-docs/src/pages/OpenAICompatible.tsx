@@ -10,7 +10,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function OpenAICompatible() {
   return (
@@ -89,7 +88,7 @@ print("cost:", model.generate("Say OK.").metadata.get("cost"))`}
 
       <Terminal command="python served.py" output={`['gpt-4', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini']
 42
-cost: None`} caption={`Run against effGen ${version}.`} />
+cost: None`} caption={`Run against effGen 1.0.0.`} />
 
       <h2>Why serve the model separately</h2>
       <p>

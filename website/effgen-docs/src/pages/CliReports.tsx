@@ -312,15 +312,13 @@ math --json > results.json\`.`}
               <code>effgen run -o …</code> or <code>--json</code>, exit <code>1</code>
             </>,
             <>
-              A defect in this release: the saved document's <code>execution_tree</code> carries
-              tool-call objects that the JSON writer cannot encode, so any run that called a tool
-              fails to serialize. The file it wrote is truncated and will not parse.
+              A defect in 1.0.0 and 1.0.1, fixed in 1.1.0: the saved document's{' '}
+              <code>execution_tree</code> carried tool-call objects that the JSON writer could not
+              encode, so any run that called a tool failed to serialize.
             </>,
             <>
-              Use <code>--card out.html</code>, which renders the same run including its tool trace
-              and is unaffected; or read the run back from history with{' '}
-              <code>effgen runs show &lt;id&gt; --json</code>. A run with no tool call saves and
-              reports normally.
+              Upgrade with <code>pip install -U effgen</code>. On an older release, read the run back
+              from history with <code>effgen runs show &lt;id&gt; --json</code>.
             </>,
           ],
           [

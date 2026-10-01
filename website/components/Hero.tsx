@@ -563,7 +563,7 @@ export default function Hero() {
                 transition={{ duration: 1.5, repeat: Infinity }}
               />
               <span className="text-sm font-semibold text-green-700 dark:text-green-400">
-                effGen 1.0.0 is out — the first stable release
+                effGen 1.3.0 is out — every run says how it ended
               </span>
               <FiZap className="text-green-700 dark:text-green-400" size={14} />
             </motion.div>

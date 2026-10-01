@@ -105,7 +105,7 @@ export default function Playground() {
       <Terminal
         command={`curl -s http://127.0.0.1:8246/v1/models/catalog | python -c "import json,sys; d=json.load(sys.stdin); print(sorted(d)); print('data:', len(d['data']), 'local:', len(d['local']))"`}
         output={`['counts', 'data', 'local', 'object', 'providers']
-data: 417 local: 50`}
+data: 416 local: 50`}
         caption={
           <>
             The same {siteData.models.models} catalogued models the CLI browses, with pricing and

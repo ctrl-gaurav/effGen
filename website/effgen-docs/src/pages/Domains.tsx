@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Domains() {
   return (
@@ -40,7 +39,7 @@ print("prompt     :", agent.config.system_prompt[:60], "…")`} />
 tools      : ['web_search', 'wikipedia']
 guardrails : standard
 prompt     : You are a legal information expert. Explain legal concepts,  …`}
-        caption={`Run against effGen ${version}. The two tools, the guardrail preset and the prompt all came from the domain — nothing else was configured.`}
+        caption={`Run against effGen 1.0.0. The two tools, the guardrail preset and the prompt all came from the domain — nothing else was configured.`}
       />
 
       <h2>What is in one</h2>

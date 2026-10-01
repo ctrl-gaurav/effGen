@@ -129,7 +129,7 @@ export EFFGEN_NO_ANIM=1`}
  ██▄▄▄  ██  ██  ▀██▄▄██  ██▄▄▄  ██   ██
   ▀▀▀▀  ▀▀  ▀▀    ▀▀▀▀    ▀▀▀▀  ▀▀   ▀▀
 
-effGen v1.0.0 · agents on small (and cloud) models
+effGen v1.0.1 · agents on small (and cloud) models
 Python 3.11.15 · theme: default · docs.effgen.org
 
 What next?

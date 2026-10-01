@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Reliability() {
   return (
@@ -34,7 +33,7 @@ print(ReliabilityConfig.defaults().to_dict())`} />
       <Terminal
         command="python defaults.py"
         output={`{'timeouts': {'model_call': 60.0, 'tool_call': 30.0, 'http': 20.0, 'agent_loop': 600.0, 'queue': 5.0}, 'retry': {'max_attempts': 3, 'base_delay': 0.5, 'max_delay': 30.0, 'jitter': True, 'retryable_status_codes': [429, 500, 502, 503, 504]}, 'circuit_breaker': {'failure_threshold': 5, 'recovery_timeout': 30.0, 'half_open_probes': 1}, 'bulkhead': {'max_concurrency': 20, 'queue_size': 100}}`}
-        caption={`Run against effGen ${version}. Everything below is one of these numbers, said longer.`}
+        caption={`Run against effGen 1.0.0. Everything below is one of these numbers, said longer.`}
       />
 
       <ApiTable

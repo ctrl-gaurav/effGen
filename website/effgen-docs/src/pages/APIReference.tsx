@@ -212,10 +212,10 @@ print("first ten   :", sorted(effgen.__all__)[:10])`}
 
       <Terminal
         command="python surface.py"
-        output={`effgen 1.0.0
-public names: 223
-first ten   : ['Agent', 'AgentConfig', 'AgentEvaluator', 'AgentMiddleware', 'AgentState', 'AgentSystemPromptBuilder', 'Alert', 'AlertSeverity', 'AlertWebhook', 'AllCandidatesExhaustedError']`}
-        caption={`Against effGen ${version}. This page is generated from that same list, so the count above and the count below cannot disagree.`}
+        output={`effgen 1.1.0
+public names: 250
+first ten   : ['ActionStep', 'Agent', 'AgentConfig', 'AgentEvaluator', 'AgentMiddleware', 'AgentState', 'AgentSystemPromptBuilder', 'AgentThread', 'Alert', 'AlertSeverity']`}
+        caption={`Run against effGen 1.1.0, which exported 250 names; 1.2.0 adds RunLedger, and 1.3.0 adds ToolCallingProbe and probe_tool_calling. The reference below is generated from the ${version} list itself.`}
       />
 
       <h2>The four lines most programs start with</h2>

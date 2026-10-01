@@ -9,7 +9,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { siteData, toolCount, version } from '../siteData';
+import { siteData, toolCount } from '../siteData';
 
 const categories = Object.entries(siteData.tools.category_counts).sort(
   (a, b) => b[1] - a[1],
@@ -58,7 +58,7 @@ print(result.success, result.output["result"])`}
       <Terminal
         command="python first_tool.py"
         output={`True 1036.0`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <Callout type="warning" title="Keyword arguments, and a typed result">
@@ -573,7 +573,7 @@ Example:
           An unreachable backend now raises <code>BackendUnreachableError</code> from an agent run
           regardless of <code>raise_on_error</code>, and <code>raise_on_error</code> itself
           defaults to <code>True</code>. A tool's own failure is still reported on the{' '}
-          <code>ToolResult</code> rather than raised. <Link to="/migration">Migrating to 1.0.0</Link>{' '}
+          <code>ToolResult</code> rather than raised. <Link to="/migration">Migrating to 1.2.0</Link>{' '}
           has the three breaking changes.
         </p>
       </Callout>

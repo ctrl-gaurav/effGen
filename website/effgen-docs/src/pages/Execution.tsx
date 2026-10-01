@@ -38,7 +38,7 @@ print(result.success, result.output["stdout"].strip())`} />
       <Terminal
         command="python run_code.py"
         output={`True 4950`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <h3>What comes back</h3>

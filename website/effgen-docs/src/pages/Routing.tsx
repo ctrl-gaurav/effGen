@@ -10,7 +10,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 const FLOW = `flowchart TD
     Ctx["RoutingContext:<br/>capabilities, budget, latency"] --> P1["Policy 1"]
@@ -66,7 +65,7 @@ estimated cost $0.000610, 416 candidates eliminated
   anthropic/claude-opus-4-7: no API key (ANTHROPIC_API_KEY)
   anthropic/claude-sonnet-4-6: no API key (ANTHROPIC_API_KEY)
   anthropic/claude-haiku-4-5-20251001: no API key (ANTHROPIC_API_KEY)`}
-        caption={`Run against effGen ${version} on a machine holding keys for eight of the ten adapters. Grounding narrows the field to the one provider that supports it; the eliminations name every model that was not chosen and why.`}
+        caption={`Run against effGen 1.0.0 on a machine holding keys for eight of the ten adapters. Grounding narrows the field to the one provider that supports it; the eliminations name every model that was not chosen and why.`}
       />
 
       <MermaidDiagram

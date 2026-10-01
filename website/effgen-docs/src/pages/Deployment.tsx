@@ -289,7 +289,7 @@ helm install effgen deploy/k8s/helm/effgen \\
   "response_status_code": 200,
   "response_body_parsed": {
     "status": "ok",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "elapsed_ms": 6.9,
   "mangum_version": "0.21.0",

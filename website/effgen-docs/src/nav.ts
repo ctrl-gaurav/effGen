@@ -38,7 +38,7 @@ export const NAV: DocGroup[] = [
       {
         path: '/introduction',
         title: 'Introduction',
-        lede: 'What effGen is, what it ships, and what changed in 1.0.0.',
+        lede: 'What effGen is, what it ships, and what changed in 1.3.0.',
         source: 'README.md',
       },
       {
@@ -67,8 +67,8 @@ export const NAV: DocGroup[] = [
       },
       {
         path: '/migration',
-        title: 'Migrating to 1.0.0',
-        lede: 'The three breaking changes in 1.0.0 and what each one asks you to change.',
+        title: 'Migrating to 1.3.0',
+        lede: 'The ten changes in 1.3.0 existing code can see, the fourteen in 1.2.0, the eleven in 1.1.0, the four in 1.0.1, the three breaking changes in 1.0.0, and what each one asks you to change.',
         source: 'docs/migration.md',
       },
       {

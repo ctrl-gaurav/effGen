@@ -82,12 +82,12 @@ const steps = [
     accent: "#00ff88",
     detail: "AgentResponse",
     explanation:
-      "str(response) is the answer and .text is the same string. .success says whether the run finished, .tool_calls lists what it called, .sources and .citations carry the URLs a grounded run retrieved, and .metadata carries the cost, the token counts, the latency, the stage the run ended at, and any partial output. AgentResponse is imported from effgen.core.agent, not from the top-level package.",
+      "str(response) is the answer and .text is the same string. .success says whether the run answered, .outcome and .termination name how it ended, .thread is the run itself as typed steps, .ledger is what it spent and where its time went, .tool_calls lists what it called, .sources and .citations carry the URLs a grounded run retrieved, and .metadata carries the cost, the token counts, the latency, the stage the run ended at, and any partial output. AgentResponse is imported from effgen.core.agent, not from the top-level package.",
     // The run that binds `r` is repeated here so the block stands on its own:
     // it is five steps back on the page, with an unrelated tool demonstration
     // between, and a reader who copies this one should get the output below.
-    code: 'from effgen import Agent, AgentConfig\nfrom effgen.tools.builtin import Calculator\n\nagent = Agent(AgentConfig(\n    model="gemini:gemini-3.1-flash-lite",\n    tools=[Calculator()],\n))\nr = agent.run("Use the calculator tool to work out 24344 * 334.")\n\nprint(r.text)\nprint(r.tool_calls.total, "tool call")\nfor call in r.tool_calls:\n    print(call.name, call.arguments, "->", call.result)',
-    output: '8130896\n1 tool call\ncalculator {"expression": "24344 * 334"} -> 8130896',
+    code: 'from effgen import Agent, AgentConfig\nfrom effgen.tools.builtin import Calculator\n\nagent = Agent(AgentConfig(\n    model="gemini:gemini-3.1-flash-lite",\n    tools=[Calculator()],\n))\nr = agent.run("Use the calculator tool to work out 24344 * 334.")\n\nprint(r.text)\nprint(r.tool_calls.total, "tool calls")\nfor call in r.tool_calls:\n    print(call.name, call.arguments, "->", call.result)',
+    output: '8130896\n2 tool calls\ncalculator {"expression": "24344 * 4"} -> 97376\ncalculator {"expression": "24344 * 334"} -> 8130896',
   },
 ];
 
@@ -135,9 +135,9 @@ const failures = [
   },
   {
     title: "The run says how it ended",
-    body: "Every result records the stage it finished at, so a run that hit the iteration cap, or ended on a tool result rather than on something the model wrote, is distinguishable from one that answered. Anything produced before it stopped is on the response as partial output.",
-    code: 'agent = Agent(AgentConfig(\n    model="gemini:gemini-3.1-flash-lite",\n    tools=[Calculator()],\n    max_iterations=1,\n))\nr = agent.run("With the calculator: work out 24344 * 334, then multiply that by 7, "\n              "then subtract 19, then divide by 3.")\n\nprint("success:", r.success)\nprint("calls:", r.tool_calls.total)\nprint("partial_output:", repr(r.metadata.get("partial_output")))\nprint("reason:", r.metadata.get("reason"))',
-    output: "success: True\ncalls: 1\npartial_output: None\nreason: final_answer",
+    body: "Every result is answered, stopped or failed, and stop_reason names the exit it took. A run the loop ended before the model wrote an answer — at the iteration cap, on a repeated call — is not a success, and what it had reached is on the response as .partial rather than where an answer would be. With the default raise_on_error=True it raises RunStoppedError instead.",
+    code: 'from effgen import Agent, AgentConfig\nfrom effgen.tools.builtin import Calculator\n\nagent = Agent(AgentConfig(\n    model="gemini:gemini-3.1-flash-lite",\n    tools=[Calculator()],\n    max_iterations=1,\n    raise_on_error=False,\n))\nr = agent.run("With the calculator: work out 24344 * 334, then multiply that by 7, "\n              "then subtract 19, then divide by 3.")\n\nprint("success:", r.success)\nprint("outcome:", r.outcome)\nprint("stop_reason:", r.stop_reason)\nprint("partial:", r.partial.text if r.partial else None)',
+    output: "success: False\noutcome: stopped\nstop_reason: max_iterations_partial\npartial: 8130896",
     accent: "#00e5ff",
   },
 ];

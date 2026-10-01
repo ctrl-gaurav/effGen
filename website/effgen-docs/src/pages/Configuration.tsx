@@ -176,7 +176,7 @@ effgen serve                                  # sees only what the orchestrator 
 │ cerebras          │ present │ CEREBRAS_API_KEY    │      2 │
 │ fireworks         │ present │ FIREWORKS_API_KEY   │     16 │
 │ gemini            │ present │ GOOGLE_API_KEY      │      8 │
-│ groq              │ present │ GROQ_API_KEY        │     15 │
+│ groq              │ present │ GROQ_API_KEY        │     14 │
 │ hf                │ present │ HF_TOKEN            │    124 │
 │ openai            │ present │ OPENAI_API_KEY      │     30 │
 │ openai_compatible │ missing │ —                   │      0 │

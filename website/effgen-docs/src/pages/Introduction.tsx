@@ -73,7 +73,7 @@ print(result.success, result.tool_call_count)`}
         command="python hello.py"
         output={`42.5
 True 1`}
-        caption={`Run against effGen ${version}. The agent reached for its calculator once, which is the 1.`}
+        caption={`Run against effGen 1.0.0. The agent reached for its calculator once, which is the 1.`}
       />
 
       <Callout type="tip" title="No key yet?">
@@ -179,35 +179,63 @@ True 1`}
 
       <h2>What {version} changed</h2>
       <p>
-        {version}, released on 14 August 2026, is the first stable release. It supports Python{' '}
-        {pythonVersions.join(', ')} and exports {publicNameCount} public names, none of which was
-        removed or renamed on the way here. The theme running through it is control over where a
-        model runs and visibility into what a run did — a backend that never answered now raises
-        instead of returning something that reads like an answer, and a failed run says so.
+        {version}, released on 1 October 2026, is about how a run ends, and how a tool call is
+        read. It supports Python {pythonVersions.join(', ')} and exports {publicNameCount} public
+        names; nothing was removed or renamed. A run that stops making progress is asked for its
+        answer instead of going round to its iteration cap, and every run says how it ended in{' '}
+        <code>response.termination</code>. A tool that keeps failing on its own side ends the run as{' '}
+        <code>tool_failed</code>. A tool call written in a broken or unexpected shape is read and run
+        by default. A model you serve yourself, or run on a local engine, is measured once for what
+        it does with a tool, and <code>tool_calling_mode="auto"</code> follows the result. One agent
+        can serve many overlapping conversations without mixing them. Small models given a search
+        tool now cost more per run, because they are made to use it.
       </p>
 
       <p>
-        <strong>Three changes are breaking</strong>, each with a one-line migration:
+        <strong>Ten changes are visible to existing code.</strong> The ones most code meets first:
       </p>
       <ul>
         <li>
-          <strong>Python 3.10 is no longer supported.</strong> The floor is 3.11.
+          <strong><code>max_turns_without_progress</code> defaults to <code>2</code></strong>: a run
+          with no new tool result is asked for its answer, and a stuck run gets one closing request.{' '}
+          <code>None</code> restores the earlier loop.
         </li>
         <li>
-          <strong>
-            <code>AgentConfig.raise_on_error</code> now defaults to <code>True</code>.
-          </strong>{' '}
-          A failed run raises its typed error instead of returning a plausible-looking string.
+          <strong>A run whose tool keeps failing stops with <code>tool_failed</code></strong>, which
+          raises <code>RunStoppedError</code> under the default <code>raise_on_error=True</code>.
         </li>
         <li>
-          <strong>A backend that was never reached raises</strong>{' '}
-          <code>BackendUnreachableError</code>, whatever that flag says.
+          <strong><code>recover_lost_tool_calls</code> defaults to <code>True</code></strong>, so some
+          runs make more tool calls; <code>False</code> restores the earlier reader.
+        </li>
+        <li>
+          <strong>A served or local model is probed once</strong> at{' '}
+          <code>tool_calling_mode="auto"</code>; <code>capability_probe=False</code> turns it off.
         </li>
       </ul>
       <p>
-        <Link to="/migration">Migrating to {version}</Link> carries all three with the code each
-        one asks you to change, and the smaller change to four enums that is worth knowing before
-        you upgrade.
+        1.2.0, released on 27 September 2026, gave every run a ledger of its calls, tokens, cost
+        and time, made a model with no published price read as unpriced rather than free, kept a
+        provider’s prompt cache warm, and added <code>effgen bench</code>.
+      </p>
+      <p>
+        1.1.0, released on 14 September 2026, made a run keep its conversation as an{' '}
+        <code>AgentThread</code> of typed steps, bounded a run by the prompt tokens it may send, made
+        a saved run resume where it stopped, and put <code>stream()</code> and <code>run()</code> on
+        one agent loop.
+      </p>
+      <p>
+        1.0.1, released on 8 September 2026, made a run that stops without an answer report
+        failure and raise <code>RunStoppedError</code>, made citation markers opt-in, and told the
+        model what its tools are for on every tool-calling path.
+      </p>
+      <p>
+        1.0.0, released on 14 August 2026, was the first stable release, and it carried three
+        breaking changes: the Python floor is 3.11, <code>AgentConfig.raise_on_error</code>{' '}
+        defaults to <code>True</code>, and a backend that was never reached raises{' '}
+        <code>BackendUnreachableError</code> whatever that flag says.{' '}
+        <Link to="/migration">Migrating to {version}</Link> carries every one with the code each
+        one asks you to change, and <Link to="/releases">Releases</Link> has the full record.
       </p>
 
       <h2>Where to go next</h2>

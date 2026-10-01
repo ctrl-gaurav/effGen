@@ -8,7 +8,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function PromptAuthoring() {
   return (
@@ -77,7 +76,7 @@ Total: 1 prompt(s)
 │ Explain vector databases to product managers in a plain tone. Use one        │
 │ analogy.                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────╯`}
-        caption={`Run against effGen ${version}. The template was discovered from the directory, listed and rendered, with nothing installed.`}
+        caption={`Run against effGen 1.0.0. The template was discovered from the directory, listed and rendered, with nothing installed.`}
       />
 
       <p>

@@ -41,7 +41,9 @@ const CONFIG_NOTES: Record<string, string> = {
   enable_sub_agents: 'Whether the agent may spawn sub-agents for parts of a task.',
   enable_memory: 'Whether the memory subsystem is active.',
   enable_streaming: 'Whether tokens are streamed as they arrive.',
-  max_context_length: 'Context window to plan against. None reads it from the model.',
+  max_context_length: 'The model’s context window, overriding what the model declares. Read since 1.1.0, where it bounds context_budget.',
+  context_budget: 'How many prompt tokens a run may send: "auto" (default) derives it from the model’s window, an int names it, a float is a fraction of the window, and None leaves it unbounded. Unbounded when the model declares no window.',
+  compaction: 'The CompactionPolicy that brings a run’s thread back under its budget. None uses ShortenOldestFirst, which makes no model call; SummarizeWithModel is opt-in.',
   router_config: 'Settings for the sub-agent router.',
   sub_agent_config: 'Settings for the sub-agent manager.',
   model_config: 'Engine options passed through when the model is loaded from an id.',
@@ -52,7 +54,10 @@ const CONFIG_NOTES: Record<string, string> = {
   middleware: 'Hooks around the run, each model call and each tool call.',
   compaction_strategy: 'How the conversation is shortened as it approaches the window. Accepts a strategy, a class, or a name.',
   tokenizer: 'Anything with count_tokens(text) or encode(text), used to measure history in the units the window is measured in.',
-  raise_on_error: 'Whether a failed run raises its typed error. True since 1.0.0.',
+  raise_on_error: 'Whether a run that produced no answer raises. True since 1.0.0: a failed run raises its typed error, and since 1.0.1 a stopped run raises RunStoppedError.',
+  cite_sources: 'Ask for inline [1], [2] citation markers when answering from retrieved passages. Off by default; run(cite_sources=...) overrides it for one call, and the rag preset turns it on.',
+  tool_contract: 'What the model is told about the attached tools. None picks the text from the tools’ declared categories, a string is stated verbatim instead, and "" states nothing.',
+  tool_use: 'Whether a run holding these tools has to call one: "required", "auto" or "sparing", or a ToolUsePolicy. None reads it from the tools’ declared categories.',
   system_prompt_template: 'A template for the assembled system prompt, replacing the built-in one.',
   verbose_tools: 'Whether tool descriptions are sent in full. None follows the model.',
   fallback_chain: 'A mapping from tool name to the tools tried when it fails.',
@@ -61,7 +66,7 @@ const CONFIG_NOTES: Record<string, string> = {
   tool_calling_mode: '"auto", "native", "react" or "hybrid" — how tools are offered to the model.',
   output_format: 'Default output format for every run: "json", "yaml", "csv" or None.',
   output_schema: 'Default JSON Schema every run must produce.',
-  guardrails: 'A GuardrailChain, or the name of a guardrail preset.',
+  guardrails: 'A GuardrailChain, a plain list of guardrails, or the name of a guardrail preset. Anything in a list that is not a guardrail raises TypeError at construction.',
   memory_config: 'Memory settings — token and message caps, the long-term backend, and whether old context is summarised.',
   models: 'Additional models this agent may fall back to or route between.',
   speculative_execution: 'Run on two models and take the first that succeeds.',
@@ -71,22 +76,29 @@ const CONFIG_NOTES: Record<string, string> = {
   clarification_callback: 'Called when the agent needs the user to choose between options.',
   input_callback: 'Called when the agent needs a line of input from the user.',
   stable_system_prompt: 'Keep the system prompt at a fixed position so a provider can cache the prefix.',
-  cache_system_prompt: "Mark the system prompt's last block for Anthropic prompt caching.",
-  cache_tools: 'Mark the last tool spec for Anthropic prompt caching.',
+  cache_system_prompt: "Mark the system prompt for Anthropic prompt caching. Since 1.2.0 the last completed step carries a breakpoint too.",
+  cache_tools: 'Mark the tool definitions for Anthropic prompt caching.',
+  answer_style: 'One line about the form of the answer, stated last: "brief", "full" or your own sentence. None (the default) states nothing. Also a run(), stream() and run_async() keyword. New in 1.2.0.',
+  max_turns_without_progress: 'After this many turns in a row that brought no new result, the next turn offers no tools and asks for the answer; a turn that declares no action after a result is asked at once, and a run about to stop stuck gets one closing request with its calls and results and no tools. 2 by default since 1.3.0 (None in 1.2.0); None turns all of it off and restores the earlier loop.',
+  recover_lost_tool_calls: 'Read a tool call written in a broken shape — a Python literal, raw line breaks or unescaped quotes inside its JSON, its last string closed early, or text after the object in its tag — and ask once more for a call that could not be read at all. On by default since 1.3.0 (off in 1.2.0); False restores the strict reader. Delegated sub-agents inherit it.',
+  capability_probe: 'Whether tool_calling_mode="auto" may measure, once per model, what a model behind a base_url or on a local engine does when handed a tool, and resolve against it. The result is stored in ~/.effgen/capabilities.json and shown by effgen doctor. False, or EFFGEN_CAPABILITY_PROBE=0, resolves auto from the declaration alone; cloud adapters are never probed. New in 1.3.0.',
+  prompt_protocol: 'How a run’s conversation reaches the model: "flat" (one string), "messages" (the turns it was) or "auto" (default) — a run continuing a session sends messages on a model that takes them, and a run continuing nothing sends the flat string.',
 };
 
 const RESPONSE_NOTES: Record<string, string> = {
   output: 'The answer. `text` and `content` are read-only aliases, and str(response) is the same string.',
-  success: 'Whether the run produced an answer. False only when raise_on_error is off.',
+  success: 'Whether the run produced an answer. A stopped or failed run is returned with False only when raise_on_error is off.',
+  stop_reason: 'The exit the run took, on every response: "final_answer" for an answer, a stopped reason such as "max_iterations_partial", "loop_detected" or (since 1.3.0) "tool_failed", or a failure such as "generation_failed". .outcome reads it as "answered", "stopped" or "failed", and .termination (since 1.3.0) as "done", "not_possible", "stuck", "tool_failed" or "error".',
+  partial: 'What a stopped run had reached — its tool observations, last thought and a one-line text — as a PartialResult. None otherwise.',
   mode: 'The mode the run actually used.',
   iterations: 'How many times the loop went round.',
   tool_calls: 'The calls the run made. Iterable, and still compares and casts as the count.',
-  tokens_used: 'Total tokens across every model call in the run.',
-  execution_time: 'Wall-clock seconds for the whole run.',
+  tokens_used: 'Total tokens across every model call in the run, including its sub-agents’ calls since 1.2.0.',
+  execution_time: 'Wall-clock seconds for the whole run, including after_run middleware, the session save and the final checkpoint. Equals response.ledger.wall_s.',
   execution_trace: 'One entry per step, for reconstructing what happened.',
   execution_tree: 'The same steps as a tree, when sub-agents were involved.',
   routing_decision: 'Which model was chosen and why, when routing was in play.',
-  metadata: 'Cost, tokens, latency, partial_output, input_redaction and anything a subsystem attached.',
+  metadata: 'Cost, tokens, latency, partial_output, input_redaction, the run’s thread and context_budget, its ledger (also response.ledger, a RunLedger, since 1.2.0), since 1.3.0 tool_results, unavailable_tools, tool_calling and answer_source, and anything a subsystem attached. The thread is a live object, so serialise through to_dict() rather than json.dumps(metadata).',
   citations: 'Citations built from what the run retrieved, never scraped from the prose.',
   sources: 'The deduplicated source URLs behind those citations.',
   task: 'The task the run was given.',
@@ -174,7 +186,7 @@ print(response.output)`}
 Explanation:
 - 17 × 23 = 391
 - 391 + 12 = 403`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <p>
@@ -196,6 +208,44 @@ Explanation:
         How tools are offered to the model — as native function definitions, as text the model
         writes back in, or both — is <code>tool_calling_mode</code>, covered on{' '}
         <Link to="/tool-calling">Tool calling</Link>. Nothing else about the loop changes with it.
+      </p>
+
+      <h3>How a run ends</h3>
+      <p>
+        Since 1.3.0 every response says how its run ended in <code>response.termination</code>,
+        derived from <code>success</code>, <code>stop_reason</code> and{' '}
+        <code>metadata["tool_results"]</code>, so it never disagrees with them.
+      </p>
+      <ApiTable
+        headers={['termination', 'What it means', 'success']}
+        rows={[
+          [<code>"done"</code>, 'The model wrote an answer. A run whose calls reached a tool that rejected their input used the tool, and is done.', <code>True</code>],
+          [<code>"not_possible"</code>, 'The model wrote an answer, but every call was declined, failed on the tool’s side or returned nothing — usually an answer saying the task cannot be done with these tools.', <code>True</code>],
+          [<code>"stuck"</code>, 'The run kept proposing work that brought nothing new, was asked for its answer, and wrote none (loop_detected, repeated_tool_result, max_iterations_*, null_final_from_model).', <code>False</code>],
+          [<code>"tool_failed"</code>, 'The tools the run needed failed — on their own side, or on every input the model gave them — and the run has no answer.', <code>False</code>],
+          [<code>"error"</code>, 'The run could not be carried out.', <code>False</code>],
+        ]}
+      />
+      <p>
+        Before a run ends stuck, the loop asks for the answer. After{' '}
+        <code>max_turns_without_progress</code> turns in a row (2 by default) that bring no new tool
+        result, the next turn offers no tools and asks for the answer, and a turn that declares no
+        action after a result (<code>Action: None</code>, <code>Action: (continue reasoning)</code>)
+        is asked at once. A run that would still stop on a loop guard or its iteration cap while
+        holding tool results gets one closing request — its own calls and results, with no tools —
+        and when the reply is an answer the run succeeds with{' '}
+        <code>metadata["answer_source"] == "closing_request"</code>.
+      </p>
+      <p>
+        A tool that fails on its own side — a connection error, a timeout, an HTTP 5xx or 429,
+        missing credentials — three times in a row is not called again in the run, and when every
+        tool the agent holds is in that state the run ends <code>tool_failed</code> without another
+        model call; <code>metadata["unavailable_tools"]</code> names them. Four failures in a row on
+        a tool’s input withdraw that tool for the run; a run left with no tool is asked for its
+        answer and ends <code>tool_failed</code> with <code>metadata["error"]["kind"] == "input"</code>{' '}
+        when it writes none. An answer that is a tool’s error message is never a success.{' '}
+        <code>max_turns_without_progress=None</code> turns the answer request and the closing request
+        off, which is the loop 1.2.0 ran.
       </p>
 
       <h2>Constructing an agent</h2>
@@ -324,15 +374,18 @@ Explanation:
         }
       />
 
-      <Callout type="warning" title={`raise_on_error changed in ${version}`}>
+      <Callout type="warning" title="raise_on_error defaults to True">
         <p>
-          It now defaults to <code>True</code>: a failed run raises its typed error rather than
+          Since 1.0.0 a failed run raises its typed error rather than
           returning a response with <code>success=False</code> and a plausible-looking string in{' '}
           <code>output</code>. Set it to <code>False</code> to inspect the response yourself — and
           note that with the flag off, a failed run's <code>output</code> is effGen's report of
           what stopped it, while the model's own text is in{' '}
           <code>metadata["partial_output"]</code>. A backend that was never reached raises either
-          way. <Link to="/migration">Migrating to {version}</Link> has the migration.
+          way. Since 1.0.1 a run the loop stopped before the model wrote an answer raises{' '}
+          <code>RunStoppedError</code>, which carries the response, its <code>stop_reason</code>{' '}
+          and its <code>partial</code>. <Link to="/migration">Migrating to {version}</Link> has the
+          migration.
         </p>
       </Callout>
 
@@ -350,6 +403,7 @@ Explanation:
           <>
             Generated from the installed <code>AgentResponse</code> dataclass. On top of these it
             carries <code>text</code> and <code>content</code> (aliases for <code>output</code>),{' '}
+            <code>termination</code> (how the run ended, since 1.3.0),{' '}
             <code>tool_call_count</code>, <code>to_dict()</code>, and <code>show()</code> /{' '}
             <code>trace()</code> for printing a run in a terminal.
           </>
@@ -443,7 +497,7 @@ calculator calls: 1`} />
         </p>
       </Callout>
 
-      <Callout type="note" title={`tool_calls changed in ${version}`}>
+      <Callout type="note" title="tool_calls changed in 1.0.0">
         <p>
           It used to be an integer, and iterating it raised{' '}
           <code>TypeError: 'int' object is not iterable</code>. It still compares and casts as the
@@ -490,13 +544,30 @@ calculator calls: 1`} />
             </>,
           ],
           [
-            <>The iteration cap</>,
+            <>A run whose tools failed</>,
             <>
-              The loop reached <code>max_iterations</code> without the model answering.
+              Since 1.3.0: the tools the run needed kept failing on their own side, or on every
+              input the model gave them, and the run has no answer.
             </>,
             <>
-              Raise the cap, simplify the task, or set <code>raise_on_error=False</code> and read{' '}
-              <code>metadata["partial_output"]</code>.
+              Raises <code>RunStoppedError</code> with <code>stop_reason="tool_failed"</code>;{' '}
+              <code>metadata["unavailable_tools"]</code> names the tools and{' '}
+              <code>metadata["error"]["kind"]</code> says <code>"tool"</code> or{' '}
+              <code>"input"</code>. Check the tool’s service, or read{' '}
+              <code>response.termination</code> with <code>raise_on_error=False</code>.
+            </>,
+          ],
+          [
+            <>A stopped run</>,
+            <>
+              The loop reached <code>max_iterations</code>, or a guard ended a run that repeated
+              itself, without the model answering — since 1.3.0, also after the closing request
+              brought no answer.
+            </>,
+            <>
+              Raises <code>RunStoppedError</code>, a <code>RuntimeError</code>. Raise the cap,
+              simplify the task, or read <code>exc.partial</code> — or set{' '}
+              <code>raise_on_error=False</code> and read <code>response.partial</code>.
             </>,
           ],
         ]}
@@ -505,23 +576,27 @@ calculator calls: 1`} />
       <CodeBlock
         filename="inspect_failure.py"
         code={`from effgen import Agent, AgentConfig
+from effgen.tools.builtin import Calculator
 
 agent = Agent(AgentConfig(
-    model="openai:gpt-5-nano",
+    model="gemini:gemini-3.1-flash-lite",
+    tools=[Calculator()],
     max_iterations=1,
-    raise_on_error=False,          # 1.0.0 default is True
+    raise_on_error=False,          # the default is True
 ))
-r = agent.run("Research the full history of the Byzantine Empire and cite ten sources.")
+r = agent.run("With the calculator: work out 24344 * 334, then multiply that by 7, "
+              "then subtract 19, then divide by 3.")
 
-print(r.success)
-print("reason:", r.metadata.get("reason"))
-print("model's own text:", (r.metadata.get("partial_output") or "")[:60])`}
+print("success:", r.success)
+print("outcome:", r.outcome, "· stop_reason:", r.stop_reason)
+print("output:", r.output[:100])
+print("partial:", r.partial.text if r.partial else None)`}
       />
 
       <Terminal command="python inspect_failure.py" output={`success: False
-reason: max_iterations_partial
-output: Stopped after 1 iteration without a final answer: 'gpt-5-nano' was still taking tool steps
-the model's own text: 1136812`} />
+outcome: stopped · stop_reason: max_iterations_partial
+output: Stopped after 1 iteration without a final answer: 'gemini-3.1-flash-lite' was still taking tool step
+partial: 8130896`} caption={`Run against effGen 1.0.1. output says what stopped the run; what it had reached is in partial.`} />
 
       <SeeAlso paths={['/presets', '/configuration', '/tool-calling']} />
     </DocPage>

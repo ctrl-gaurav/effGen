@@ -451,6 +451,27 @@ effgen report eval.json`}
       "agent_output": "5",
       "score": 1.0,`} maxLines={22} />
 
+      <h2>Your own tasks: effgen bench</h2>
+
+      <p>
+        New in 1.2.0, <code>effgen bench</code> runs a suite of your own tasks against a model and
+        reports what the agent spent to answer them: accuracy beside model calls, tool calls,
+        tokens, time and cost. <code>effgen bench compare</code> pairs two saved runs task by task
+        and prints a noise band beside every difference, so a change within run-to-run variation is
+        not reported as a result. A suite is a strict YAML or JSON file — a name, the tools, a
+        scorer, agent settings and a list of tasks with expected answers — and{' '}
+        <code>effgen bench init</code> writes a starter one.
+      </p>
+
+      <CodeBlock
+        language="bash"
+        filename="terminal"
+        code={`effgen bench init
+effgen bench run bench-suite.yaml --model my-model --base-url http://127.0.0.1:8000/v1 --out runs/a
+effgen bench run bench-suite.yaml --model my-model --base-url http://127.0.0.1:8000/v1 --out runs/b
+effgen bench compare runs/a runs/b`}
+      />
+
       <h2>What goes wrong</h2>
 
       <ApiTable

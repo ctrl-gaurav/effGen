@@ -47,7 +47,7 @@ export default function Dashboard() {
       <Terminal
         command="effgen serve --port 8244"
         output={`
-effGen v1.0.0 - API Server
+effGen v1.0.1 - API Server
 Auth: DISABLED (EFFGEN_DEV_MODE=1) — do not use in production
 Starting server on 127.0.0.1:8244
   OpenAI-compatible API : http://127.0.0.1:8244/v1
@@ -250,7 +250,7 @@ Starting server on 127.0.0.1:8244
         command="curl -s http://127.0.0.1:8244/dashboard/data.json | python -m json.tool | head -60"
         output={`{
     "ts": "2026-08-24T23:26:43Z",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "metrics": {
         "total_requests": 4,
         "total_errors": 1,
@@ -421,7 +421,7 @@ you do not have access to it. Did you mean: gpt-5-mini, gpt-5-nano, gpt-4o-mini?
       "cost_usd": 0.000042,
       "tokens": 1234,
       "nodes": [
-        {"id": "lead", "type": "manager", "status": "ok", "model": "llama-3.1-8b-instant",
+        {"id": "lead", "type": "manager", "status": "ok", "model": "openai/gpt-oss-20b",
          "runs": 2, "cost_usd": 0.00002, "tokens": 800, "duration_s": 1.2}
       ],
       "edges": [{"source": "lead", "target": "researcher", "kind": "delegation", "count": 1}]

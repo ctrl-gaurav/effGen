@@ -26,7 +26,7 @@ export default function Errors() {
       <h2>Two ways a failure reaches you</h2>
       <p>
         <code>raise_on_error</code> decides whether a run raises or returns. It defaults to{' '}
-        <code>True</code>, which is a change in 1.0.0.
+        <code>True</code>, which was a change in 1.0.0.
       </p>
 
       <CodeBlock filename="both_ways.py" code={`from effgen import Agent, AgentConfig, load_model
@@ -34,7 +34,7 @@ from effgen.models.errors import ModelAuthError
 
 model = load_model("gpt-5-nano", provider="openai", api_key="sk-not-a-real-key")
 
-# raise_on_error defaults to True in 1.0.0.
+# raise_on_error defaults to True since 1.0.0.
 agent = Agent(AgentConfig(model=model))
 try:
     agent.run("What is 2 + 2?")
@@ -50,7 +50,7 @@ print("returned:", response.success, response.metadata["error"]["type"])`} />
         command="python both_ways.py"
         output={`raised: ModelAuthError
 returned: False ModelAuthError`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <h3>The structured error on a response</h3>
@@ -84,6 +84,109 @@ error  : {'type': 'ModelAuthError', 'category': 'auth', 'provider': 'openai', 'm
           <a href="#nothing-answered">below</a>.
         </p>
       </Callout>
+
+      <h3 id="stopped">Answered, stopped, failed</h3>
+      <p>
+        A run ends in one of three states, and <code>response.outcome</code> names which without you
+        having to read <code>output</code>. <code>response.stop_reason</code> names the exit the run
+        took and is present on every response — an answered run reports{' '}
+        <code>"final_answer"</code> — and it always equals <code>metadata["reason"]</code>.
+      </p>
+
+      <ApiTable
+        headers={['outcome', 'What it means', 'output', 'partial']}
+        rows={[
+          [<code>answered</code>, 'The model wrote an answer.', 'The answer.', <code>None</code>],
+          [
+            <code>stopped</code>,
+            'The loop ended the run before the model wrote one: max_iterations_partial, max_iterations_exhausted, loop_detected, repeated_tool_result, null_final_from_model or, since 1.3.0, tool_failed.',
+            'What happened, and what to do.',
+            'The progress, when there was any.',
+          ],
+          [<code>failed</code>, 'The run could not be carried out.', 'The classified failure.', <code>None</code>],
+        ]}
+      />
+
+      <p>
+        A stopped run has tool results and reasoning but no answer, so they travel in{' '}
+        <code>response.partial</code>, a <code>PartialResult</code> with <code>observations</code>,{' '}
+        <code>last_observation</code>, <code>last_thought</code>, <code>text</code>,{' '}
+        <code>iterations</code> and <code>tool_calls</code>. <code>metadata["partial_output"]</code>{' '}
+        carries <code>partial.text</code> under the key earlier releases used. Under the default{' '}
+        <code>raise_on_error=True</code> a stopped run raises <code>RunStoppedError</code>, which
+        subclasses <code>RuntimeError</code> — so code already catching the iteration cap keeps
+        working — and carries <code>.response</code>, <code>.stop_reason</code> and{' '}
+        <code>.partial</code>. With the flag off, the same run comes back with{' '}
+        <code>success=False</code> and <code>outcome == "stopped"</code>. Since 1.3.0 a stopped
+        run’s <code>partial</code> never carries a tool’s error message: a run whose only
+        observations were errors has <code>partial=None</code>.
+      </p>
+
+      <CodeBlock filename="stopped.py" code={`from effgen import Agent, AgentConfig, RunStoppedError
+from effgen.tools.builtin import Calculator
+
+agent = Agent(AgentConfig(
+    model="gemini:gemini-3.1-flash-lite",
+    tools=[Calculator()],
+    max_iterations=1,
+))
+try:
+    agent.run("With the calculator: work out 24344 * 334, then multiply that by 7, "
+              "then subtract 19, then divide by 3.")
+except RunStoppedError as exc:
+    print("raised:", type(exc).__name__, "is a RuntimeError:", isinstance(exc, RuntimeError))
+    print("stop_reason:", exc.stop_reason)
+    print("outcome:", exc.response.outcome)
+    print("partial:", exc.partial.text if exc.partial else None)`} />
+
+      <Terminal
+        command="python stopped.py"
+        output={`raised: RunStoppedError is a RuntimeError: True
+stop_reason: max_iterations_partial
+outcome: stopped
+partial: 8130896`}
+        caption={`Run against effGen 1.0.1. One iteration is enough for one calculator call and not for an answer, so the run stops holding the result it had reached.`}
+      />
+
+      <p>
+        Since 1.3.0 a run that is about to stop while holding tool results first gets one closing
+        request — its own calls and results, with no tools — and when the reply is an answer the
+        run succeeds with <code>metadata["answer_source"] == "closing_request"</code>. A run like
+        the one above can therefore return an answer on 1.3.0 where 1.0.1 raised.
+      </p>
+
+      <h3 id="termination">Done, not possible, stuck, tool failed</h3>
+      <p>
+        <code>response.termination</code>, new in 1.3.0, says how a run ended in the four ways a
+        tool loop can end, plus the runs that could not be carried out. It is derived from{' '}
+        <code>success</code>, <code>stop_reason</code> and <code>metadata["tool_results"]</code>,
+        and <code>to_dict()</code> carries it.
+      </p>
+
+      <ApiTable
+        headers={['termination', 'What it means', 'stop_reason']}
+        rows={[
+          [<code>done</code>, 'The model wrote an answer.', <code>final_answer</code>],
+          [<code>not_possible</code>, 'The model wrote an answer, but every call was declined, failed on the tool’s own side or returned nothing — usually an answer saying the task cannot be done with these tools.', <code>final_answer</code>],
+          [<code>stuck</code>, 'The run kept proposing work that brought nothing new, was asked for its answer, and wrote none.', 'loop_detected, repeated_tool_result, max_iterations_*, null_final_from_model'],
+          [<code>tool_failed</code>, 'The tools the run needed failed, and the run has no answer.', <code>tool_failed</code>],
+          [<code>error</code>, 'The run could not be carried out.', 'the other failed reasons'],
+        ]}
+      />
+
+      <p>
+        A tool that fails on its own side — a connection or timeout error, an HTTP 5xx or 429,
+        missing credentials, recognised from the exception’s class — three times in a row is not
+        called again in the run, and a run left with no usable tool ends <code>tool_failed</code>{' '}
+        with <code>metadata["error"]["kind"] == "tool"</code> and the tools named in{' '}
+        <code>metadata["unavailable_tools"]</code>. Such a run gets no closing request. Four
+        failures in a row on a tool’s input withdraw that tool for the run; a run left with no tool
+        is asked for its answer and, if it writes none, ends <code>tool_failed</code> with{' '}
+        <code>kind == "input"</code>. Under the default <code>raise_on_error=True</code> both raise{' '}
+        <code>RunStoppedError</code>. A tool that rejects the same input twice, or every input in
+        the same words, can still be stopped by the loop guard first, so that run ends{' '}
+        <code>stuck</code> rather than <code>tool_failed</code>; this is a known issue in 1.3.0.
+      </p>
 
       <h2>Model and provider errors</h2>
       <p>
@@ -165,7 +268,7 @@ error  : {'type': 'ModelAuthError', 'category': 'auth', 'provider': 'openai', 'm
           ],
           [
             <code>BudgetExceededError</code>,
-            'Cumulative spend crossed the configured daily or monthly budget.',
+            'Cumulative spend crossed the configured daily or monthly budget. Since 1.2.0 run() raises it whatever raise_on_error says, before any request is sent, and only for a call that costs money. It is not a RuntimeError.',
             'No',
             <>
               Raise the budget or wait for the period to roll — see <Link to="/cost">Cost and
@@ -352,7 +455,7 @@ for exc in (
       <Terminal
         command="python messages.py"
         output={`--- ModelNotFoundError ---
-groq error (model='llama-9000-turbo'): Unknown Groq model 'llama-9000-turbo'. Did you mean: llama-3.3-70b-versatile, llama-3.1-8b-instant, allam-2-7b? Available groq models: llama-3.3-70b-versatile, llama-3.1-8b-instant, qwen/qwen3.6-27b, openai/gpt-oss-120b, openai/gpt-oss-20b,… (280 characters). Model id not found — run \`effgen models list\` to see ids, \`effgen models refresh\` to update the catalog, and verify the id/provider prefix.
+groq error (model='llama-9000-turbo'): Unknown Groq model 'llama-9000-turbo'. Did you mean: allam-2-7b, whisper-large-v3-turbo, meta-llama/llama-prompt-guard-2-86m? Available groq models: qwen/qwen3.6-27b, qwen/qwen3.8-27b, openai/gpt-oss-120b, openai/gpt-oss-20b, openai/gpt-oss… (280 characters). Model id not found — run \`effgen models list\` to see ids, \`effgen models refresh\` to update the catalog, and verify the id/provider prefix.
 
 --- MissingCredentialsError ---
 SlackWebhookTool requires credentials that are not configured: SLACK_WEBHOOK_URL.
@@ -454,11 +557,11 @@ openai did not answer (model='local-model'): OpenAI generation failed [will_retr
 
       <Callout type="warning" title="New in 1.0.0">
         <p>
-          Two of the three breaking changes in {version} are on this page:{' '}
+          Two of the three breaking changes in 1.0.0 are on this page:{' '}
           <code>raise_on_error</code> now defaults to <code>True</code>, and an unreachable backend
           raises regardless of it. Code that read <code>response.success</code> and never expected an
           exception should pass <code>raise_on_error=False</code> explicitly.{' '}
-          <Link to="/migration">Migrating to 1.0.0</Link> has the one-line change for each.
+          <Link to="/migration">Migrating to 1.2.0</Link> has the one-line change for each.
         </p>
       </Callout>
 

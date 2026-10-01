@@ -10,7 +10,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { presetCount, siteData, version } from '../siteData';
+import { presetCount, siteData } from '../siteData';
 
 const PRESETS = siteData.presets.items;
 
@@ -47,7 +47,7 @@ print(agent.run("What is 17% of 250?"))`,
         ]}
       />
 
-      <Terminal command="python preset.py" output={`42.5`} caption={`Run against effGen ${version}.`} />
+      <Terminal command="python preset.py" output={`42.5`} caption={`Run against effGen 1.0.0.`} />
 
       <Callout type="tip" title="New here? Start with math or minimal">
         <p>

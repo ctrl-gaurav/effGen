@@ -311,14 +311,14 @@ const features: FeatureItem[] = [
     description: `Build an agent from a config, or take one of the ${presetCount} presets and be running in a line. Every run returns the same object, whatever the model behind it was.`,
     features: [
       `${presetCount} presets: ${presetNames.join(", ")}`,
-      "AgentResponse carries .text, .success, .tool_calls, .sources, .citations and .metadata",
+      "AgentResponse carries .text, .success, .outcome, .termination, .thread, .ledger, .tool_calls, .sources, .citations and .metadata",
       `${publicNameCount} names exported from the top-level package`,
     ],
     accent: "#00ff88",
     visual: "presets",
     code: 'from effgen import create_agent\n\nagent = create_agent("math", "gemini:gemini-3.1-flash-lite")\nprint(agent.run("What is 17 * 23 + 144 ** 0.5?").text)',
     expandedContent:
-      "A preset bundles the tools, the temperature, the iteration cap and the system prompt for one kind of work, so create_agent(preset, model) is a working agent. Build the config yourself when you want something else — AgentConfig takes the model, the tools, the prompt, guardrails, middleware, a compaction strategy and the generation controls. Either way run() returns an AgentResponse: str(response) is the answer, .text is the same string, .success says whether the run finished, .tool_calls lists the calls it made, .sources and .citations carry the URLs a grounded run actually retrieved, and .metadata carries cost, tokens, latency and, when a run is cut short, the partial output. AgentResponse is imported from effgen.core.agent rather than the top-level package.",
+      "A preset bundles the tools, the temperature, the iteration cap and the system prompt for one kind of work, so create_agent(preset, model) is a working agent. Build the config yourself when you want something else — AgentConfig takes the model, the tools, the prompt, guardrails, middleware, a compaction strategy and the generation controls. Either way run() returns an AgentResponse: str(response) is the answer, .text is the same string, .success says whether the run answered, .outcome says whether it answered, stopped or failed, .tool_calls lists the calls it made, .sources and .citations carry the URLs a grounded run actually retrieved, .partial carries what a stopped run had reached, and .metadata carries cost, tokens and latency. AgentResponse is imported from effgen.core.agent rather than the top-level package.",
   },
   {
     group: "Agents and tools",
@@ -414,7 +414,7 @@ const features: FeatureItem[] = [
     accent: "#a78bfa",
     visual: "memory",
     expandedContent:
-      "Memory is on the agent, not bolted beside it: enable_memory=True and the loop stores and recalls without the caller managing a transcript. A checkpoint is the other kind of persistence — a snapshot of an in-progress run (scratchpad, iteration, partial output, tool calls, tokens, memory) written as JSON so a resumed run is inspectable and cannot execute anything on load. effgen runs and effgen sessions browse both from the command line.",
+      "Memory is on the agent, not bolted beside it: enable_memory=True and the loop stores and recalls without the caller managing a transcript. A checkpoint is the other kind of persistence — a snapshot of an in-progress run (its steps, iteration, partial output, tool calls, tokens, memory) written as JSON so a resumed run continues where it stopped, is inspectable, and cannot execute anything on load. effgen runs and effgen sessions browse both from the command line.",
   },
   {
     group: "Knowledge and context",

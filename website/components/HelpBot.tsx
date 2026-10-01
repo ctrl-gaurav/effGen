@@ -258,19 +258,19 @@ export default function HelpBot() {
   const [messages, setMessages] = useState<Message[]>([
     {
       type: "bot",
-      content: "Ask a question about effGen 1.0.0, or browse the topics below. Everything here links into the documentation.",
+      content: "Ask a question about effGen 1.3.0, or browse the topics below. Everything here links into the documentation.",
     },
     {
       type: "suggestions",
       content: "",
       // The six openers. Chosen for what people arrive not knowing: how to
-      // install it, how to write the first agent, what changed in 1.0.0, and
+      // install it, how to write the first agent, what changed in 1.3.0, and
       // the two 1.0.0 surfaces that are hardest to guess at — pointing it at
       // your own server, and the coding agent.
       suggestions: [
         { faq: getFAQById(1), score: 1 },    // How do I install effGen?
         { faq: getFAQById(10), score: 1 },   // How do I create my first agent?
-        { faq: getFAQById(49), score: 1 },   // What's new in 1.0.0?
+        { faq: getFAQById(64), score: 1 },   // What's new in 1.3.0?
         { faq: getFAQById(6), score: 1 },    // Point it at my own vLLM/Ollama server
         { faq: getFAQById(24), score: 1 },   // What is effgen code?
         { faq: getFAQById(17), score: 1 },   // What built-in tools are there?

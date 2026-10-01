@@ -53,7 +53,7 @@ Next three commands
   1. cp .env.example .env  # then paste one key into it
   2. effgen doctor  # confirm effGen sees it
   3. effgen run "What is 25 * 17?" -c effgen.yaml`}
-        caption={`Run against effGen ${version}. Without -m it detects a model from the keys it can see, and says which and why.`}
+        caption={`Run against effGen 1.0.0. Without -m it detects a model from the keys it can see, and says which and why.`}
       />
 
       <p>

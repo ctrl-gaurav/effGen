@@ -9,7 +9,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { modelCount, providerCount, providersWithCatalog, siteData, version } from '../siteData';
+import { modelCount, providerCount, providersWithCatalog, siteData } from '../siteData';
 import { siteHref } from '../siteLinks';
 
 export default function Models() {
@@ -45,7 +45,7 @@ print(result.tokens_used, result.finish_reason, result.model_name)`}
       />
 
       <Terminal command="python load.py" output={`Pacific
-202 stop gpt-5-nano`} caption={`Run against effGen ${version}.`} />
+202 stop gpt-5-nano`} caption={`Run against effGen 1.0.0.`} />
 
       <p>
         An <code>Agent</code> takes either the loaded model or the id itself —{' '}
@@ -99,7 +99,7 @@ print(result.tokens_used, result.finish_reason, result.model_name)`}
 
       <Callout type="warning" title="A bare id that exists on several providers is refused">
         <p>
-          <code>llama-3.3-70b-versatile</code> is in more than one catalog, so effGen raises{' '}
+          <code>openai/gpt-oss-120b</code> is in more than one catalog, so effGen raises{' '}
           <code>AmbiguousModelError</code> naming the providers rather than picking one. Prefix it.
         </p>
       </Callout>
@@ -495,18 +495,18 @@ Use: effgen run --provider openai -m gpt-5-nano "..."`} />
 from effgen.models.registry import lookup
 
 try:
-    lookup("llama-3.3-70b-versatile")
+    lookup("openai/gpt-oss-120b")
 except AmbiguousModelError as e:
     print(type(e).__name__, "->", e.model_id)
     print("  on:", e.providers)
 
-provider, adapter_cls, info = lookup("groq:llama-3.3-70b-versatile")
+provider, adapter_cls, info = lookup("groq:openai/gpt-oss-120b")
 print("resolved:", provider, info["context"])`}
       />
 
       <Terminal command="python ambiguous.py" output={`AmbiguousModelError -> openai/gpt-oss-120b
   on: ['groq', 'hf', 'replicate', 'together']
-resolved: together 131072`} />
+resolved: groq 131072`} />
 
       <SeeAlso paths={['/providers', '/catalog', '/local-models']} />
     </DocPage>

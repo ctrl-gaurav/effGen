@@ -46,7 +46,7 @@ openai  gpt-5-mini    1,047,576   32,768      $0.25         $2    yes  yes     -
 openai  gpt-4.1-mini  1,047,576   32,768       $0.4       $1.6    yes  yes     -
 
 showing 6 of 30  ·  pricing from catalog snapshot`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <h2>What a record holds</h2>

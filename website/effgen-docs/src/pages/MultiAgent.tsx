@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function MultiAgent() {
   return (
@@ -55,7 +54,7 @@ print("tokens_used:", result.metadata["tokens_used"])`} />
   translate  Une marée est la montée et la descente régulières du niveau de la mer causée par l'attraction gravitationnelle de la Lune et du Soleil sur les océans de la Terre.
 cost_usd   : 0.000293
 tokens_used: 794`}
-        caption={`Run against effGen ${version}. Two calls to gpt-5-nano, summed onto one result.`}
+        caption={`Run against effGen 1.0.0. Two calls to gpt-5-nano, summed onto one result.`}
       />
 
       <Callout type="warning" title="A stage that decomposes is not a stage">
@@ -480,6 +479,38 @@ agent.run(task, mode=AgentMode.SUB_AGENTS)   # decompose, whatever the router th
         Decomposition costs a call to plan and one per subtask, so it earns its keep on a task with
         genuinely separable parts and loses on a short one. Larger models plan better; a 1B model
         asked to decompose usually should not be.
+      </p>
+
+      <h2>What a child run starts with, and what comes back</h2>
+      <p>
+        Since 1.1.0 a parent decides which of its steps a child it delegates to starts with, through
+        a <code>ThreadProjection</code>. <code>WorkflowDAG</code>, <code>TeamConfig</code> and{' '}
+        <code>SubAgentManager</code> each take <code>projection=</code>, and the default carries
+        nothing — which is what every pattern did before.
+      </p>
+
+      <ApiTable
+        headers={['Projection', 'What the child starts with']}
+        rows={[
+          [<code>NoParentContext()</code>, 'Only the question it was asked. The default.'],
+          [<code>ParentTask()</code>, 'The job the parent was given, as one user turn.'],
+          [<code>ParentAnswers()</code>, 'The parent’s task and what its finished children answered.'],
+          [<code>LastCycles(n=2)</code>, 'The parent’s task and the last n complete cycles of its own work.'],
+        ]}
+      />
+
+      <CodeBlock filename="projection.py" code={`from effgen import LastCycles
+from effgen.core.workflow import WorkflowDAG
+
+dag = WorkflowDAG("report", projection=LastCycles(1))`} />
+
+      <p>
+        Each result carries its runs’ conversations and serialises them into <code>to_dict()</code>:{' '}
+        <code>WorkflowResult.thread</code>, <code>.threads</code>, <code>.node_thread()</code> and{' '}
+        <code>.failed_nodes()</code>; <code>TeamResponse.thread</code> and{' '}
+        <code>.agent_threads()</code>; <code>AgentResponse.sub_agent_threads()</code> for a
+        decomposed run; and <code>SubAgentResult.thread</code>. <code>SubAgentManager</code> and{' '}
+        <code>SubAgentResult</code> are importable from <code>effgen</code>.
       </p>
 
       <h2>Talking between agents</h2>

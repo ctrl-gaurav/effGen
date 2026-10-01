@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Sessions() {
   return (
@@ -37,7 +36,7 @@ print(second.run("What is my dog's name?").text)`} />
       <Terminal
         command="python session.py"
         output={`Pixel.`}
-        caption={`Run against effGen ${version}. The second agent was constructed after the first had finished.`}
+        caption={`Run against effGen 1.0.0. The second agent was constructed after the first had finished.`}
       />
 
       <p>
@@ -47,7 +46,8 @@ print(second.run("What is my dog's name?").text)`} />
       <h2>One agent, many conversations</h2>
       <p>
         <code>session_id=</code> on the constructor binds one conversation to the agent for its
-        whole life. A server answering many people wants the opposite — one agent, and the
+        whole life: every <code>run()</code> and, since 1.3.0, every <code>stream()</code> turn is
+        appended to it and saved. A server answering many people wants the opposite — one agent, and the
         conversation named per call. That is <code>session=</code> on <code>run()</code>.
       </p>
 
@@ -67,11 +67,54 @@ Mote.`} />
       <Callout type="note" title="What run(session=…) does to the agent">
         <p>
           The run builds its prompt from that conversation's history and appends the turn to it.
-          The two conversations never see each other, and the agent's own memory is untouched and
-          restored when the call ends — including when the run fails. Without{' '}
+          The two conversations never see each other, and the agent's own memory is left untouched
+          — including when the run fails or a guardrail blocks the input. Without{' '}
           <code>session=</code>, <code>run()</code> uses the agent's own memory as it always did.
         </p>
       </Callout>
+
+      <h3>Overlapping calls</h3>
+      <p>
+        Since 1.3.0 the conversation belongs to the call, not to the agent object, so the calls may
+        overlap: threads calling <code>run()</code> on one agent, <code>run_async()</code> tasks on
+        one event loop, and streams each read and record only their own session. In 1.2.0
+        overlapping calls swapped the agent’s session on the shared object and could read and
+        record each other’s turns. Inside a call, <code>agent.session</code> and{' '}
+        <code>agent.short_term_memory</code> name that call’s conversation; outside one, they are the
+        agent’s own. Per-call middleware applies to that call only.
+      </p>
+
+      <CodeBlock filename="overlapping.py" code={`import asyncio
+from effgen import Agent, AgentConfig
+
+agent = Agent(AgentConfig(model="gpt-5-nano", provider="openai"))
+
+async def main():
+    await asyncio.gather(
+        agent.run_async("What is my pet's name?", session="user-123"),
+        agent.run_async("What is my pet's name?", session="user-456"),
+    )
+
+asyncio.run(main())`} />
+
+      <p>
+        <code>stream()</code> takes <code>session=</code> the same way: the streamed answer is
+        appended to that conversation once the stream finishes. In 1.2.0 it ignored{' '}
+        <code>session=</code> and wrote the turn to the agent’s own memory.
+      </p>
+
+      <CodeBlock continues filename="overlapping.py" code={`for chunk in agent.stream("And how old is he?", session="user-123"):
+    print(chunk, end="")`} />
+
+      <p>
+        Calls made without <code>session=</code> share the agent’s own memory, so overlapping calls
+        of that kind see each other’s turns — give each concurrent conversation a session.{' '}
+        <code>agent.last_stream_response</code> and <code>agent.last_stream_usage</code> describe the
+        stream that finished last; when streams overlap, read each one’s own record from its
+        terminal <code>usage</code> event (<code>include_events=True</code>). Open at the edges in
+        1.3.0: <code>stream()</code> runs no middleware, and <code>resume(session=...)</code>{' '}
+        restores the checkpoint’s memory onto the agent’s own memory.
+      </p>
 
       <h3>Passing the object instead of the id</h3>
 
@@ -87,6 +130,24 @@ print(len(session.messages), "messages in", session.session_id)`} />
 
       <Terminal command="python session_object.py" output={`The breed isn’t specified in the conversation.
 6 messages in pets-demo`} />
+
+      <h3>How the earlier turns reach the model</h3>
+      <p>
+        Since 1.1.0, a request that carries one string renders the session’s earlier turns as{' '}
+        <code>Earlier in this conversation:</code> followed by <code>User:</code> /{' '}
+        <code>Assistant:</code> lines. On a model whose adapter takes a conversation, a run whose
+        tools travel as a request parameter sends them as their own <code>user</code> and{' '}
+        <code>assistant</code> messages instead, and at the default{' '}
+        <code>prompt_protocol="auto"</code> a run with tools that continues a session sends its own
+        steps as messages too. <code>AgentConfig(prompt_protocol="flat")</code> keeps the run’s own
+        steps in one string.
+      </p>
+      <p>
+        <code>session.last_thread()</code> returns the steps of the most recent turn. An earlier
+        turn’s stored steps are reduced to their shape unless the session is created with{' '}
+        <code>keep_thread_history=True</code> — the default is <code>False</code>, which keeps
+        session files from growing with every turn.
+      </p>
 
       <h2>From the command line</h2>
       <p>
@@ -333,8 +394,8 @@ with BackgroundTaskRunner(agent, max_workers=2) as runner:
               conversation.
             </>,
             <>
-              Use <code>run(task, session=…)</code> per call instead. The two never mix, and the
-              agent’s own memory is restored after each call.
+              Use <code>run(task, session=…)</code> per call instead. The two never mix, also when
+              the calls overlap (since 1.3.0), and the agent’s own memory is left as it was.
             </>,
           ],
           [

@@ -85,7 +85,7 @@ Execution Statistics
           [
             <code>effgen debug</code>,
             <>
-              You want to stop between iterations and look at the scratchpad, or you want the run
+              You want to stop between iterations and look at the run’s steps, or you want the run
               summary framed on its own.
             </>,
           ],
@@ -311,6 +311,14 @@ DebugTrace(openai:gpt-5-nano, 0 iters, 275 tokens, 2.32s, success=True)`}
               <code>scratchpad_snapshot</code>, <code>memory_snapshot</code>
             </>,
             'The working context as it stood at that step.',
+          ],
+          [
+            <code>thread_snapshot</code>,
+            <>
+              The run’s steps as they stood at that iteration, new in 1.1.0.{' '}
+              <code>DebugIteration.to_dict()</code> writes it under a <code>thread</code> key, and the
+              inspector panel renders every iteration from it, not only behind <code>--step</code>.
+            </>,
           ],
         ]}
       />

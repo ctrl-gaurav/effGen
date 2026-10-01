@@ -71,7 +71,7 @@ print(type(server).__name__)
       <Terminal
         command="python server.py"
         output={`EffGenMCPServer`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <Callout type="danger" title="The dangerous tools are not exposed unless you say so">

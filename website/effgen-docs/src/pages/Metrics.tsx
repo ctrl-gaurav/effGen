@@ -103,6 +103,18 @@ effgen_tool_call_latency_seconds             LabeledHistogram tool, outcome`}
         }
       />
 
+      <Callout type="note" title="Changed in 1.2.0">
+        <p>
+          <code>effgen_model_call_latency_seconds</code> observes each model call: its count is the
+          number of calls and its value each call’s wait. Earlier releases observed each run’s whole
+          wall time once. <code>effgen_tokens_used_total</code> takes only a run’s own calls, so a
+          decomposed run’s sub-agents are not counted twice. The server’s registry also gains{' '}
+          <code>effgen_run_framework_seconds</code> (a run’s time spent in effGen itself),{' '}
+          <code>effgen_model_cost_usd_total</code> and <code>effgen_model_unpriced_calls_total</code>.
+          Streamed runs record no Prometheus series yet.
+        </p>
+      </Callout>
+
       <h3>Histogram buckets</h3>
 
       <p>

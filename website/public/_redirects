@@ -1,0 +1,8 @@
+# The documentation is a single-page app emitted into /docs. A static host has
+# no server to rewrite its client-side routes, so a deep link such as
+# /docs/quickstart must be handed back to the SPA's own index.html. Assets are
+# matched first so they are served as themselves.
+/docs/assets/*  /docs/assets/:splat  200
+/docs/*         /docs/index.html     200
+
+https://docs.effgen.org/* https://effgen.org/docs/:splat 301!

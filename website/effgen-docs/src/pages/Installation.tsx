@@ -34,7 +34,7 @@ export default function Installation() {
 
       <h2>Supported Python versions</h2>
       <p>
-        effGen supports Python {pythonVersions.join(', ')}. 3.10 was dropped for {version}:{' '}
+        effGen supports Python {pythonVersions.join(', ')}. 3.10 was dropped for 1.0.0:{' '}
         <code>tomllib</code>, <code>asyncio.timeout</code>, <code>datetime.UTC</code> and the{' '}
         <code>TimeoutError</code> unification are all standard library from 3.11, and effGen
         carried a hand-written fallback for each.

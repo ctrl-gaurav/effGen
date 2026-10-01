@@ -53,7 +53,7 @@ const tabs: Tab[] = [
         code: 'pip install -U effgen\neffgen --version',
         language: "bash",
         accent: "#00ff88",
-        output: "effGen 1.0.0",
+        output: "effGen 1.3.0",
       },
       {
         number: "02",
@@ -71,7 +71,7 @@ const tabs: Tab[] = [
 │ cerebras          │ present │ CEREBRAS_API_KEY    │      2 │
 │ fireworks         │ present │ FIREWORKS_API_KEY   │     16 │
 │ gemini            │ present │ GOOGLE_API_KEY      │      8 │
-│ groq              │ present │ GROQ_API_KEY        │     15 │
+│ groq              │ present │ GROQ_API_KEY        │     14 │
 │ hf                │ present │ HF_TOKEN            │    124 │
 │ openai            │ present │ OPENAI_API_KEY      │     30 │
 │ openai_compatible │ missing │ —                   │      0 │
@@ -87,7 +87,7 @@ const tabs: Tab[] = [
         code: 'effgen run "What is the capital of France? Answer in one word." \\\n  -m openai:gpt-5-nano',
         language: "bash",
         accent: "#a78bfa",
-        output: `effGen v1.0.0 - Running Task
+        output: `effGen v1.0.1 - Running Task
 
 Initializing agent: cli-agent
 Model: openai:gpt-5-nano
@@ -112,7 +112,7 @@ Response
         code: 'effgen run "Use the calculator tool to work out 24344 * 334." \\\n  -m gemini:gemini-3.1-flash-lite -t calculator',
         language: "bash",
         accent: "#ffd700",
-        output: `effGen v1.0.0 - Running Task
+        output: `effGen v1.0.1 - Running Task
 Loading tools: calculator
 ✓ Loaded tool: calculator
 
@@ -129,8 +129,8 @@ Response
 ╭─────────────────────────────── Agent Response ───────────────────────────────╮
 │ 8130896                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-✓ Done in 13.7s · 1 tool · 186 tokens · $0.000075
-1 tool step — run with --trace to see the timeline`,
+✓ Done in 3.5s · 2 tools · 508 tokens · $0.0002
+2 tool steps — run with --trace to see the timeline`,
       },
     ],
   },
@@ -188,7 +188,7 @@ Response
         code: "export EFFGEN_API_KEY=\"$(python -c 'import secrets; print(secrets.token_urlsafe(24))')\"\neffgen serve --port 8000",
         language: "bash",
         accent: "#00ff88",
-        output: `effGen v1.0.0 - API Server
+        output: `effGen v1.0.1 - API Server
 ✓ Auth: static API key (EFFGEN_API_KEY)
 Starting server on 127.0.0.1:8000
   OpenAI-compatible API : http://127.0.0.1:8000/v1

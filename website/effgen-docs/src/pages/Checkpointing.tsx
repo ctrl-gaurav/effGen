@@ -8,7 +8,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Checkpointing() {
   return (
@@ -26,7 +25,7 @@ export default function Checkpointing() {
         headers={['What is saved', 'Written by', 'Resumed by']}
         rows={[
           [
-            'One agent’s run — scratchpad, iteration, memory, the model id',
+            'One agent’s run — its steps, iteration, memory, the model id',
             <>
               <code>run(checkpoint_dir=…, checkpoint_interval=…)</code> or{' '}
               <code>effgen run --checkpoint-dir</code>
@@ -93,7 +92,7 @@ print("research ran", research.calls, "time(s); draft ran", draft.calls, "time(s
         output={`first run : False {'research': 'completed', 'draft': 'failed'}
 second run: True {'research': 'completed', 'draft': 'completed'}
 research ran 1 time(s); draft ran 2 time(s)`}
-        caption={`Run against effGen ${version}. The second attempt did not call \`research\` again — its output was restored from the checkpoint and flowed downstream. Only the node that failed was retried.`}
+        caption={`Run against effGen 1.0.0. The second attempt did not call \`research\` again — its output was restored from the checkpoint and flowed downstream. Only the node that failed was retried.`}
       />
 
       <ApiTable
@@ -416,6 +415,24 @@ One-sentence explanation: 81234 multiplied by 9317 equals 756857178.`}
         <code>agent.resume(checkpoint_id=None, checkpoint_dir="./checkpoints")</code>. Build the
         resuming agent with the same tools it had.
       </p>
+
+      <Callout type="note" title="Since 1.1.0, a resumed run continues its conversation">
+        <p>
+          A checkpoint stores the run’s steps in its <code>thread</code> field, and still writes the
+          flat transcript beside it under <code>scratchpad</code>, so a file 1.1.0 writes also
+          resumes on a 1.0.x build. Resuming picks up the conversation the run had instead of
+          restarting the task, and does not redo the turns the checkpoint holds.
+        </p>
+        <p>
+          A checkpoint written by 1.0.x has no steps. <code>Checkpoint.to_thread()</code> rebuilds
+          them from the transcript and logs{' '}
+          <code>[compat] rebuilt a thread from a flat transcript</code>. The rebuild cannot recover
+          the provider’s call id (a recovered call is named from its position), a tool’s arguments as
+          values (they come back as the string they were printed as), whether a line was the
+          framework’s own, or the run’s frame — the persona, the tool contract, earlier turns and the
+          task.
+        </p>
+      </Callout>
 
       <CodeBlock filename="agent_checkpoint.py" code={`from effgen import Agent, AgentConfig
 

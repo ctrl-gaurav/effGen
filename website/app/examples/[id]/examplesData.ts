@@ -98,7 +98,7 @@ for call in response.tool_calls:
     badge: "Information retrieval",
     accent: "#a78bfa",
     description:
-      "A search tool and an instruction not to answer from memory. What makes the result usable is not the prose: it is that response.sources carries the URLs the run retrieved, so you can check the answer against them. In 1.0.0 these are separate fields — .sources is everything the search returned, .citations is what the answer referenced.",
+      "A search tool and an instruction not to answer from memory. What makes the result usable is not the prose: it is that response.sources carries the URLs the run retrieved, so you can check the answer against them. Since 1.0.0 these are separate fields — .sources is everything the search returned, .citations is what the answer referenced.",
     observations: [
       "The URLs are the ones the tool returned on this run. Run it tomorrow and they will be different, because the web is.",
       "WebSearch defaults to a backend that needs no API key, so this example runs with nothing configured.",

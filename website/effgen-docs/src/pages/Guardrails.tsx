@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Guardrails() {
   return (
@@ -46,7 +45,7 @@ print("output  :", response.output)`} />
         command="python safe_agent.py"
         output={`success : False
 output  : Input blocked by guardrail: Content matches a known prompt-injection pattern.`}
-        caption={`Run against effGen ${version}. The model was never called — the check runs before the task leaves the process.`}
+        caption={`Run against effGen 1.0.0. The model was never called — the check runs before the task leaves the process.`}
       />
 
       <Callout type="note" title="A blocked run is not an exception">

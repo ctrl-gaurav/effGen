@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function HumanLoop() {
   return (
@@ -57,7 +56,7 @@ print("answer  :", response.output)`} />
         command="python approval.py"
         output={`asked   : [('calculator', '{"expression": "81234 * 9317", "operation": "calculate"}')]
 answer  : Error executing tool 'calculator': execution denied by human approval (denied)`}
-        caption={`Run against effGen ${version}. A refusal is reported back to the model as the tool's result, so the run continues and can answer without it.`}
+        caption={`Run against effGen 1.0.0. A refusal is reported back to the model as the tool's result, so the run continues and can answer without it.`}
       />
 
       <ParamTable

@@ -9,7 +9,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Memory() {
   return (
@@ -40,7 +39,7 @@ print(agent.run("What is my dog's name?").text)`} />
       <Terminal
         command="python remembers.py"
         output={`Pixel`}
-        caption={`Run against effGen ${version}.`}
+        caption={`Run against effGen 1.0.0.`}
       />
 
       <p>

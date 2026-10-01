@@ -8,7 +8,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function RAG() {
   return (
@@ -49,13 +48,22 @@ print("sources:", response.sources)`} />
         command="python rag.py"
         output={`The architecture document describes horizontal scaling for effGen: run one server per replica behind a load balancer, with state stored in a session store so any replica can handle requests. [1]
 sources: ['/tmp/effgen-kb/architecture.md']`}
-        caption={`Run against effGen ${version}. The [1] marker is the agent's own citation, and response.sources names the file it came from.`}
+        caption={`Run against effGen 1.0.0. The [1] marker is the agent's own citation, and response.sources names the file it came from.`}
       />
 
       <ApiTable
         headers={['On the response', 'What it holds']}
         rows={[
-          [<code>response.text</code>, 'The answer, with inline [1], [2] markers where a passage was used.'],
+          [
+            <code>response.text</code>,
+            <>
+              The answer, with inline [1], [2] markers where a passage was used. The{' '}
+              <code>rag</code> preset asks for them; any other agent writes them only with{' '}
+              <code>cite_sources=True</code>, on <code>AgentConfig</code> or on{' '}
+              <code>run()</code>. When it does, <code>[n]</code> is{' '}
+              <code>citations[n - 1]</code>.
+            </>,
+          ],
           [
             <code>response.citations</code>,
             <>

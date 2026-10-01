@@ -9,7 +9,7 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { siteData, version } from '../siteData';
+import { siteData } from '../siteData';
 import { siteHref } from '../siteLinks';
 import './Examples.css';
 
@@ -300,7 +300,7 @@ options:
       <h2>Two that fail here, and why</h2>
 
       <p>
-        Both of these were run against effGen {version} while this page was written, and neither is
+        Both of these were run against effGen 1.0.1 while this page was written, and neither is
         something you have done wrong.
       </p>
 

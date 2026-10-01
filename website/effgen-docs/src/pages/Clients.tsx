@@ -10,7 +10,6 @@ import {
   SeeAlso,
   Terminal,
 } from '../components/docs';
-import { version } from '../siteData';
 
 export default function Clients() {
   return (
@@ -46,7 +45,7 @@ print(answer.model, answer.usage)`} />
         output={`HealthStatus(status='ok', details={'status': 'ok', 'version': '1.0.0'})
 ok
 openai:gpt-5-nano {'prompt_tokens': 26, 'completion_tokens': 138, 'total_tokens': 164}`}
-        caption={`Against effGen ${version} serving on 127.0.0.1:8000.`}
+        caption={`Against effGen 1.0.0 serving on 127.0.0.1:8000.`}
       />
 
       <Callout type="tip" title="Which client do I want?">
