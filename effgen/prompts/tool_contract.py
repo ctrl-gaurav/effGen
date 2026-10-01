@@ -95,10 +95,9 @@ TOOL_CONTRACT_VERIFY = (
 #: produced.
 #:
 #: This is the one contract that still asks for a line of narration before the
-#: call. Measured clause by clause, taking that line out cost a mid-size model
-#: accuracy on hard programming tasks and made its runs longer, and a text
-#: without the two closing sentences cost another model accuracy on the same
-#: tasks, so the text stays whole.
+#: call. Without that line, runs on harder programming tasks got fewer right
+#: answers and took longer, and dropping the two closing sentences lost right
+#: answers on the same tasks, so the text stays whole.
 TOOL_CONTRACT_EXECUTE = (
     "Use the tools to do this task rather than working it out in your head. Say "
     "in one line what you are about to compute, call the tool to compute it, "
@@ -114,11 +113,10 @@ TOOL_CONTRACT_EXECUTE = (
 #: whether or how often to search — that is the caller's and the loop's.
 #:
 #: An earlier closing sentence — if what comes back does not answer the question,
-#: say so and name what is missing — is not stated here. Measured against this
-#: text, it made a capable model answer without searching at all on many
-#: questions: fewer calls, fewer right answers. A prompt written as ReAct text
-#: still closes with that instruction after a search has returned, where it can
-#: only be about what came back (:mod:`effgen.core.retrieval_requery` reads it).
+#: say so and name what is missing — is not stated here. With it, a model often
+#: answered without searching at all: fewer calls, fewer right answers. A prompt
+#: written as ReAct text still closes with that instruction after a search has
+#: returned, where it can only be about what came back (:mod:`effgen.core.retrieval_requery` reads it).
 TOOL_CONTRACT_LOOKUP = (
     "The tools bring back source material, not the answer. Answer the question "
     "yourself, in the form it asks for, from what they return, and do not "

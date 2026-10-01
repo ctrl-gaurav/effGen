@@ -98,14 +98,12 @@ TOOL_FAILURES_BEFORE_UNAVAILABLE = 3
 #: Calls in a row to one tool that failed on their input after which the tool
 #: is not offered again in the run: a call and three corrections. One more than
 #: :data:`TOOL_FAILURES_BEFORE_UNAVAILABLE`, because a corrected input can
-#: succeed where a retry against a service that is down cannot: in recorded
-#: runs of small and mid-size models, a tool that had failed three times in a
-#: row on its input still returned a result afterwards in 5 runs of 7,562, and
-#: one that had failed four times in 1.
+#: succeed where a retry against a service that is down cannot. A tool that
+#: has rejected four inputs in a row almost never returns a result on a fifth.
 INPUT_ERRORS_BEFORE_WITHDRAWN = 4
 
-#: The phrase every tool-error path of the loop logs, so its firings can be
-#: counted.
+#: The phrase every tool-error path of the loop logs, so a log reader can count
+#: how often each path ran.
 TOOL_ERROR_LOG = "[tool error]"
 
 #: What the model reads when its answer is a tool's failure.

@@ -223,9 +223,8 @@ class TestNoContractAsksForMoreOutput:
     def test_the_executing_contract_keeps_its_one_line_of_narration(self):
         """The executing contract alone still asks for a line of narration.
 
-        Measured on its own, taking that line out of the executing contract cost
-        accuracy on hard programming tasks and made runs longer; the other
-        contracts ask for none.
+        Without that line, runs on harder programming tasks got fewer right
+        answers and took longer; the other contracts ask for none.
         """
         assert "say in one line" in TOOL_CONTRACT_EXECUTE.lower()
         for contract in (TOOL_CONTRACT_GENERAL, TOOL_CONTRACT_VERIFY,
