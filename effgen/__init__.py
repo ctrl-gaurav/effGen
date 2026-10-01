@@ -25,7 +25,7 @@ transformers, vLLM, provider SDKs) until something that needs them is used.
 
 # ruff: noqa: I001
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __author__ = "effGen Team"
 __license__ = "Apache-2.0"
 
