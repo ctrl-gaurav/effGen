@@ -118,12 +118,13 @@ print(f"Answer: {result.output}")
 
 </div>
 
-<img src="assets/section-whatsnew.svg" alt="What's new — v1.2.0, what a run spent and where its time went" width="100%"/>
+<img src="assets/section-whatsnew.svg" alt="What's new — v1.3.0, how a run ends and how a tool call is read" width="100%"/>
 
 ## 📰 News & Updates
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🧭 | **1 Oct 2026** | **v1.3.0 Released** — a run that stops making progress is asked for its answer (`max_turns_without_progress` now defaults to 2), and every run says how it ended: `response.termination` is done, not possible, stuck, tool failed or error. A run whose tool keeps failing on its own side ends `tool_failed` (`RunStoppedError` by default) instead of returning the model's own text. A tool call written in a broken shape is read and run (`recover_lost_tool_calls` now defaults to on). A model you serve yourself or run locally is measured once for how it uses a tool, and `auto` tool calling follows it (`probe_tool_calling`, `effgen doctor`). One agent serves overlapping `session=` calls without mixing them; `reasoning_effort` reaches `base_url` and Groq models. Small models given a search tool cost more per run. Public surface 251 → 253 names, nothing removed. [Changelog](CHANGELOG.md#130---2026-10-01) |
 | 🧾 | **27 Sep 2026** | **v1.2.0 Released** — every run now keeps a ledger: `response.ledger` (a `RunLedger`) says what the run spent — model and tool calls, prompt, completion and cached tokens, cost — and where its time went: the model, tools, the caller, child runs or the framework. A tool result the model writes itself is never taken as the answer. A provider's prompt cache is kept warm and its hits are priced; a request carries less of the framework's own text; `reasoning_effort` reaches `run()`; a model you serve yourself reads as unpriced, not free, and a spent cap no longer refuses it (a refusal now raises `BudgetExceededError`). New `effgen bench` measures an agent on your own tasks with a noise band beside every difference.  Public surface 250 → 251 names, nothing removed. [Changelog](CHANGELOG.md#120---2026-09-27) |
 | 🧵 | **14 Sep 2026** | **v1.1.0 Released** — a run now keeps its conversation as typed steps instead of one growing string. `response.thread` is what the run did, and the command line (`effgen run --show-thread`), the run card, the debug inspector and the dashboard all render the same steps. A run is bounded by what it may send (`context_budget=`, default `"auto"`) and gives up its oldest material first. A saved run resumes where it stopped instead of restarting the task. One agent loop replaces three, so a streamed run sends the same prompt, tool definitions and sampling settings as a blocking one. New `prompt_protocol=` sends a conversation as turns; the default stays flat for a single-turn run, and why is in the changelog. A run sends 26% fewer prompt tokens at 1.5B and 18% fewer at 7B and makes about 16% fewer model calls, and three sample sets got worse. Public surface 225 → 250 names, nothing removed. [Changelog](CHANGELOG.md#110---2026-09-14) |
 | 🔧 | **8 Sep 2026** | **v1.0.1 Released** - fixes to how the framework reports what a run did, what it puts in a prompt, and what its own bookkeeping costs. A run that stops without an answer now reports `success=False`, `outcome="stopped"` and a typed `stop_reason`, keeps what it reached in `.partial`, and raises `RunStoppedError` under the default `raise_on_error=True`. Citation markers are opt-in (`cite_sources=`) and point at real sources when you ask for them. The loop guards no longer stop runs that are still working. Every tool-calling path tells the model what the tools are for. The budget check against a 500,000 row ledger went from 1,278 ms to 0.044 ms. The Groq default points at a model Groq still serves. A run costs 37% more model calls and 57% more prompt tokens than 1.0.0, and two retrieval sets got worse. [Changelog](CHANGELOG.md#101---2026-09-08) |
@@ -362,6 +363,74 @@ Observability<br/>
 </div>
 
 <details open>
+<summary><b>🆕 What's new in v1.3.0</b></summary>
+
+<br/>
+
+**A run that stops making progress is asked for its answer, and every run says how it ended.**
+`response.termination` is `"done"`, `"not_possible"`, `"stuck"`, `"tool_failed"` or `"error"`. Ten
+changes are visible to existing code, and the public surface grew from 251 names to 253 with nothing
+removed or renamed.
+
+- **How a run ends.** `max_turns_without_progress` now defaults to `2`: after two turns that bring
+  no new tool result, the run is asked for its answer, and a run about to stop on a loop guard gets
+  one closing request with its calls and results. A run whose tool keeps failing on its own side
+  ends `tool_failed`, which raises `RunStoppedError` under the default `raise_on_error=True`, where
+  1.2.0 returned the model's own text. `None` restores 1.2.0's loop.
+- **How a tool call is read.** `recover_lost_tool_calls` now defaults to `True`: a call written as a
+  Python literal, with raw line breaks or unescaped quotes, or with arguments sent as a string, is
+  read and run; a call missing a required argument is asked for again rather than dispatched empty.
+  A tool's error is never read as a repeated result, and never returned as the answer.
+- **Measured, not assumed.** The first agent with tools for a model served behind `base_url`, or
+  run on a local engine, measures once what that model does with a tool, stores it in
+  `~/.effgen/capabilities.json`, and `tool_calling_mode="auto"` follows it: a model that answers
+  from memory while holding a search tool is made to call it. `effgen doctor` shows what was
+  measured; `capability_probe=False` or `EFFGEN_CAPABILITY_PROBE=0` turns it off. New:
+  `probe_tool_calling` and `ToolCallingProbe`.
+- **One agent, many conversations.** Overlapping `run()`, `run_async()` and `stream()` calls given
+  `session=` each read and record only their own conversation, and `stream()` on an agent bound to a
+  session saves the turn there.
+- **`reasoning_effort`** reaches a model behind `base_url`, and Groq.
+
+```python
+from effgen import AgentConfig
+from effgen.core.agent import TERMINATIONS
+
+config = AgentConfig(model="Qwen/Qwen2.5-1.5B-Instruct", base_url="http://127.0.0.1:8000/v1")
+print(config.max_turns_without_progress)   # 2: a run with no new result is asked for its answer
+print(config.recover_lost_tool_calls)      # True: a broken tool call is read before it is reported
+print(config.capability_probe)             # True: a served or local model is measured once
+print(TERMINATIONS)                        # the values response.termination can take
+
+as_in_1_2 = AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+    max_turns_without_progress=None,
+    recover_lost_tool_calls=False,
+    capability_probe=False,
+)
+```
+
+```bash
+pip install --upgrade effgen
+effgen --version
+```
+
+**Where it falls short.** On task types kept out of this release's development, the accuracy gain
+over 1.2.0 comes from tasks whose tool fails; elsewhere it is flat. Small models given a search tool
+cost noticeably more per run, because they are made to use it, and tool-using runs still make more
+model calls than they need to.
+
+**What it cost.** Against 1.2.0, the larger model measured makes slightly fewer model calls, sends
+fewer prompt tokens and takes less wall time, with accuracy up. The smaller model makes half again
+as many model calls and takes nearly twice the wall time, nearly all of it from being made to use
+its search tool. No cloud model was measured at full size.
+
+[Full v1.3.0 changelog](CHANGELOG.md#130---2026-10-01)
+
+</details>
+
+<details>
 <summary><b>🆕 What's new in v1.2.0</b></summary>
 
 <br/>
@@ -388,7 +457,8 @@ grew from 250 names to 251 with nothing removed or renamed.
   250,000 rows with every total kept exact.
 - **The loop.** A tool that keeps returning new results is no longer withdrawn at 12 calls;
   `run(max_iterations=N)` moves the loop's thresholds too; `reasoning_effort` reaches `run()` and
-  `run_async()`. Opt-in: `max_turns_without_progress=` and `recover_lost_tool_calls=`.
+  `run_async()`. New: `max_turns_without_progress=` and `recover_lost_tool_calls=`, opt-in in 1.2.0
+  and on by default from 1.3.0.
 - **Local and streamed runs.** Concurrent streams keep their own tool arguments; `openai:<id>` with
   `base_url=` sends the id without the prefix; concurrent agents share one in-process vLLM engine;
   a GGUF run reuses its cache across turns.
@@ -419,8 +489,8 @@ from effgen import AgentConfig
 
 config = AgentConfig(model="openai:gpt-5-nano", answer_style="brief")
 print(config.answer_style)                 # brief: one line, stated last
-print(config.max_turns_without_progress)   # None: off unless you set it
-print(config.recover_lost_tool_calls)      # False: off unless you set it
+print(config.max_turns_without_progress)   # 2 from 1.3.0; None (off) in 1.2.0
+print(config.recover_lost_tool_calls)      # True from 1.3.0; False (off) in 1.2.0
 ```
 
 ```bash

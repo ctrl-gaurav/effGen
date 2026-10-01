@@ -12,6 +12,302 @@ see; every such change is listed first in its entry, under "Changed: what existi
 
 ---
 
+## [1.3.0] - 2026-10-01
+
+### Highlights
+
+**This release is about how a run ends, and how a tool call is read.** A run that stops making
+progress is asked for its answer instead of going round to its iteration cap, and every run says how
+it ended: `response.termination` is `"done"`, `"not_possible"`, `"stuck"`, `"tool_failed"` or
+`"error"`. A tool that keeps failing on its own side ends the run as `tool_failed` rather than
+leaving the model to answer around it. A tool call the model wrote in a broken or unexpected shape
+is read and run by default. A model you serve yourself, or run on a local engine, is measured once
+for what it actually does with a tool, and `tool_calling_mode="auto"` follows what was measured. One
+agent can serve many overlapping conversations without mixing them.
+
+**Where it falls short.** On a separate set of task types kept out of this release's development,
+1.3.0's accuracy gain over 1.2.0 comes from tasks whose tool fails; on the others it is flat.
+The gain there is the gain on the shape this release targets — a tool that breaks or keeps failing —
+and not evidence that agents got better in general. Small models given a search tool now cost
+noticeably more per run, because they are made to use it. Runs that use tools still make more model
+calls than they need to. The cost against 1.2.0 is set out under "What it cost" at the end of this
+entry.
+
+**Nothing was removed or renamed.** The public surface grew from 251 names to 253. Ten changes are
+visible to existing code, and they are listed first.
+
+**Version numbering.** 1.3.0 is a minor release under the rule at the top of this changelog: it adds
+names, removes none, and lists every change existing code can see first.
+
+### Changed: what existing code sees
+
+#### 1. A run that stops making progress is asked for its answer — `max_turns_without_progress` defaults to `2`
+
+It was `None`. After two turns in a row that bring no new tool result, the next turn offers no tools
+and asks for the answer. A turn that declares no action after a result — `Action: None`, `Action:
+(continue reasoning)` or another bracketed placeholder that names no tool the agent holds — is asked
+at once. Before the run's first result, only a turn whose every call was declined counts.
+
+A run that would have stopped on `loop_detected`, `repeated_tool_result`, `max_iterations_*` or
+`null_final_from_model` while holding tool results gets one **closing request**: its own calls and
+results, with no tools, whose reply is the answer. When that reply is an answer the run succeeds,
+with `metadata["answer_source"] == "closing_request"`, so a run that raised `RunStoppedError` in
+1.2.0 under the default `raise_on_error=True` can now return an answer. A closing reply that is a
+call, or a program for a code tool the agent holds, is not taken as the answer; after a program the
+run carries on as it would have without the request, so such a run can send one model call more than
+`max_iterations`. On the text scaffold, the closing request is how the run is asked for its answer.
+
+In testing, on 32 of the 33 task-and-model combinations measured, no correct answer came from text a
+loop guard put together from tool results any more; those runs now end with an answer the model
+wrote. On the larger model measured, runs on one arithmetic sample set make 6.5% fewer model calls.
+
+*Migration:* `max_turns_without_progress=None` — in `AgentConfig` or per
+`run(max_turns_without_progress=None)` — restores 1.2.0's loop.
+
+#### 2. A run whose tool keeps failing ends `tool_failed`
+
+A tool that fails on its own side — a connection error, a timeout, an HTTP 5xx or 429, missing
+credentials — three times in a row, or whose circuit breaker is open, is unavailable for the rest of
+the run. A run left with no usable tool and no result now stops with the new stop reason
+`tool_failed`, which is in `STOPPED_REASONS` and raises `RunStoppedError` under the default
+`raise_on_error=True`. In 1.2.0 the run went on and returned whatever the model wrote, often a
+statement that it could not get the information. Such a run gets **no** closing request: it reports
+the tool's failure, typed, with `metadata["error"]["kind"] == "tool"`, and
+`metadata["unavailable_tools"]` names the tools.
+
+The agent's per-tool circuit breaker now counts only those tool-side failures. A tool given bad
+input by the model is no longer refused to later calls and later runs. A call that is retried after
+a tool-side failure is a retry, not a repeated call, so the loop guard no longer stops it.
+
+*Migration:* a caller that read the model's text from such a run catches `RunStoppedError`, or
+passes `raise_on_error=False` and branches on `response.termination == "tool_failed"`.
+
+#### 3. `AgentResponse.termination` says how a run ended
+
+`"done"` (the model answered), `"not_possible"` (the model answered, but every call was declined,
+failed on the tool's side or returned nothing — usually an answer saying the task cannot be done
+with these tools), `"stuck"` (the run kept proposing work that brought nothing new and wrote no
+answer), `"tool_failed"` (change 2) and `"error"` (the run could not be carried out). `to_dict()`
+carries it, and a saved run read back reports the same value. A run whose calls reached a tool that
+rejected their input used the tool, and its answer is `"done"`. Alongside it,
+`metadata["tool_results"]` counts a run's attempted, usable and input-rejected calls.
+
+A stopped run's `partial` never carries a tool's error message; a run whose only observations were
+errors has `partial=None`.
+
+#### 4. A tool call is read before it is reported — `recover_lost_tool_calls` defaults to `True`
+
+It was `False`. A tool call written as a Python literal, with raw line breaks inside its JSON, with
+unescaped double quotes inside a string value, with its last string closed one bracket early, or as
+a whole object followed by text inside its tag, now runs instead of ending the run with
+`written_tool_call`. A call nothing can read is sent back once, with a call required where the
+provider supports it. When the agent holds exactly one code-execution tool, a program in a fenced
+block before an empty call tag runs as that call. Some runs make more tool calls: the calls the
+model meant to make now run.
+
+Under either setting:
+
+* **Arguments that arrive as a string are read** — as keywords, as an object's JSON, or as a raw
+  value — instead of the call running with no arguments. `tool_calls` records carry the decoded
+  arguments.
+* **A call missing a required argument is not dispatched.** The model is asked for the call again,
+  so tool code never sees an empty call for a parameter it declared required.
+* **Positional values are named** in the tool's parameter order. A call with more values than the
+  tool has parameters carries no arguments and is asked for again, where it used to run with its
+  first value or end the run with an error.
+
+In testing, no measured run ended `written_tool_call`. On the hardest coding task measured, 15.7
+points more answers were correct, at 15% more model calls.
+
+*Migration:* `recover_lost_tool_calls=False` — in the config or per run — restores 1.2.0's reader;
+delegated sub-agents inherit the setting.
+
+#### 5. A failed tool call is retried, bounded, and never an answer
+
+* **A failure is never a repeated result.** Two calls whose different inputs a tool rejects in the
+  same words no longer withdraw the run's tools. In testing, no run on a calculator task stopped on
+  `repeated_tool_result`; 1.2.0 stopped 25 runs that way on one math sample set, 12% of them right.
+* **Four failures in a row on a tool's input withdraw it for the run.** A run left with no tool is
+  asked for its answer, and ends `tool_failed` with `metadata["error"]["kind"] == "input"` when it
+  writes none, where it used to go round to `max_iterations`.
+* **An answer that is a tool's error message is not a success.** It is sent back once; given again,
+  the run stops with `null_final_from_model`. A failed call no longer earns "you have the answer
+  from the tool" near the iteration cap, and the direct calculator result is never a failure.
+
+#### 6. Served and local models are measured once for how they use a tool
+
+At `tool_calling_mode="auto"`, the first agent with tools built for a model served behind a
+`base_url`, or run on a local engine, runs a short probe: questions about fictional things,
+answerable only through a stub search tool, as ordinary agent runs. Two defaults follow from it, and
+only when you left them unset. A model that answers from memory while holding a search tool has its
+information-retrieval tools made must-call: a run that answers without calling one is sent back once
+and made to call. A model whose native calls the server does not carry back is run in the ReAct text
+frame. Calculator and code tools are never moved by the probe.
+
+The result is stored in `~/.effgen/capabilities.json` (or under `$EFFGEN_HOME`, or at
+`$EFFGEN_CAPABILITY_CACHE`) and read by every later agent, across processes, without a request; it
+is measured again when the weights, the chat template, the endpoint or the probe change, and after
+30 days. A probe is bounded at 48 requests and 120 seconds; one that cannot run stores nothing,
+leaves `auto` as declared and logs one warning. Its requests are made by the first agent, in its
+process. `response.metadata["tool_calling"]` says which strategy a run used and why.
+
+The same store keeps what the framework learns from real requests. A provider that rejects stop
+sequences beside tool definitions is asked once more with the stops applied locally, and later
+requests leave them off; in 1.2.0 the run reported the provider's HTTP 400. A server that rejects
+`reasoning_effort` is asked once more without it.
+
+In testing, a small served model that answered from memory while holding a web-search tool answered
+14 more questions in 100 correctly, at 1.6 more model calls a run.
+
+*Migration:* `AgentConfig(capability_probe=False)` or `EFFGEN_CAPABILITY_PROBE=0` resolves `auto`
+from the model's declaration alone, as in 1.2.0; so does an explicit `tool_calling_mode` or
+`tool_use`. First-party cloud adapters are never probed. A test suite that scripts a served endpoint
+sees the probe's requests first unless it sets one of these.
+
+#### 7. `reasoning_effort` reaches a model behind `base_url`, and Groq
+
+A `reasoning_effort` you set is now sent by the OpenAI-compatible adapter, whatever the model is
+called, and by the Groq adapter for a model its catalog marks as reasoning. In 1.2.0 both dropped
+it. A server that refuses the field costs one retry, once, and is remembered (change 6). Every other
+adapter that drops a `reasoning_effort` you set now says so once per model at WARNING level.
+
+#### 8. One agent serves overlapping conversations without mixing them
+
+`run(session=...)`, `run_async(session=...)` and `stream(session=...)` hold their conversation on
+the call, not on the shared agent. Overlapping calls on one agent — threads, `run_async()` tasks,
+streams — each read and record only their own session. In 1.2.0 they swapped `agent.session` and
+`agent.short_term_memory` on the shared object, so overlapping calls could read and record each
+other's turns, and the agent could be left on another conversation's session after the calls ended.
+Inside a call, `agent.session` and `agent.short_term_memory` still name that call's conversation;
+outside one, they are the agent's own. Per-call middleware applies to that call only.
+
+`stream()` now honours `session=`; in 1.2.0 it ignored it and wrote the turn to the agent's own
+memory. A run whose input a guardrail blocks leaves the agent's session as it was.
+
+In testing, a reproduction with overlapping calls on one agent returned 94 answers carrying another
+conversation's turn, and lost 118 turns, on 1.2.0 in a single scenario; 1.3.0 mixed none in eleven.
+
+*Migration:* none. Calls without `session=` still share the agent's own memory, as before.
+
+#### 9. A streamed turn is saved to the agent's bound session
+
+On an agent created with `session_id=`, or given `agent.session`, `stream()` now appends each
+answered turn to that session and saves it, as `run()` always did. In 1.2.0 streamed turns stayed in
+memory and were missing from the session file, so a later process continuing the conversation never
+saw them.
+
+#### 10. Smaller changes
+
+* `effgen code --json` reports a `tool_failed` run as stopped, as the library does.
+* The OpenAI SDK's response types are built once when the adapter loads. In 1.2.0 the first
+  concurrent streams in a fresh process could fail with
+  `'BaseModel' has no attribute '__pydantic_core_schema__'`.
+* The agent's circuit breaker keeps every first failure when several calls fail on one tool at once,
+  and no longer raises `dictionary changed size during iteration` under concurrent writers.
+
+### Added
+
+**Two new names** — `from effgen import ToolCallingProbe, probe_tool_calling`:
+
+- `probe_tool_calling(model, refresh=False)` — measures what a loaded model does when handed a tool,
+  or returns what was measured before. It returns a `ToolCallingProbe`, or `None` for a model that
+  is not probed (a first-party cloud adapter) or a probe that could not run.
+- `ToolCallingProbe` — the stored result: how many runs resolved, went unresolved or skipped the
+  tool in the native frame (and in the text frame, when that was measured), the strategy and the
+  must-call tool categories `auto` derives from them, and what the probe itself cost in requests,
+  tokens and time.
+
+**Configuration and results:**
+
+- `AgentConfig.capability_probe` (default `True`) and the environment variables
+  `EFFGEN_CAPABILITY_PROBE` and `EFFGEN_CAPABILITY_CACHE`.
+- `AgentResponse.termination`, and the tuple `TERMINATIONS` in `effgen.core.agent`; the stop reason
+  `tool_failed`; the metadata keys `tool_results`, `unavailable_tools`, `tool_calling` and
+  `answer_source`.
+- `stream(session=...)`.
+- `BaseModel.capability_key()` and `BaseModel.forwards_reasoning_effort()`.
+
+**`effgen doctor`** lists what each served or local model was measured to do with a tool and what
+was learned from its endpoint, and `--json` carries the same. `--probe MODEL` measures one model now
+— a local model, or one served at `--base-url URL` (`--api-key-env VAR` names the variable holding
+the endpoint's key) — and `--refresh` measures it again.
+
+```python
+from effgen import AgentConfig
+from effgen.core.agent import TERMINATIONS
+
+config = AgentConfig(model="Qwen/Qwen2.5-1.5B-Instruct", base_url="http://127.0.0.1:8000/v1")
+print(config.max_turns_without_progress)   # 2: a run with no new result is asked for its answer
+print(config.recover_lost_tool_calls)      # True: a broken tool call is read before it is reported
+print(config.capability_probe)             # True: a served or local model is measured once
+print(TERMINATIONS)                        # the values response.termination can take
+
+as_in_1_2 = AgentConfig(
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    base_url="http://127.0.0.1:8000/v1",
+    max_turns_without_progress=None,
+    recover_lost_tool_calls=False,
+    capability_probe=False,
+)
+```
+
+```bash
+effgen doctor
+```
+
+### Known issues
+
+These are open. Each is understood well enough to say what it is.
+
+1. **Small models given a search tool cost more.** When the probe finds that a model answers from
+   memory while holding a search or retrieval tool, every run holding one is made to call it. On the
+   small model measured, that made a run about three times as many model calls on question-answering
+   tasks, and across all the tasks measured on that model, 1.5 times the model calls and 1.9 times
+   the wall time of 1.2.0. `tool_use="auto"` or `capability_probe=False` turns it off for an agent.
+2. **A run whose calls keep failing on their own input ends stuck, not typed.** A tool that rejects
+   the same input twice, or every input in the same words, is stopped by the loop guard before the
+   four-failure bound, so the run ends `loop_detected` (`termination == "stuck"`) rather than
+   `tool_failed` with `kind="input"`.
+3. **A run whose tools all fail on their own side gets no closing request.** It ends `tool_failed`
+   at once (change 2), even when the model had already written what it would answer. Whether such a
+   run should be asked once, as a run whose tool was withdrawn for bad input is, is open.
+4. **On one coding task set, a mid-size model answers less often correctly.** 5.4 points fewer
+   correct answers, short of significance once corrected for the number of comparisons, while its
+   correctly written final answers rose and its model calls fell by a quarter. The difference is
+   runs that 1.2.0's loop guard ended with a usable result; 1.3.0 asks them for their answer, and
+   some answer from the wrong result.
+5. **The framework's own time on a long run grew.** On a 100-step run it is 9.9% higher than 1.2.0's
+   (a median of 302 to 332 ms), within its budget. A batch of 16 runs is flat at about 19 ms of CPU
+   a run.
+6. **A probe's requests are booked in the first agent's cost ledger** with no tag marking them as
+   the probe's.
+7. **The readers now on by default have edges.** The lenient reader reads `"print("")"` as
+   `print()`. A truncated call naming the code tool itself still runs the fenced block before it. A
+   closing reply on the text scaffold that is another call ends the run stuck after one request.
+8. **A Groq call's retry wait is booked as framework time** in the run ledger.
+9. **One agent, many sessions, at the edges.** `stream()` runs no middleware. `resume(session=...)`
+   restores the checkpoint's memory onto the agent's own memory. A run made while a stream is held
+   open writes its trace to a tracker of its own, so `agent.execution_tracker` does not show it.
+10. **Not aimed at by this release, and not re-checked:** known issues 3 to 11, 13 and 14 of 1.2.0,
+    and the Groq free-tier HTTP 413 in its issue 12.
+
+### What it cost
+
+Against 1.2.0, on the same tasks and the same samples, with two models served locally. The larger
+model measured makes 3% fewer model calls per run, sends 4% fewer prompt tokens and takes 7% less
+wall time, and answers more questions correctly, outside run-to-run noise. The smaller model makes
+52% more model calls, sends 70% more prompt tokens and takes 94% more wall time; nearly all of that
+is the search tool being made must-call on question-answering tasks, where calls tripled. On its
+tasks that hold no search tool it makes 7% more calls and takes 11% more wall time, and answers more
+questions correctly, outside run-to-run noise. No task got worse by more than run-to-run noise
+allows once corrected for the number of comparisons. On a further set of task types kept out of this
+release's development, accuracy rose on both models, all of it on the type whose tool breaks or
+keeps failing, the shape this release targets; on the other types it is flat, and those runs cost
+less on both models. Groq and Gemini were rate-limited throughout and no cloud model was measured at
+full size, so nothing here is a claim about a cloud provider.
+
+---
+
 ## [1.2.0] - 2026-09-27
 
 ### Highlights
@@ -3818,7 +4114,8 @@ Thank you to all contributors who helped make effGen possible!
 
 ---
 
-[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ctrl-gaurav/effGen/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ctrl-gaurav/effGen/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.0...v1.0.1
