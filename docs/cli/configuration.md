@@ -43,6 +43,19 @@ effgen doctor              # key present / missing per provider, plus a system r
 effgen doctor --live --cheap  # also makes a tiny call to confirm each default model is usable
 ```
 
+`effgen doctor` also lists what each served or local model was measured to do
+with a tool, and what was learned from its endpoint's replies. To measure one
+model now:
+
+```bash
+effgen doctor --probe Qwen/Qwen2.5-1.5B-Instruct --base-url http://127.0.0.1:8000/v1
+effgen doctor --probe Qwen/Qwen2.5-1.5B-Instruct --base-url http://127.0.0.1:8000/v1 --refresh  # measure again
+```
+
+`--api-key-env VAR` names the variable holding the endpoint's key. See
+[native tool calling](../tutorials/native-tool-calling.md) for what the probe
+measures and how agents use it.
+
 ## Selecting a provider and model
 
 A model id can be given three ways:
