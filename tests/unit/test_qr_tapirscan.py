@@ -8,9 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PIL import Image
 
 from effgen.tools.builtin.qr_read import QRReadTool, _read_qr
+
+Image = pytest.importorskip("PIL.Image", reason="Install effgen[qr-tapirscan] for image tests")
 
 
 def image_base64():
