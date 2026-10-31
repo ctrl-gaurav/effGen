@@ -26,14 +26,14 @@ def test_tapirscan_preserves_multiple_results_and_geometry(monkeypatch):
     scanner.__enter__.return_value.scan.return_value.barcodes = [
         SimpleNamespace(text="hello", format="QRCode", rect=rect(1, 2, 3, 4)),
         SimpleNamespace(text="1234", format="ITF", rect=rect(5, 6, 7, 8)),
-        SimpleNamespace(text="compact", format="RMQRCode", rect=rect(0, 0, 18, 7)),
+        SimpleNamespace(text="compact", format="DataMatrix", rect=rect(0, 0, 18, 7)),
     ]
     factory = MagicMock(return_value=scanner)
     monkeypatch.setitem(sys.modules, "tapirscan", SimpleNamespace(Scanner=factory))
     result = _read_qr(image_base64=image_base64(), backend="tapirscan")
     assert result["success"]
     assert result["count"] == result["data"]["count"] == 3
-    assert [code["type"] for code in result["codes"]] == ["QRCODE", "I25", "RMQRCODE"]
+    assert [code["type"] for code in result["codes"]] == ["QRCODE", "I25", "DATAMATRIX"]
     assert result["codes"][0]["rect"] == dict(left=1, top=2, width=3, height=4)
     factory.assert_called_once_with(mode="medium", formats="all")
     scanner.__exit__.assert_called_once()

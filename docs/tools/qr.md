@@ -213,16 +213,8 @@ agent = create_agent("general", model=my_model)
 # agent now has qr_generate and qr_read tools available
 ```
 
-### Testing an unreleased Tapirscan backend
+### Tapirscan package
 
-In a Tapirscan source checkout, build the native library with
-`python3 scripts/build_native.py`. Add `bindings/python/src` to `PYTHONPATH` and
-set `TAPIRSCAN_LIBRARY_DIR` to that checkout's `build/native` directory before
-running effGen. Record the source commit and native library SHA-256; a development
-build may still carry the published version number. Alternatively, build and
-install a platform wheel using Tapirscan's development guide.
-
-The adapter was smoke-tested against development commit
-`980a415b271d58738c6475bba26e56d351f3115c` with Telepen, MicroPDF417 and rMQR image
-pixels. These checks verify integration, not broad real-world decoding quality.
-The optional dependency's released version does not promise unreleased formats.
+The optional backend uses the released Tapirscan Python package (1.5.0 or later).
+Install it with `pip install "effgen[qr-tapirscan]"`; no local Tapirscan build is
+needed. Supported formats are those provided by the installed release.
