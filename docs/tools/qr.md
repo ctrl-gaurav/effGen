@@ -9,6 +9,19 @@ effGen ships two local QR tools that require **no network connection**:
 
 ---
 
+## Tapirscan backend
+
+Install `pip install "effgen[qr-tapirscan]"` and construct
+`QRReadTool(backend="tapirscan")` to decode QR and other barcodes without zbar.
+The default backend remains pyzbar with its existing OpenCV fallback.
+Tapirscan uses Medium effort and all its default formats; multiple symbols and
+source-image bounding boxes retain the existing result shape. Existing zbar
+format names are preserved; additional formats use upper-case Tapirscan names
+(for example `DATAMATRIX`, `MICROPDF417`, `RMQRCODE`). Supported formats depend
+on the installed Tapirscan version. It decodes pixels only, without accepting
+embedded `effgen_qr_data` as optical recognition. A missing or broken Tapirscan
+installation returns an actionable error rather than silently switching engines.
+
 ## Decoder backends
 
 `QRReadTool` first tries [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar), which can decode
@@ -199,3 +212,17 @@ from effgen.presets import create_agent
 agent = create_agent("general", model=my_model)
 # agent now has qr_generate and qr_read tools available
 ```
+
+### Testing an unreleased Tapirscan backend
+
+In a Tapirscan source checkout, build the native library with
+`python3 scripts/build_native.py`. Add `bindings/python/src` to `PYTHONPATH` and
+set `TAPIRSCAN_LIBRARY_DIR` to that checkout's `build/native` directory before
+running effGen. Record the source commit and native library SHA-256; a development
+build may still carry the published version number. Alternatively, build and
+install a platform wheel using Tapirscan's development guide.
+
+The adapter was smoke-tested against development commit
+`980a415b271d58738c6475bba26e56d351f3115c` with Telepen, MicroPDF417 and rMQR image
+pixels. These checks verify integration, not broad real-world decoding quality.
+The optional dependency's released version does not promise unreleased formats.

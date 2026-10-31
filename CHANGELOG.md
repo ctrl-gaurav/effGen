@@ -12,6 +12,13 @@ see; every such change is listed first in its entry, under "Changed: what existi
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- Optional `QRReadTool(backend="tapirscan")` and `qr-tapirscan` extra for local
+  QR and barcode decoding without a system zbar installation.
+
 ## [1.3.0] - 2026-10-01
 
 ### Highlights
