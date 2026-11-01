@@ -16,7 +16,7 @@ import asyncio
 import base64
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..base_tool import (
     BaseTool,
@@ -34,6 +34,7 @@ def _read_qr(
     image_path: str | None = None,
     image_base64: str | None = None,
     allowed_dirs: list[Path] | None = None,
+    backend: Literal["pyzbar", "tapirscan"] = "pyzbar",
 ) -> dict[str, Any]:
     """Decode QR/barcodes from an image file or base64 PNG bytes."""
     try:
@@ -82,6 +83,33 @@ def _read_qr(
             "codes": [],
             "count": 0,
             "error": f"Failed to load image: {exc}",
+        }
+
+    if backend == "tapirscan":
+        try:
+            codes = _read_qr_with_tapirscan(img)
+        except ImportError:
+            return {
+                "success": False,
+                "data": {"codes": [], "count": 0},
+                "codes": [],
+                "count": 0,
+                "error": 'Tapirscan is not installed. Install with: pip install "effgen[qr-tapirscan]"',
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "data": {"codes": [], "count": 0},
+                "codes": [],
+                "count": 0,
+                "error": f"Tapirscan decode error: {exc}",
+            }
+        return {
+            "success": True,
+            "data": {"codes": codes, "count": len(codes)},
+            "codes": codes,
+            "count": len(codes),
+            "error": None,
         }
 
     try:
@@ -135,6 +163,23 @@ def _read_qr(
         "count": len(codes),
         "error": None,
     }
+
+
+def _read_qr_with_tapirscan(img: Any) -> list[dict[str, Any]]:
+    from tapirscan import Scanner
+
+    # pyzbar type names; the others match Tapirscan's names in upper case
+    names = {"ITF": "I25", "DataBarExpanded": "DATABAR_EXP"}
+    with Scanner(mode="medium", formats="all") as scanner:
+        barcodes = scanner.scan(img).barcodes
+    return [
+        {
+            "data": barcode.text,
+            "type": names.get(barcode.format, barcode.format.upper()),
+            "rect": dict(barcode.rect._asdict()),
+        }
+        for barcode in barcodes
+    ]
 
 
 def _effgen_metadata_code(img: Any) -> dict[str, Any] | None:
@@ -214,13 +259,23 @@ def _opencv_code(data: str, points: Any) -> dict[str, Any]:
 class QRReadTool(BaseTool):
     """Decode QR codes and barcodes from images (local, no network required)."""
 
-    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        allowed_directories: list[str] | None = None,
+        *,
+        backend: Literal["pyzbar", "tapirscan"] = "pyzbar",
+    ) -> None:
         """Args:
             allowed_directories: Roots a file path may be read from. By default
                 any path is allowed except protected system and credential
                 locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
                 always refused. Pass a list to confine reads to those roots only.
+            backend: "pyzbar" (default) or "tapirscan", which needs the
+                qr-tapirscan extra.
         """
+        if backend not in ("pyzbar", "tapirscan"):
+            raise ValueError(f"Unknown QR backend {backend!r}. Use 'pyzbar' or 'tapirscan'.")
+        self._backend = backend
         self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
@@ -229,7 +284,7 @@ class QRReadTool(BaseTool):
                     "Decode QR codes (and other barcodes) from an image file or base64 PNG. "
                     "Returns a list of decoded strings and their bounding-box positions. "
                     "Fully local — no network required. "
-                    "Requires the libzbar system library (see docs for install instructions). "
+                    "Uses the configured local decoder (see docs for installation). "
                     "Operations: read (decode QR/barcode from image)."
                 ),
                 category=ToolCategory.DATA_PROCESSING,
@@ -276,7 +331,7 @@ class QRReadTool(BaseTool):
             if not image_path and not image_base64:
                 raise ValueError("Provide 'image_path' or 'image_base64' for the read operation.")
             return await asyncio.to_thread(
-                _read_qr, image_path, image_base64, self._allowed_dirs
+                _read_qr, image_path, image_base64, self._allowed_dirs, self._backend
             )
 
         raise ValueError(f"Unknown operation: {operation!r}. Use 'read'.")

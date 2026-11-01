@@ -27,6 +27,21 @@ usable in fresh Python environments without an OS package step.
 Install zbar only if you need non-QR barcode formats through pyzbar. `QRGenerateTool` uses only
 pure-Python `qrcode` + `Pillow` and has **no system dependency**.
 
+### Tapirscan (optional)
+
+[Tapirscan](https://github.com/kleinicke/tapirscan) reads QR codes and the common 1D and 2D barcode
+formats from a pip install, with no system library:
+
+```bash
+pip install "effgen[qr-tapirscan]"
+```
+
+```python
+QRReadTool(backend="tapirscan")
+```
+
+Results have the same shape as with pyzbar.
+
 ---
 
 ## Python dependencies
