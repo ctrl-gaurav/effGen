@@ -40,9 +40,7 @@ def _read_qr(
     try:
         from PIL import Image
     except ImportError as exc:
-        raise RuntimeError(
-            "Pillow is required for QRReadTool. Install with: pip install Pillow"
-        ) from exc
+        raise RuntimeError("Pillow is required for QRReadTool. Install with: pip install Pillow") from exc
 
     try:
         if image_path:
@@ -96,7 +94,7 @@ def _read_qr(
                 "data": {"codes": [], "count": 0},
                 "codes": [],
                 "count": 0,
-                "error": 'Tapirscan is unavailable. Install with: pip install "effgen[qr-tapirscan]"',
+                "error": 'Tapirscan is not installed. Install with: pip install "effgen[qr-tapirscan]"',
             }
         except Exception as exc:
             return {
@@ -168,23 +166,10 @@ def _read_qr(
 
 
 def _read_qr_with_tapirscan(img: Any) -> list[dict[str, Any]]:
-    """Read actual image pixels; metadata is never treated as a decoded symbol."""
     from tapirscan import Scanner
 
-    names = {
-        "QRCode": "QRCODE",
-        "Code128": "CODE128",
-        "Code39": "CODE39",
-        "Code93": "CODE93",
-        "EAN13": "EAN13",
-        "EAN8": "EAN8",
-        "UPCA": "UPCA",
-        "UPCE": "UPCE",
-        "ITF": "I25",
-        "Codabar": "CODABAR",
-        "DataBar": "DATABAR",
-        "DataBarExpanded": "DATABAR_EXP",
-    }
+    # pyzbar type names; the others match Tapirscan's names in upper case
+    names = {"ITF": "I25", "DataBarExpanded": "DATABAR_EXP"}
     with Scanner(mode="medium", formats="all") as scanner:
         barcodes = scanner.scan(img).barcodes
     return [
@@ -281,14 +266,15 @@ class QRReadTool(BaseTool):
         backend: Literal["pyzbar", "tapirscan"] = "pyzbar",
     ) -> None:
         """Args:
-        backend: Decoder to use. Tapirscan needs the qr-tapirscan extra.
-        allowed_directories: Roots a file path may be read from. By default
-            any path is allowed except protected system and credential
-            locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
-            always refused. Pass a list to confine reads to those roots only.
+            allowed_directories: Roots a file path may be read from. By default
+                any path is allowed except protected system and credential
+                locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
+                always refused. Pass a list to confine reads to those roots only.
+            backend: "pyzbar" (default) or "tapirscan", which needs the
+                qr-tapirscan extra.
         """
         if backend not in ("pyzbar", "tapirscan"):
-            raise ValueError("backend must be 'pyzbar' or 'tapirscan'")
+            raise ValueError(f"Unknown QR backend {backend!r}. Use 'pyzbar' or 'tapirscan'.")
         self._backend = backend
         self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(

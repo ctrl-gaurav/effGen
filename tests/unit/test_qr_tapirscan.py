@@ -34,7 +34,7 @@ def test_tapirscan_preserves_multiple_results_and_geometry(monkeypatch):
     assert result["success"]
     assert result["count"] == result["data"]["count"] == 3
     assert [code["type"] for code in result["codes"]] == ["QRCODE", "I25", "DATAMATRIX"]
-    assert result["codes"][0]["rect"] == dict(left=1, top=2, width=3, height=4)
+    assert result["codes"][0]["rect"] == {"left": 1, "top": 2, "width": 3, "height": 4}
     factory.assert_called_once_with(mode="medium", formats="all")
     scanner.__exit__.assert_called_once()
 

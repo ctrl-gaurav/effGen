@@ -9,19 +9,6 @@ effGen ships two local QR tools that require **no network connection**:
 
 ---
 
-## Tapirscan backend
-
-Install `pip install "effgen[qr-tapirscan]"` and construct
-`QRReadTool(backend="tapirscan")` to decode QR and other barcodes without zbar.
-The default backend remains pyzbar with its existing OpenCV fallback.
-Tapirscan uses Medium effort and all its default formats; multiple symbols and
-source-image bounding boxes retain the existing result shape. Existing zbar
-format names are preserved; additional formats use upper-case Tapirscan names
-(for example `DATAMATRIX`, `MICROPDF417`, `RMQRCODE`). Supported formats depend
-on the installed Tapirscan version. It decodes pixels only, without accepting
-embedded `effgen_qr_data` as optical recognition. A missing or broken Tapirscan
-installation returns an actionable error rather than silently switching engines.
-
 ## Decoder backends
 
 `QRReadTool` first tries [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar), which can decode
@@ -39,6 +26,21 @@ usable in fresh Python environments without an OS package step.
 
 Install zbar only if you need non-QR barcode formats through pyzbar. `QRGenerateTool` uses only
 pure-Python `qrcode` + `Pillow` and has **no system dependency**.
+
+### Tapirscan (optional)
+
+[Tapirscan](https://github.com/kleinicke/tapirscan) reads QR codes and the common 1D and 2D barcode
+formats from a pip install, with no system library:
+
+```bash
+pip install "effgen[qr-tapirscan]"
+```
+
+```python
+QRReadTool(backend="tapirscan")
+```
+
+Results have the same shape as with pyzbar.
 
 ---
 
@@ -212,9 +214,3 @@ from effgen.presets import create_agent
 agent = create_agent("general", model=my_model)
 # agent now has qr_generate and qr_read tools available
 ```
-
-### Tapirscan package
-
-The optional backend uses the released Tapirscan Python package (1.5.0 or later).
-Install it with `pip install "effgen[qr-tapirscan]"`; no local Tapirscan build is
-needed. Supported formats are those provided by the installed release.
